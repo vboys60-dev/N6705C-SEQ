@@ -15,6 +15,9 @@ dev = ["pytest>=8"]
 [project.scripts]
 n6705c-seq = "n6705c_seq.cli:main"
 
+[project.gui-scripts]
+n6705c-seq-gui = "n6705c_seq.gui:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

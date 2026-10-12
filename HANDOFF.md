@@ -3,7 +3,7 @@
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），
 在多台主機上依表上電。第一版只做時序，不做量測。目前設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-12　狀態：模擬器全過（28 tests），**尚未接過實機**。
+最後更新：2026-10-12　狀態：模擬器全過（29 tests），**尚未接過實機**。
 
 ## 0. 先讀這幾件事
 
@@ -16,11 +16,12 @@
 ```bash
 cd N6705C-SEQ
 pip install -e . --no-deps        # 舊專案需已安裝（n6705c-app）
-python3 -m pytest -q              # 28 passed
+python3 -m pytest -q              # 29 passed
 
 n6705c-seq check examples/powerup.csv                       # 只驗證、印時間軸，不碰儀器
 n6705c-seq check plan.csv --suggest-out fixed.csv           # 有跨台打平時，另存建議的通道分配
 n6705c-seq run plan.csv --demo --yes                        # 模擬器
+n6705c-seq-gui                                              # 圖形介面（或 python3 -m n6705c_seq.gui）
 n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依機台順序
 ```
 
@@ -43,7 +44,8 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | `src/n6705c_seq/plan.py` | `SeqRow`、`load_csv`／`write_csv`、`to_functions`、打平偵測 `order_warnings`、`suggest_assignment`、`timeline` |
 | `src/n6705c_seq/execute.py` | `run_plan`：驗證 → 設定電壓／電流並開輸出 → load → arm → 同時發 `*TRG` → 等待 → 關輸出 |
 | `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
-| `tests/` | `test_plan.py`（15）、`test_execute.py`（7）、`test_cli.py`（8） |
+| `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（掃描／測試連線）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
+| `tests/` | `test_plan.py`（15）、`test_execute.py`（7）、`test_cli.py`（8）、`test_gui.py`（1，只測波形轉折點） |
 | `docs/plan.md` | 實作計畫，已更新到打平建議（Task 5）；測試程式碼以 `tests/` 為準 |
 
 只用標準函式庫（csv、argparse、threading）。沒有 YAML。Python 3.13、pytest 8.4.2。
@@ -87,6 +89,8 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 3. **同時發 `*TRG` 的實際時間差**沒有量過。2 ms 是保守估計，不是量測值。建議用示波器抓兩台的起點差。
 4. **建議的分配只看起點先後**，不處理維持與下降階段的順序。
 5. 建議結果不知道哪條電源軌實際接哪個通道，只是起點。
+
+- GUI 版面只在 macOS 用截圖看過；沒有「停止」鈕（時序只有約 100 ms）。
 
 ## 6. 沒做、也沒被要求的事
 
