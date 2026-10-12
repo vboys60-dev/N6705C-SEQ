@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+build = ["pyinstaller>=6"]
 
 [project.scripts]
 n6705c-seq = "n6705c_seq.cli:main"

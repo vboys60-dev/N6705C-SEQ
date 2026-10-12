@@ -1,0 +1,20 @@
+# Build the Windows zip.  Run from the repository root:  .\packaging\build.ps1
+$ErrorActionPreference = "Stop"
+Set-Location (Split-Path -Parent $PSScriptRoot)
+
+$version = (Select-String -Path pyproject.toml -Pattern 'version = "([^"]+)"').Matches[0].Groups[1].Value
+$app = "dist\N6705C-SEQ"
+$zip = "dist\N6705C-SEQ-$version-windows-x64.zip"
+
+pyinstaller packaging\n6705c_seq.spec --noconfirm
+if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
+
+# A build can import everything and still miss a backend; run the real path (simulator).
+& "$app\n6705c-seq-cli.exe" run examples\powerup.csv --demo --yes
+if ($LASTEXITCODE -ne 0) { throw "self-test failed" }
+
+Copy-Item examples -Destination $app -Recurse
+Copy-Item README.md -Destination $app
+if (Test-Path $zip) { Remove-Item $zip }
+Compress-Archive -Path $app -DestinationPath $zip
+Write-Host "done: $zip"
