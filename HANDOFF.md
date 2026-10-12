@@ -43,7 +43,7 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | 檔案 | 責任 |
 |---|---|
 | `src/n6705c_seq/plan.py` | `SeqRow`、`load_csv`／`write_csv`、`to_functions`、打平偵測 `order_warnings`、`suggest_assignment`、`timeline` |
-| `src/n6705c_seq/execute.py` | `run_plan`：驗證 → 設定電壓／電流並開輸出 → load → arm → 同時發 `*TRG` → 等待 → 關輸出。另有 `connect_group` |
+| `src/n6705c_seq/execute.py` | `run_plan`：驗證 → 設定電壓／電流並開輸出 → load → 每台一道 `INIT:TRAN` 同時啟動（`start_together`）→ 等待 → 關輸出。另有 `connect_group` |
 | `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
 | `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（掃描／測試連線）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
 | `tests/` | `test_plan.py`（17）、`test_execute.py`（11）、`test_cli.py`（9）、`test_gui.py`（6：波形轉折點、刻度、設定檔） |
@@ -59,7 +59,7 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 次數是 1，所以只發生一次。兩個地方都設會延遲兩次。測試 `test_only_enabled_rows_become_trapezoids_with_delay_as_start_time` 守著這點。
 
 ### 4.2 `run_plan` 自己開輸出
-ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、每台模組的電壓／時間上限）→ `VOLT`（一律）／`CURR`（只有表上有給）→ 開輸出 → load → arm（全部成功或全部不做）→ `*TRG`。驗證都在**開任何輸出之前**完成。
+ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、每台模組的電壓／時間上限）→ `VOLT`（一律）／`CURR`（只有表上有給）→ 開輸出 → load → 每台一道 `INIT:TRAN (@全部通道)`（觸發源設 IMM）。驗證都在**開任何輸出之前**完成。
 任何例外或 Ctrl-C 都走 `except BaseException` → `group.all_outputs_off()`。
 
 ### 4.2.1 關輸出要「確認」（Codex 審查後加的）
@@ -71,7 +71,7 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 - GUI 的 `read_rows` 與 `load_csv` 規則一致。
 
 ### 4.3 機台之間的時間差是軟體消不掉的
-一個 `*TRG` 能同時啟動同一台上所有已 arm 的通道（舊 HANDOFF §3.1）。跨台是各自的 VISA 往返，實測抖動約 0.2–2 ms（`TRIGGER_SKEW_SECONDS = 2e-3`）。
+**實機（F.1.1.0）的 ARB 在 `INIT:TRAN` 當下就開跑，不等 `*TRG`**（見 §4.10），所以改成每台一道 `INIT:TRAN (@全部通道)`。舊 HANDOFF §3.1 的 `*TRG` 說法對 ARB 不成立（對 `ACQ` 仍成立）。跨台是各自的 VISA 往返，實測抖動約 0.2–2 ms（`TRIGGER_SKEW_SECONDS = 2e-3`）。
 `fire_together` 用每台一條執行緒加 `threading.Barrier`，只能縮小差距，不能消除。真正的解法是接線（舊 HANDOFF M11.3：數位埠／Trigger In BNC）。
 
 ### 4.4 跨台打平的處理（最近做完的功能）
@@ -108,6 +108,12 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
   - `FETC:ARR:CURR?` 預設無效（+303 no valid acquisition），要先啟用電流擷取；沒做。
 - **`DISP:VIEW SCOPe` 在韌體 F.1.1.0 不支援**（-224），只有 `METER1`／`METER4`；前面板 Scope View 只能手動切。`HCOP:SDUM:DATA?` 可回 320×240 PNG 螢幕截圖。
 
+### 4.10 實測發現：ARB 在 INIT 當下就開跑（已修）
+- 示波器量到 CH1→CH2 起點差 23.9 ms（設定 20 ms）。數位化器重現：用舊作法（逐通道 `arm`＝逐通道 `INIT:TRAN`，再一個 `*TRG`）時，CH1/CH2/CH3 相對 `*TRG` 偏移 −36／−14／−1 ms，剛好是各通道 INIT 間隔。
+- 驗證：arm 好、**不送 `*TRG`**，輸出自己升到 1.8 V；觸發源改成 PIN1／EXT 也一樣。這台的 `TRIG:TRAN:SOUR` 對 ARB 沒有作用。
+- 修法：`start_together`——每台一道 `INIT:TRAN (@1,2,3)`，不再送 `*TRG`，跨台用 `fire_together` 的 barrier 同時送。實測 3 通道（CH1 1 ms／CH2、CH3 21 ms）50% 上升／下降點都在設定值 0.15 ms 內。
+- 之前單通道 hw_smoke「差 0.58 ms」其實就是 INIT→`*TRG` 的間隔，不是儀器延遲。
+
 ### 4.9 GUI 擷取實測波形：做過、已取消（使用者決定不要）
 程式已還原，不在 repo 內。若日後重做，實機踩過的順序（舊專案 `core/acquire.py` 的 `AcquireSession` 可重用）：
 - `INIT:ACQ` 要在 ARB load／arm **之前**，否則不會被共用的 `*TRG` 觸發（`FETC` 回 +303 且逾時，不是報錯）。
@@ -118,7 +124,7 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 
 1. ~~整個 `run` 沒接過實機~~：單台單通道空接已驗證（§4.8）。**仍未驗證**：多通道、帶載、兩台、ms 級精度（需示波器）。
 2. ~~`TRAP:END:TIM 0` 真機行為~~：N6752A 上被接受，結束後停在低準位（§4.8）。
-3. **同時發 `*TRG` 的實際時間差**沒有量過。2 ms 是保守估計，不是量測值。建議用示波器抓兩台的起點差。
+3. **跨台同時發 `INIT:TRAN` 的實際時間差**沒有量過（同台已量：< 0.15 ms）。2 ms 是保守估計，不是量測值。建議用示波器抓兩台的起點差。
 4. **建議的分配只看起點先後**，不處理維持與下降階段的順序。
 5. 建議結果不知道哪條電源軌實際接哪個通道，只是起點。
 6. GUI 版面只在 macOS 用截圖看過；沒有「停止」鈕（時序只有約 100 ms）。

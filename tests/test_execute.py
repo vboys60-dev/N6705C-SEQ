@@ -16,12 +16,13 @@ def sent(instrument):
     return [h.text for h in instrument.session.history if h.direction == "->"]
 
 
-def test_each_frame_gets_one_trigger_and_its_own_channels():
+def test_each_frame_is_started_by_one_init_for_all_its_channels():
     group = demo(2)
     run_plan(group, [row(c) for c in range(1, 9)])
     for inst in group.instruments:
         cmds = sent(inst)
-        assert cmds.count("*TRG") == 1
+        assert [c for c in cmds if c.startswith("INIT:TRAN")] == ["INIT:TRAN (@1,2,3,4)"]
+        assert "*TRG" not in cmds  # the unit starts at INIT; a trigger would only mislead
         assert any("ARB" in c for c in cmds)
 
 
@@ -62,14 +63,14 @@ def test_outputs_are_off_after_the_run():
         assert not any(inst.output_state(inst.populated_channels).values())
 
 
-def test_outputs_are_forced_off_if_the_trigger_fails(monkeypatch):
+def test_outputs_are_forced_off_if_the_start_fails(monkeypatch):
     group = demo(2)
-    from n6705c.core.arb import MultiArbRunner
+    import n6705c_seq.execute as ex
 
-    def boom(self):
+    def boom(*_):
         raise RuntimeError("link dropped")
 
-    monkeypatch.setattr(MultiArbRunner, "trigger", boom)
+    monkeypatch.setattr(ex, "start_together", boom)
     with pytest.raises(RuntimeError, match="link dropped"):
         run_plan(group, [row(1), row(5)])
     for inst in group.instruments:

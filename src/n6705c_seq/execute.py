@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 import time
 
-from n6705c.core.arb import ArbState, GroupArbRunner, MultiArbRunner
+from n6705c.core.arb import ArbState, GroupArbRunner
 from n6705c.core.group import GlobalChannel, InstrumentGroup
 from n6705c.core.instrument import N6705C
 from n6705c.core.scpi import format_channel_list
@@ -19,7 +19,7 @@ from n6705c.core.transport import VisaTransport
 
 from .plan import SeqRow, to_functions
 
-__all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "run_plan"]
+__all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "start_together", "run_plan"]
 
 #: The simulator configured like the real frames (four N6762A modules).
 DEMO_SLOTS = ("N6762A",) * 4
@@ -81,29 +81,54 @@ def _outputs_off(group: InstrumentGroup) -> None:
         raise OutputsNotConfirmedOff("could not confirm outputs off: " + "; ".join(problems))
 
 
-def fire_together(runners: list[MultiArbRunner]) -> None:
-    """Send each frame's ``*TRG`` from its own thread, released by one barrier.
+def fire_together(actions: list) -> None:
+    """Run each frame's start action from its own thread, released by one barrier.
 
     # ponytail: host-side threads shrink the gap between frames but cannot close
     # it (sub-ms to ms of link jitter remains); wiring the digital ports is the fix.
     """
-    barrier = threading.Barrier(len(runners))
+    barrier = threading.Barrier(len(actions))
     errors: list[BaseException] = []
 
-    def fire(runner: MultiArbRunner) -> None:
+    def fire(action) -> None:
         try:
             barrier.wait(BARRIER_SECONDS)
-            runner.trigger()
+            action()
         except BaseException as exc:  # noqa: BLE001 - re-raised below
             errors.append(exc)
 
-    threads = [threading.Thread(target=fire, args=(r,)) for r in runners]
+    threads = [threading.Thread(target=fire, args=(a,)) for a in actions]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
     if errors:
         raise errors[0]
+
+
+def start_together(group: InstrumentGroup, functions) -> None:
+    """Start every channel with one ``INIT:TRAN`` per frame.
+
+    The tested unit (firmware F.1.1.0) starts an ARB the moment it is initiated,
+    whatever ``TRIG:TRAN:SOUR`` says (BUS, EXT and PIN1 all ran without a ``*TRG``).
+    Arming channel by channel therefore staggered them by ~13-22 ms each, so the
+    start is a single list command per frame and the source is set to IMM to say
+    what really happens.  The simulator agrees: IMM runs at INIT.
+    """
+    frames: dict[int, tuple[N6705C, list[int]]] = {}
+    for fn in functions:
+        instrument, local = group.instrument_for(fn.channel)
+        frames.setdefault(id(instrument), (instrument, []))[1].append(local)
+    for instrument, channels in frames.values():
+        instrument.session.write_checked(f"TRIG:TRAN:SOUR IMM,{format_channel_list(channels)}")
+
+    def start(instrument: N6705C, channels: list[int]):
+        def go() -> None:
+            instrument.session.write(f"INIT:TRAN {format_channel_list(channels)}")
+            instrument.session.check_errors("INIT:TRAN")
+        return go
+
+    fire_together([start(inst, chans) for inst, chans in frames.values()])
 
 
 def _apply_levels(group: InstrumentGroup, functions) -> None:
@@ -159,8 +184,9 @@ def run_plan(group: InstrumentGroup, rows: list[SeqRow], *, wait: bool = True) -
     try:
         _apply_levels(group, functions)
         runner.load()
-        runner.arm()  # every frame, or none
-        fire_together(runner.runners)
+        start_together(group, functions)
+        for frame in runner.runners:
+            frame.mark_triggered()
         runner.state = ArbState.RUNNING
         if wait:
             _wait(runner)
