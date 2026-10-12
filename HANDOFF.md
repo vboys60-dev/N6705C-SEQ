@@ -22,6 +22,7 @@ n6705c-seq check examples/powerup.csv                       # 只驗證、印時
 n6705c-seq check plan.csv --suggest-out fixed.csv           # 有跨台打平時，另存建議的通道分配
 n6705c-seq run plan.csv --demo --yes                        # 模擬器
 n6705c-seq-gui                                              # 圖形介面（或 python3 -m n6705c_seq.gui）
+# 或在 Finder 雙擊 N6705C-SEQ.command
 n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依機台順序
 ```
 
