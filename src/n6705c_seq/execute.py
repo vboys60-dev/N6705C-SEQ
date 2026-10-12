@@ -13,11 +13,13 @@ import time
 
 from n6705c.core.arb import ArbState, GroupArbRunner, MultiArbRunner
 from n6705c.core.group import GlobalChannel, InstrumentGroup
+from n6705c.core.instrument import N6705C
 from n6705c.core.scpi import format_channel_list
+from n6705c.core.transport import VisaTransport
 
 from .plan import SeqRow, to_functions
 
-__all__ = ["DEMO_SLOTS", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "run_plan"]
+__all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "run_plan"]
 
 #: The simulator configured like the real frames (four N6762A modules).
 DEMO_SLOTS = ("N6762A",) * 4
@@ -31,6 +33,25 @@ BARRIER_SECONDS = 5.0
 
 class OutputsNotConfirmedOff(RuntimeError):
     """The emergency stop ran but the mainframes did not report every output off."""
+
+
+def connect_group(resources: list[str], *, backend: str = "auto", timeout_ms: int = 10_000) -> InstrumentGroup:
+    """``InstrumentGroup.connect`` that tolerates a non-ASCII ``*IDN?``.
+
+    The unit tested here (S/N MY66102013) answers with garbage bytes in the model
+    field, which the library's default ASCII decoding rejects.  Latin-1 never fails.
+    """
+    instruments: list[N6705C] = []
+    try:
+        for resource in resources:
+            transport = VisaTransport(resource, backend=backend, timeout_ms=timeout_ms)
+            transport._inst.encoding = "latin-1"  # noqa: SLF001 - no public hook
+            instruments.append(N6705C.from_transport(transport))
+    except BaseException:
+        for inst in instruments:
+            inst.close()
+        raise
+    return InstrumentGroup(instruments)
 
 
 class PlanRejected(ValueError):

@@ -1,0 +1,5 @@
+enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a
+1,CH1_test,10,0,1.0,20,100,20,0.1
+0,,0,0,0,0,0,0,
+0,,0,0,0,0,0,0,
+0,,0,0,0,0,0,0,

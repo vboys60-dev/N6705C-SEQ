@@ -12,7 +12,7 @@ from n6705c.core.group import (
     InstrumentGroup,
 )
 
-from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected, run_plan
+from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, run_plan
 from .plan import load_csv, order_warnings, suggest_assignment, timeline, write_csv
 
 
@@ -85,7 +85,7 @@ def _group(args, rows) -> InstrumentGroup:
     if args.demo:
         frames = -(-max(r.channel for r in rows if r.enabled) // 4)
         return InstrumentGroup.demo(frames=frames, slots=DEMO_SLOTS)
-    return InstrumentGroup.connect(args.resource, backend=args.backend, timeout_ms=args.timeout)
+    return connect_group(args.resource, backend=args.backend, timeout_ms=args.timeout)
 
 
 def main(argv: list[str] | None = None) -> int:

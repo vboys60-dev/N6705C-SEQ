@@ -15,7 +15,7 @@ from n6705c.core.group import CHANNELS_PER_FRAME, TRIGGER_SKEW_SECONDS, Instrume
 from n6705c.core.instrument import N6705C
 from n6705c.core.transport import list_resources
 
-from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected, run_plan
+from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, run_plan
 from .plan import SeqRow, load_csv, order_warnings, write_csv
 
 FRAMES = 2
@@ -318,9 +318,9 @@ class App:
                 self.queue.put(("status", i, "（未設定）"))
                 continue
             try:
-                inst = N6705C.demo(DEMO_SLOTS) if demo else N6705C.connect(res)
+                inst = N6705C.demo(DEMO_SLOTS) if demo else connect_group([res]).instruments[0]
                 try:
-                    self.queue.put(("status", i, f"✔ {inst.identity.model} S/N {inst.identity.serial}"))
+                    self.queue.put(("status", i, f"✔ S/N {inst.identity.serial}  " + " ".join(c.model for c in inst.capabilities.values())))
                 finally:
                     inst.close()
             except Exception as exc:  # noqa: BLE001 - backend errors vary
@@ -353,7 +353,7 @@ class App:
 
     def _work(self, rows: list[SeqRow], frames: int, resources: list[str], demo: bool) -> None:
         try:
-            group = InstrumentGroup.demo(frames, slots=DEMO_SLOTS) if demo else InstrumentGroup.connect(resources)
+            group = InstrumentGroup.demo(frames, slots=DEMO_SLOTS) if demo else connect_group(resources)
         except Exception as exc:  # noqa: BLE001
             self.queue.put(("error", f"連線失敗：{exc}"))
             return
