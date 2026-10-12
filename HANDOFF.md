@@ -3,20 +3,20 @@
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），
 在多台主機上依表上電。第一版只做時序，不做量測。目前設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-12　狀態：模擬器全過（42 tests）。**單台實機（4× N6752A）單通道已跑通**（見 §4.8），跨台同步仍未量。Codex 審查第 2 輪已核准（見 §8）。
+最後更新：2026-10-12　狀態：模擬器全過（46 tests）。**單台實機（4× N6752A）單通道已跑通**（見 §4.8），跨台同步仍未量。Codex 審查第 2 輪已核准（見 §8）。
 
 ## 0. 先讀這幾件事
 
-1. 這個專案**不改**舊專案 `../N6705C-APP`。它把舊專案的 `core/` 當函式庫用（editable 安裝的 `n6705c-app`）。
+1. 儀器控制核心 `n6705c.core` **已複製進本專案**（`src/n6705c/core`，與舊專案 `../N6705C-APP` 當時內容相同，import 名稱不變）。不再依賴 `n6705c-app`，也**不改**舊專案；之後核心有修正要手動同步。
 2. 舊專案的 `HANDOFF.md` 是儀器行為的權威來源，特別是 §3.1（`*TRG`）、§3.9（多機台不同步）、§4.0（實機發現）。
-3. 遠端：私人 repo <https://github.com/vboys60-dev/N6705C-SEQ>（`main`）。依賴舊專案 `n6705c-app`，換機器要先裝它。
+3. 遠端：私人 repo <https://github.com/vboys60-dev/N6705C-SEQ>（`main`）。換機器只要 `pip install -e .`。
 
 ## 1. 安裝與使用
 
 ```bash
 cd N6705C-SEQ
-pip install -e . --no-deps        # 舊專案需已安裝（n6705c-app）
-python3 -m pytest -q              # 42 passed
+pip install -e ".[dev]"           # 依賴：pyvisa、pyvisa-py、numpy（不需要舊專案）
+python3 -m pytest -q              # 46 passed
 
 n6705c-seq check examples/powerup.csv                       # 只驗證、印時間軸，不碰儀器
 n6705c-seq check plan.csv --suggest-out fixed.csv           # 有跨台打平時，另存建議的通道分配
@@ -49,7 +49,7 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | `tests/` | `test_plan.py`（17）、`test_execute.py`（11）、`test_cli.py`（9）、`test_gui.py`（6：波形轉折點、刻度、設定檔） |
 | `docs/plan.md` | 實作計畫，已更新到打平建議（Task 5）；測試程式碼以 `tests/` 為準 |
 
-只用標準函式庫（csv、argparse、threading）。沒有 YAML。Python 3.13、pytest 8.4.2。
+本專案只用標準函式庫；核心用 pyvisa、pyvisa-py、numpy。沒有 YAML。Python 3.13、pytest 8.4.2。
 
 每個通道 = 一個 `TrapezoidArb`：`start_level=low_v`、`start_time=delay`、`rise_time`、`top_level=high_v`、`top_time=hold`、`fall_time`、`end_time=0`，`terminate_last=True`。
 
@@ -126,6 +126,16 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 - 取回失敗只記錄在 `capture["error"]`，不影響輸出開關。模擬器擷取到平的 0 V，只能在實機驗證。
 - 實機（3 通道）：50% 上升／下降點與設定相差 < 0.15 ms；`hold_dc` 時末端維持高點。
 
+## 4.12 發佈與打包（Windows 11）
+
+- 使用者下載 GitHub Release 的 `N6705C-SEQ-<版本>-windows-x64.zip`，解壓後執行 `N6705C-SEQ.exe`（GUI）或 `n6705c-seq-cli.exe`。
+- **USB 儀器要先在該電腦裝 Keysight IO Libraries 或 NI-VISA**，執行檔不含 VISA 驅動。LAN（`TCPIP...`）由內含的 `pyvisa-py` 處理。
+- 沒有程式碼簽章，SmartScreen 會警告。
+- `packaging/`：`n6705c_seq.spec`（PyInstaller onedir，GUI + CLI 兩個 exe）、`build.ps1`（建置 → 用 `--demo` 自我測試 → 打包 zip）、`gui_entry.py`／`cli_entry.py`。
+- `.github/workflows/ci.yml`：push／PR 在 Windows、macOS、Ubuntu × Python 3.11、3.13 跑 pytest；通過後建 Windows zip；推 `v*` tag 才建立 Release。
+- 發版：改 `pyproject.toml` 的 version → `git tag vX.Y.Z && git push origin vX.Y.Z`。
+- 已驗證：CI 全綠、macOS 本機打包的 CLI／GUI 能跑。**未驗證**：真正在 Windows 11 開 GUI、接實機。
+
 ## 5. ⚠️ 尚未驗證
 
 1. ~~整個 `run` 沒接過實機~~：單台單通道空接已驗證（§4.8）。**仍未驗證**：多通道、帶載、兩台、ms 級精度（需示波器）。
@@ -135,7 +145,8 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 5. 建議結果不知道哪條電源軌實際接哪個通道，只是起點。
 6. GUI 版面只在 macOS 用截圖看過；沒有「停止」鈕（時序只有約 100 ms）。
 7. ~~`_wait` 把狀態查詢失敗當成完成~~：第 2 輪已修。`_running()` 直接走 `arb.is_running`，查詢失敗會丟例外 → 中止並確認關輸出。
-8. `fire_together` 的 barrier 逾時 5 s、各台 `*TRG` 仍沒有整體逾時，實際上限靠 VISA `--timeout`。
+8. Windows 11 執行檔只在 CI 建過，沒在實機開過（§4.12）。
+9. `fire_together` 的 barrier 逾時 5 s、各台 `*TRG` 仍沒有整體逾時，實際上限靠 VISA `--timeout`。
 
 ## 6. 沒做、也沒被要求的事
 
