@@ -114,6 +114,10 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 - 修法：`start_together`——每台一道 `INIT:TRAN (@1,2,3)`，不再送 `*TRG`，跨台用 `fire_together` 的 barrier 同時送。實測 3 通道（CH1 1 ms／CH2、CH3 21 ms）50% 上升／下降點都在設定值 0.15 ms 內。
 - 之前單通道 hw_smoke「差 0.58 ms」其實就是 INIT→`*TRG` 的間隔，不是儀器延遲。
 
+### 4.11 維持高點 DC 選項（`--hold-dc`／GUI 勾選）
+- 忽略 hold／fall：改用 `RampArb`（delay → rise → 高點，`end_time=0`），`terminate_last` 把高點留成 DC；`run_plan(hold_dc=True)` 結束後**不關輸出**（出錯仍強制關）。
+- 實機：CH1 升到 1 V 後 3 s 仍 1.0004 V，斷線重連後輸出仍開著。GUI 有「■ 全部關閉」按鈕（連到已填的位址，`outputs_off` 關閉並讀回確認；Demo 模式不可用，執行中停用）；CLI 沒有對應指令。
+
 ### 4.9 GUI 擷取實測波形：做過、已取消（使用者決定不要）
 程式已還原，不在 repo 內。若日後重做，實機踩過的順序（舊專案 `core/acquire.py` 的 `AcquireSession` 可重用）：
 - `INIT:ACQ` 要在 ARB load／arm **之前**，否則不會被共用的 `*TRG` 觸發（`FETC` 回 +303 且逾時，不是報錯）。

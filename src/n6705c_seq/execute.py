@@ -19,7 +19,7 @@ from n6705c.core.transport import VisaTransport
 
 from .plan import SeqRow, to_functions
 
-__all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "start_together", "run_plan"]
+__all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "start_together", "run_plan", "outputs_off"]
 
 #: The simulator configured like the real frames (four N6762A modules).
 DEMO_SLOTS = ("N6762A",) * 4
@@ -58,7 +58,7 @@ class PlanRejected(ValueError):
     """The plan failed validation; nothing was switched on or off."""
 
 
-def _outputs_off(group: InstrumentGroup) -> None:
+def outputs_off(group: InstrumentGroup) -> None:
     """``all_outputs_off`` swallows errors by design, so read the state back.
 
     ``OUTP?`` is the commanded state, not the rail voltage -- it proves the write
@@ -165,9 +165,12 @@ def _wait(runner: GroupArbRunner) -> None:
         time.sleep(0.05)
 
 
-def run_plan(group: InstrumentGroup, rows: list[SeqRow], *, wait: bool = True) -> GroupArbRunner:
-    """Run the table. With ``wait`` the outputs are switched off again at the end."""
-    functions = to_functions(rows)
+def run_plan(
+    group: InstrumentGroup, rows: list[SeqRow], *, wait: bool = True, hold_dc: bool = False
+) -> GroupArbRunner:
+    """Run the table. With ``wait`` the outputs are switched off again at the end,
+    unless ``hold_dc``: then each rail stops at its high level and stays on."""
+    functions = to_functions(rows, hold_dc)
     if not functions:
         raise PlanRejected("no enabled channels in the table")
     needed = max(GlobalChannel.from_index(fn.channel).frame for fn in functions)
@@ -190,12 +193,13 @@ def run_plan(group: InstrumentGroup, rows: list[SeqRow], *, wait: bool = True) -
         runner.state = ArbState.RUNNING
         if wait:
             _wait(runner)
-            _outputs_off(group)
+            if not hold_dc:
+                outputs_off(group)
     except OutputsNotConfirmedOff:
         raise
     except BaseException as exc:
         try:
-            _outputs_off(group)
+            outputs_off(group)
         except OutputsNotConfirmedOff as off:
             raise OutputsNotConfirmedOff(f"{exc}; also {off}") from exc
         raise

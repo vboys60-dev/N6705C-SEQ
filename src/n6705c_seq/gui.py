@@ -15,7 +15,7 @@ from n6705c.core.group import CHANNELS_PER_FRAME, TRIGGER_SKEW_SECONDS, Instrume
 from n6705c.core.instrument import N6705C
 from n6705c.core.transport import list_resources
 
-from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, run_plan
+from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, outputs_off, run_plan
 from .plan import SeqRow, load_csv, order_warnings, write_csv
 
 FRAMES = 2
@@ -37,10 +37,12 @@ TITLES = {k: t.splitlines()[0] for k, t in COLUMNS}
 NUMERIC = {"delay": "ms", "low": "V", "high": "V", "rise": "ms", "hold": "ms", "fall": "ms"}
 
 
-def waveform(row: SeqRow, t_end: float) -> list[tuple[float, float]]:
+def waveform(row: SeqRow, t_end: float, hold_dc: bool = False) -> list[tuple[float, float]]:
     """Corner points (seconds, volts) of one rail, from t=0 to *t_end*."""
     t1 = row.delay
     t2 = t1 + row.rise
+    if hold_dc:
+        return [(0, row.low_v), (t1, row.low_v), (t2, row.high_v), (t_end, row.high_v)]
     t3 = t2 + row.hold
     t4 = t3 + row.fall
     return [(0, row.low_v), (t1, row.low_v), (t2, row.high_v), (t3, row.high_v), (t4, row.low_v), (t_end, row.low_v)]
@@ -77,6 +79,7 @@ class App:
         saved = _load_config()
         self.resources = [tk.StringVar(value=r) for r in (saved["resources"] + [""] * FRAMES)[:FRAMES]]
         self.demo = tk.BooleanVar(value=saved["demo"])
+        self.hold_dc = tk.BooleanVar(value=False)
         self.conn_status = [tk.StringVar() for _ in range(FRAMES)]
         self.message = tk.StringVar()
         self._connection_bar()
@@ -158,6 +161,11 @@ class App:
         ttk.Button(bar, text="儲存 CSV", command=self.save_csv).pack(side="left", padx=6)
         self.run_button = ttk.Button(bar, text="▶ 執行上電", command=self.run)
         self.run_button.pack(side="right")
+        self.off_button = ttk.Button(bar, text="■ 全部關閉", command=self.all_off)
+        self.off_button.pack(side="right", padx=(0, 12))
+        ttk.Checkbutton(
+            bar, text="維持高點 DC（忽略維持／下降，結束後不關輸出）", variable=self.hold_dc, command=self.schedule
+        ).pack(side="right", padx=12)
 
     # -- table <-> rows -------------------------------------------------------
 
@@ -255,7 +263,8 @@ class App:
             return
         width, height = max(c.winfo_width(), 400), max(c.winfo_height(), 200)
         left, right, top, bottom = 72, 12, 12, 40
-        t_end = max(r.duration for r, _ in live) * 1.18 * 1000 or 1.0  # ms
+        hold_dc = self.hold_dc.get()
+        t_end = max((r.delay + r.rise if hold_dc else r.duration) for r, _ in live) * 1.18 * 1000 or 1.0  # ms
         x = lambda ms: left + (width - left - right) * ms / t_end  # noqa: E731
         lane = (height - top - bottom) / len(live)
 
@@ -272,7 +281,7 @@ class App:
             lo, hi = r.low_v, max(r.high_v, r.low_v + 1e-9)
             y_hi, y_lo = y0 + 20, y0 + lane - 8
             y = lambda v: y_lo - (y_lo - y_hi) * (v - lo) / (hi - lo)  # noqa: E731
-            pts = [(x(t * 1000), y(v)) for t, v in waveform(r, t_end / 1000)]
+            pts = [(x(t * 1000), y(v)) for t, v in waveform(r, t_end / 1000, hold_dc)]
             c.create_line(*[p for pt in pts for p in pt], fill=color, width=2.5)
             c.create_text(left - 6, y0 + lane / 2, text=r.name, fill=color, anchor="e", font=("", 11, "bold"))
             arrow = dict(fill=color, dash=(4, 3), arrow="both")
@@ -280,9 +289,10 @@ class App:
             if r.delay > 0:
                 c.create_line(x(0), ym, x(r.delay * 1000), ym, **arrow)
                 c.create_text(x(0) + 2, ym - 8, anchor="w", fill=color, text=f"延遲 {r.delay * 1000:.1f}ms")
-            t_top0, t_top1 = (r.delay + r.rise) * 1000, (r.delay + r.rise + r.hold) * 1000
-            c.create_line(x(t_top0), ym, x(t_top1), ym, **arrow)
-            c.create_text(x((t_top0 + t_top1) / 2), ym + 9, fill=color, text=f"維持 {r.hold * 1000:.1f}ms")
+            t_top0, t_top1 = (r.delay + r.rise) * 1000, (r.delay + r.rise + (0 if hold_dc else r.hold)) * 1000
+            if not hold_dc:
+                c.create_line(x(t_top0), ym, x(t_top1), ym, **arrow)
+                c.create_text(x((t_top0 + t_top1) / 2), ym + 9, fill=color, text=f"維持 {r.hold * 1000:.1f}ms")
             c.create_text(
                 x(t_top1) + 4, y_hi - 8, anchor="w", fill=color, font=("", 10, "bold"),
                 text=f"高點 {r.high_v:.2f}V　低點 {r.low_v:.2f}V",
@@ -344,22 +354,54 @@ class App:
         demo = self.demo.get()
         if not demo and not all(resources):
             return messagebox.showerror("未設定位址", f"需要 {frames} 台機台的 VISA 位址")
-        if not messagebox.askyesno("確認", ("【Demo】" if demo else "【實機】") + "將開啟輸出並執行時序，繼續？", icon="warning"):
+        if not messagebox.askyesno("確認", ("【Demo】" if demo else "【實機】") + "將開啟輸出並執行時序" + ("，結束後輸出維持在高點不會關閉" if self.hold_dc.get() else "") + "，繼續？", icon="warning"):
             return
         self._save_config()
         self.busy = True
         self.run_button.state(["disabled"])
-        threading.Thread(target=self._work, args=(rows, frames, resources, demo), daemon=True).start()
+        self.off_button.state(["disabled"])
+        threading.Thread(
+            target=self._work, args=(rows, frames, resources, demo, self.hold_dc.get()), daemon=True
+        ).start()
 
-    def _work(self, rows: list[SeqRow], frames: int, resources: list[str], demo: bool) -> None:
+    def all_off(self) -> None:
+        """Switch every output on every configured mainframe off, e.g. after a DC hold."""
+        if self.busy:
+            return
+        resources = [v.get().strip() for v in self.resources if v.get().strip()]
+        if self.demo.get() or not resources:
+            return messagebox.showinfo("全部關閉", "Demo 模式沒有實機；請取消 Demo 並填入機台位址。")
+        if not messagebox.askyesno("確認", f"關閉 {len(resources)} 台機台的所有輸出？", icon="warning"):
+            return
+        self.busy = True
+        self.run_button.state(["disabled"])
+        self.off_button.state(["disabled"])
+        threading.Thread(target=self._off_work, args=(resources,), daemon=True).start()
+
+    def _off_work(self, resources: list[str]) -> None:
+        try:
+            group = connect_group(resources)
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"連線失敗：{exc}"))
+            return
+        try:
+            outputs_off(group)
+            self.queue.put(("done", "所有輸出已關閉（已讀回確認）。"))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", str(exc)))
+        finally:
+            for inst in group.instruments:
+                inst.close()
+
+    def _work(self, rows: list[SeqRow], frames: int, resources: list[str], demo: bool, hold_dc: bool) -> None:
         try:
             group = InstrumentGroup.demo(frames, slots=DEMO_SLOTS) if demo else connect_group(resources)
         except Exception as exc:  # noqa: BLE001
             self.queue.put(("error", f"連線失敗：{exc}"))
             return
         try:
-            run_plan(group, rows)
-            self.queue.put(("done", "時序完成，輸出已關閉。"))
+            run_plan(group, rows, hold_dc=hold_dc)
+            self.queue.put(("done", "時序完成，輸出維持在高點（未關閉）。" if hold_dc else "時序完成，輸出已關閉。"))
         except Exception as exc:  # noqa: BLE001 - run_plan already forced outputs off
             note = (
                 "" if isinstance(exc, OutputsNotConfirmedOff)
@@ -381,6 +423,7 @@ class App:
             else:
                 self.busy = False
                 self.run_button.state(["!disabled"])
+                self.off_button.state(["!disabled"])
                 (messagebox.showinfo if kind == "done" else messagebox.showerror)("執行結果", rest[0])
         self.root.after(100, self._poll)
 

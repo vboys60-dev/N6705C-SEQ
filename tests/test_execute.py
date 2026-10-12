@@ -115,3 +115,12 @@ def test_a_rejected_plan_is_reported_as_such():
 
     with pytest.raises(PlanRejected):
         run_plan(demo(1), [row(1, high=500.0)])  # beyond the module's range
+
+
+def test_hold_dc_stops_at_the_high_level_and_leaves_outputs_on():
+    group = demo(1)
+    run_plan(group, [row(1, high=1.5), row(2, high=2.5)], hold_dc=True)
+    inst = group.instruments[0]
+    assert all(inst.output_state([1, 2]).values())
+    assert not any("TRAP" in c for c in sent(inst))
+    assert any(c.startswith("ARB:VOLT:RAMP:END 1.5") for c in sent(inst))

@@ -26,3 +26,22 @@ def test_config_with_the_wrong_shape_falls_back_to_defaults(tmp_path, monkeypatc
         assert gui._load_config() == default
     f.write_text('{"resources":["A"],"demo":false}')
     assert gui._load_config() == {"resources": ["A"], "demo": False}
+
+
+def test_hold_dc_waveform_stays_at_the_high_level():
+    row = SeqRow(1, True, "A", 0.005, 0.0, 5.0, 0.002, 0.055, 0.002)
+    assert [v for _, v in waveform(row, 0.1, hold_dc=True)] == [0, 0, 5, 5]
+
+
+def test_all_off_worker_reports_success_and_closes(monkeypatch):
+    import queue
+    from n6705c.core.group import InstrumentGroup
+    from n6705c_seq import gui
+    from n6705c_seq.execute import DEMO_SLOTS
+
+    group = InstrumentGroup.demo(frames=1, slots=DEMO_SLOTS)
+    monkeypatch.setattr(gui, "connect_group", lambda resources: group)
+    app = object.__new__(gui.App)
+    app.queue = queue.Queue()
+    app._off_work(["x"])
+    assert app.queue.get_nowait()[0] == "done"

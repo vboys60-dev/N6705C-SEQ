@@ -72,3 +72,8 @@ def test_suggest_out_still_writes_a_file_when_there_is_nothing_to_fix(tmp_path, 
     out = tmp_path / "out.csv"
     assert main(["check", str(table), "--suggest-out", str(out)]) == 0
     assert out.exists()
+
+
+def test_run_hold_dc_says_the_outputs_stay_on(capsys):
+    assert main(["run", str(EXAMPLE), "--demo", "--yes", "--hold-dc"]) == 0
+    assert "left on" in capsys.readouterr().out.lower()

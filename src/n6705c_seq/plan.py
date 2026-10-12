@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from itertools import combinations
 from pathlib import Path
 
-from n6705c.core.arb import ArbSpec, TrapezoidArb
+from n6705c.core.arb import ArbSpec, RampArb, TrapezoidArb
 from n6705c.core.function import ChannelFunction
 from n6705c.core.group import CHANNELS_PER_FRAME, GlobalChannel
 
@@ -110,9 +110,12 @@ def load_csv(path: str | Path) -> list[SeqRow]:
     return rows
 
 
-def to_functions(rows: list[SeqRow]) -> list[ChannelFunction]:
+def to_functions(rows: list[SeqRow], hold_dc: bool = False) -> list[ChannelFunction]:
     """Enabled rows only. The delay becomes the trapezoid's start time (count is 1,
-    so it happens once), so ``ChannelFunction.delay`` stays 0 -- never both."""
+    so it happens once), so ``ChannelFunction.delay`` stays 0 -- never both.
+
+    With ``hold_dc`` the hold and fall are dropped: a ramp that ends at the high
+    level, which ``terminate_last`` then keeps as DC."""
     return [
         ChannelFunction(
             channel=r.channel,
@@ -123,14 +126,21 @@ def to_functions(rows: list[SeqRow]) -> list[ChannelFunction]:
             delay=0.0,
             spec=ArbSpec(
                 channel=r.channel,
-                waveform=TrapezoidArb(
-                    start_level=r.low_v,
-                    start_time=r.delay,
-                    rise_time=r.rise,
-                    top_level=r.high_v,
-                    top_time=r.hold,
-                    fall_time=r.fall,
-                    end_time=0.0,
+                waveform=(
+                    RampArb(
+                        start_level=r.low_v, start_time=r.delay, rise_time=r.rise,
+                        end_level=r.high_v, end_time=0.0,
+                    )
+                    if hold_dc
+                    else TrapezoidArb(
+                        start_level=r.low_v,
+                        start_time=r.delay,
+                        rise_time=r.rise,
+                        top_level=r.high_v,
+                        top_time=r.hold,
+                        fall_time=r.fall,
+                        end_time=0.0,
+                    )
                 ),
                 terminate_last=True,
             ),

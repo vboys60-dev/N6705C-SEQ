@@ -35,6 +35,10 @@ def _parser() -> argparse.ArgumentParser:
     target.add_argument("--demo", action="store_true", help="use the built-in simulator")
     run.add_argument("--backend", default="auto")
     run.add_argument("--timeout", type=int, default=10_000, help="I/O timeout in ms")
+    run.add_argument(
+        "--hold-dc", action="store_true",
+        help="ignore hold/fall: stop at the high level and leave the outputs ON",
+    )
     run.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     return parser
 
@@ -112,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"connection failed: {exc}", file=sys.stderr)
         return 1
     try:
-        run_plan(group, rows)
+        run_plan(group, rows, hold_dc=args.hold_dc)
     except KeyboardInterrupt:
         print("interrupted; outputs forced off", file=sys.stderr)
         return 130
@@ -127,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         for instrument in group.instruments:
             instrument.close()
-    print("Sequence done; outputs off.")
+    print("Sequence done; outputs left ON at the high level." if args.hold_dc else "Sequence done; outputs off.")
     return 0
 
 
