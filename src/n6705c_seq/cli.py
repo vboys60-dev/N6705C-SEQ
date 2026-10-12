@@ -12,7 +12,7 @@ from n6705c.core.group import (
     InstrumentGroup,
 )
 
-from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, run_plan
+from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected, run_plan
 from .plan import load_csv, order_warnings, suggest_assignment, timeline, write_csv
 
 
@@ -117,7 +117,11 @@ def main(argv: list[str] | None = None) -> int:
         print("interrupted; outputs forced off", file=sys.stderr)
         return 130
     except Exception as exc:  # noqa: BLE001 - run_plan already forced outputs off
-        forced = "" if isinstance(exc, OutputsNotConfirmedOff) else "; outputs forced off"
+        forced = (
+            "" if isinstance(exc, OutputsNotConfirmedOff)
+            else "; rejected before any output was switched" if isinstance(exc, PlanRejected)
+            else "; outputs forced off"
+        )
         print(f"error: {exc}{forced}", file=sys.stderr)
         return 1
     finally:

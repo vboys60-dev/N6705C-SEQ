@@ -17,7 +17,7 @@ from n6705c.core.scpi import format_channel_list
 
 from .plan import SeqRow, to_functions
 
-__all__ = ["DEMO_SLOTS", "OutputsNotConfirmedOff", "fire_together", "run_plan"]
+__all__ = ["DEMO_SLOTS", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "run_plan"]
 
 #: The simulator configured like the real frames (four N6762A modules).
 DEMO_SLOTS = ("N6762A",) * 4
@@ -33,6 +33,10 @@ class OutputsNotConfirmedOff(RuntimeError):
     """The emergency stop ran but the mainframes did not report every output off."""
 
 
+class PlanRejected(ValueError):
+    """The plan failed validation; nothing was switched on or off."""
+
+
 def _outputs_off(group: InstrumentGroup) -> None:
     """``all_outputs_off`` swallows errors by design, so read the state back.
 
@@ -43,7 +47,12 @@ def _outputs_off(group: InstrumentGroup) -> None:
     problems = []
     for index, inst in enumerate(group.instruments, start=1):
         try:
-            if any(inst.output_state(inst.populated_channels).values()):
+            expected = inst.populated_channels
+            state = inst.output_state(expected)
+            # output_state zips query and channel lists, so a short reply is a short dict
+            if state.keys() != set(expected):
+                problems.append(f"frame {index} answered for {sorted(state)}, expected {expected}")
+            elif any(state.values()):
                 problems.append(f"frame {index} still reports an output on")
         except Exception as exc:  # noqa: BLE001 - an unreadable frame is not a confirmed-off frame
             problems.append(f"frame {index} unreadable ({exc})")
@@ -87,13 +96,24 @@ def _apply_levels(group: InstrumentGroup, functions) -> None:
     group.set_output([fn.channel for fn in functions], True)
 
 
+def _running(runner: GroupArbRunner) -> list[int]:
+    """Channels still running.  Unlike ``running_channels`` a failed query raises,
+    so a dead link is never mistaken for a finished sequence."""
+    return [
+        GlobalChannel(runner.group.instruments.index(frame.instrument) + 1, arb.spec.channel).index
+        for frame in runner.runners
+        for arb in frame.runners
+        if arb.is_running
+    ]
+
+
 def _wait(runner: GroupArbRunner) -> None:
     time.sleep(runner.total_duration)
     deadline = time.monotonic() + GRACE_SECONDS
-    while runner.running_channels:
+    while running := _running(runner):
         if time.monotonic() > deadline:
             raise RuntimeError(
-                f"channels {runner.running_channels} still running {GRACE_SECONDS:g} s "
+                f"channels {running} still running {GRACE_SECONDS:g} s "
                 "after the sequence should have ended"
             )
         time.sleep(0.05)
@@ -103,15 +123,18 @@ def run_plan(group: InstrumentGroup, rows: list[SeqRow], *, wait: bool = True) -
     """Run the table. With ``wait`` the outputs are switched off again at the end."""
     functions = to_functions(rows)
     if not functions:
-        raise ValueError("no enabled channels in the table")
+        raise PlanRejected("no enabled channels in the table")
     needed = max(GlobalChannel.from_index(fn.channel).frame for fn in functions)
     if needed > group.frame_count:
-        raise ValueError(
+        raise PlanRejected(
             f"the table uses frame {needed} but only {group.frame_count} "
             f"mainframe(s) are connected"
         )
 
-    runner = GroupArbRunner.from_plan(group, functions)  # validates against each module
+    try:
+        runner = GroupArbRunner.from_plan(group, functions)  # validates against each module
+    except Exception as exc:  # noqa: BLE001
+        raise PlanRejected(str(exc)) from exc
     try:
         _apply_levels(group, functions)
         runner.load()

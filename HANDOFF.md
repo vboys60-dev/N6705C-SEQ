@@ -3,7 +3,7 @@
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），
 在多台主機上依表上電。第一版只做時序，不做量測。目前設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-12　狀態：模擬器全過（38 tests），**尚未接過實機**。Codex 審查做完第 1 輪、第 2 輪未做（見 §8）。
+最後更新：2026-10-12　狀態：模擬器全過（42 tests），**尚未接過實機**。Codex 審查第 2 輪已核准（見 §8）。
 
 ## 0. 先讀這幾件事
 
@@ -16,7 +16,7 @@
 ```bash
 cd N6705C-SEQ
 pip install -e . --no-deps        # 舊專案需已安裝（n6705c-app）
-python3 -m pytest -q              # 38 passed
+python3 -m pytest -q              # 42 passed
 
 n6705c-seq check examples/powerup.csv                       # 只驗證、印時間軸，不碰儀器
 n6705c-seq check plan.csv --suggest-out fixed.csv           # 有跨台打平時，另存建議的通道分配
@@ -46,7 +46,7 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | `src/n6705c_seq/execute.py` | `run_plan`：驗證 → 設定電壓／電流並開輸出 → load → arm → 同時發 `*TRG` → 等待 → 關輸出 |
 | `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
 | `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（掃描／測試連線）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
-| `tests/` | `test_plan.py`（17）、`test_execute.py`（8）、`test_cli.py`（9）、`test_gui.py`（5：波形轉折點、刻度） |
+| `tests/` | `test_plan.py`（17）、`test_execute.py`（11）、`test_cli.py`（9）、`test_gui.py`（6：波形轉折點、刻度、設定檔） |
 | `docs/plan.md` | 實作計畫，已更新到打平建議（Task 5）；測試程式碼以 `tests/` 為準 |
 
 只用標準函式庫（csv、argparse、threading）。沒有 YAML。Python 3.13、pytest 8.4.2。
@@ -105,7 +105,7 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 4. **建議的分配只看起點先後**，不處理維持與下降階段的順序。
 5. 建議結果不知道哪條電源軌實際接哪個通道，只是起點。
 6. GUI 版面只在 macOS 用截圖看過；沒有「停止」鈕（時序只有約 100 ms）。
-7. **`_wait` 把「狀態查詢失敗」當成完成**：舊專案的 `running_channels` 會吞掉查詢例外，空結果就被當作跑完。目前靠 `total_duration` 的 sleep 加事後讀回關閉狀態兜底，沒改（Codex 第 1 輪 WARNING，刻意保留）。
+7. ~~`_wait` 把狀態查詢失敗當成完成~~：第 2 輪已修。`_running()` 直接走 `arb.is_running`，查詢失敗會丟例外 → 中止並確認關輸出。
 8. `fire_together` 的 barrier 逾時 5 s、各台 `*TRG` 仍沒有整體逾時，實際上限靠 VISA `--timeout`。
 
 ## 6. 沒做、也沒被要求的事
@@ -126,5 +126,11 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 ## 8. Codex 審查進度（`/codex-review:code`）
 
 - **第 1 輪（整個專案）**：3 CRITICAL、6 WARNING。已修 8 項（關閉視窗中途、0 A 電流限制、關輸出未確認、nan/inf、barrier、長序列刻度、設定檔壞掉、`--suggest-out`），commit `e93c66a`，並各補測試。**未修**：§5 第 7 點。
-- **第 2 輪**：送出時 `codex exec` 沒關 stdin 卡住，被中斷；尚未完成。重跑要加 `< /dev/null`，且**不要用 `| tail` 截輸出**（會拿不到 Codex session id，無法 `resume`）。
-- 要複查的項目：上面 8 項修正是否正確、有無退化；以及未修的 §5 第 7 點 Codex 是否仍視為阻擋。
+- **第 2 輪**（複查 `e93c66a`）：2 CRITICAL、2 WARNING，全部已修並補測試（未 commit）：
+  - `_outputs_off` 讀回不完整（`{}`、少通道）會被當成已關閉 → 現在要求回傳的通道 = `populated_channels`，否則 `OutputsNotConfirmedOff`。
+  - 驗證失敗（空表、台數不足、模組範圍）卻印「輸出已強制關閉」→ 新增 `PlanRejected(ValueError)`，CLI／GUI 改說「開輸出前被拒絕」。
+  - §5 第 7 點 → 查詢失敗現在讓整個執行失敗（見上）。
+  - GUI 設定檔加型別檢查（`resources` 為字串清單、`demo` 為 bool）。
+  - 另採納 SUGGESTION：逾時訊息的通道改為全域編號。
+  - 結果：`VERDICT: APPROVED`。
+- 第 2 輪沙箱為唯讀，Codex 只跑得了 26 個測試；完整 42 個我這邊全過。

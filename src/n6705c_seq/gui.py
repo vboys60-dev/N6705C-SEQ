@@ -15,7 +15,7 @@ from n6705c.core.group import CHANNELS_PER_FRAME, TRIGGER_SKEW_SECONDS, Instrume
 from n6705c.core.instrument import N6705C
 from n6705c.core.transport import list_resources
 
-from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, run_plan
+from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected, run_plan
 from .plan import SeqRow, load_csv, order_warnings, write_csv
 
 FRAMES = 2
@@ -57,8 +57,11 @@ def _load_config() -> dict:
     """Saved addresses; a missing or damaged file just means the defaults."""
     try:
         saved = json.loads(CONFIG.read_text())
-        resources = [r for r in saved["resources"] if isinstance(r, str)]
-        return {"resources": resources, "demo": bool(saved.get("demo", True))}
+        resources, demo = saved["resources"], saved["demo"]
+        if not (isinstance(resources, list) and all(isinstance(r, str) for r in resources)
+                and isinstance(demo, bool)):
+            raise TypeError("bad schema")
+        return {"resources": resources, "demo": demo}
     except (OSError, ValueError, KeyError, TypeError):
         return {"resources": [], "demo": True}
 
@@ -358,7 +361,11 @@ class App:
             run_plan(group, rows)
             self.queue.put(("done", "時序完成，輸出已關閉。"))
         except Exception as exc:  # noqa: BLE001 - run_plan already forced outputs off
-            note = "" if isinstance(exc, OutputsNotConfirmedOff) else "\n（輸出已強制關閉）"
+            note = (
+                "" if isinstance(exc, OutputsNotConfirmedOff)
+                else "\n（時序在開輸出前被拒絕）" if isinstance(exc, PlanRejected)
+                else "\n（輸出已強制關閉）"
+            )
             self.queue.put(("error", f"{exc}{note}"))
         finally:
             for inst in group.instruments:

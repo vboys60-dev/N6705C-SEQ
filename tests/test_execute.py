@@ -83,3 +83,34 @@ def test_a_shutdown_that_cannot_be_confirmed_is_an_error(monkeypatch):
     monkeypatch.setattr(N6705C, "all_outputs_off", lambda self: None)  # the stop silently does nothing
     with pytest.raises(OutputsNotConfirmedOff, match="still reports an output on"):
         run_plan(demo(1), [row(1)])
+
+
+def test_a_short_readback_is_not_a_confirmed_shutdown(monkeypatch):
+    from n6705c.core.instrument import N6705C
+    from n6705c_seq.execute import OutputsNotConfirmedOff
+
+    monkeypatch.setattr(N6705C, "output_state", lambda self, channels: {})
+    with pytest.raises(OutputsNotConfirmedOff, match="answered for"):
+        run_plan(demo(1), [row(1)])
+
+
+def test_a_failed_status_query_fails_the_run_and_turns_outputs_off(monkeypatch):
+    from n6705c.core.arb import ArbRunner
+
+    def dead(self):
+        raise TimeoutError("no answer")
+
+    monkeypatch.setattr(ArbRunner, "status", dead)
+    group = demo(1)
+    with pytest.raises(TimeoutError, match="no answer"):
+        run_plan(group, [row(1)])
+    monkeypatch.undo()
+    inst = group.instruments[0]
+    assert not any(inst.output_state(inst.populated_channels).values())
+
+
+def test_a_rejected_plan_is_reported_as_such():
+    from n6705c_seq.execute import PlanRejected
+
+    with pytest.raises(PlanRejected):
+        run_plan(demo(1), [row(1, high=500.0)])  # beyond the module's range

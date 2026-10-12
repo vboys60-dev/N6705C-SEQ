@@ -13,3 +13,16 @@ def test_waveform_corners_follow_delay_rise_hold_fall():
 @pytest.mark.parametrize("span, step", [(8, 1), (95.6, 10), (60_000, 10_000), (3_600_000, 500_000)])
 def test_tick_step_covers_long_sequences(span, step):
     assert _tick_step(span) == step
+
+
+def test_config_with_the_wrong_shape_falls_back_to_defaults(tmp_path, monkeypatch):
+    from n6705c_seq import gui
+
+    default = {"resources": [], "demo": True}
+    for text in ('{"resources":"TCPIP::h","demo":false}', '{"resources":[],"demo":"false"}', "[]"):
+        f = tmp_path / "c.json"
+        f.write_text(text)
+        monkeypatch.setattr(gui, "CONFIG", f)
+        assert gui._load_config() == default
+    f.write_text('{"resources":["A"],"demo":false}')
+    assert gui._load_config() == {"resources": ["A"], "demo": False}
