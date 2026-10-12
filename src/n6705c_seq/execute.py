@@ -8,12 +8,14 @@ off, because a rail left up half-sequenced is the case this tool exists to avoid
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 
 from n6705c.core.arb import ArbState, GroupArbRunner
 from n6705c.core.group import GlobalChannel, InstrumentGroup
 from n6705c.core.instrument import N6705C
+from n6705c.core.parsing import decode_real32, split_block_list
 from n6705c.core.scpi import format_channel_list
 from n6705c.core.transport import VisaTransport
 
@@ -26,6 +28,10 @@ DEMO_SLOTS = ("N6762A",) * 4
 
 #: How long past the programmed end a channel may still report running.
 GRACE_SECONDS = 2.0
+
+#: Digitizer record: points per channel, and the sample-interval grid (min 20.48 us).
+CAPTURE_POINTS = 6000
+CAPTURE_STEP = 20.48e-6
 
 #: How long a frame's trigger thread waits for the others before giving up.
 BARRIER_SECONDS = 5.0
@@ -106,29 +112,37 @@ def fire_together(actions: list) -> None:
         raise errors[0]
 
 
-def start_together(group: InstrumentGroup, functions) -> None:
+def _frames(group: InstrumentGroup, functions) -> list[tuple[N6705C, list[int]]]:
+    frames: dict[int, tuple[N6705C, list[int]]] = {}
+    for fn in functions:
+        instrument, local = group.instrument_for(fn.channel)
+        frames.setdefault(id(instrument), (instrument, []))[1].append(local)
+    return list(frames.values())
+
+
+def start_together(group: InstrumentGroup, functions, trigger_acquisition: bool = False) -> None:
     """Start every channel with one ``INIT:TRAN`` per frame.
 
     The tested unit (firmware F.1.1.0) starts an ARB the moment it is initiated,
     whatever ``TRIG:TRAN:SOUR`` says (BUS, EXT and PIN1 all ran without a ``*TRG``).
     Arming channel by channel therefore staggered them by ~13-22 ms each, so the
     start is a single list command per frame and the source is set to IMM to say
-    what really happens.  The simulator agrees: IMM runs at INIT.
+    what really happens.  The simulator agrees: IMM runs at INIT.  The digitizer
+    does wait for ``*TRG``, so a capture is released right after the INIT.
     """
-    frames: dict[int, tuple[N6705C, list[int]]] = {}
-    for fn in functions:
-        instrument, local = group.instrument_for(fn.channel)
-        frames.setdefault(id(instrument), (instrument, []))[1].append(local)
-    for instrument, channels in frames.values():
+    frames = _frames(group, functions)
+    for instrument, channels in frames:
         instrument.session.write_checked(f"TRIG:TRAN:SOUR IMM,{format_channel_list(channels)}")
 
     def start(instrument: N6705C, channels: list[int]):
         def go() -> None:
             instrument.session.write(f"INIT:TRAN {format_channel_list(channels)}")
+            if trigger_acquisition:
+                instrument.session.write("*TRG")
             instrument.session.check_errors("INIT:TRAN")
         return go
 
-    fire_together([start(inst, chans) for inst, chans in frames.values()])
+    fire_together([start(inst, chans) for inst, chans in frames])
 
 
 def _apply_levels(group: InstrumentGroup, functions) -> None:
@@ -165,11 +179,58 @@ def _wait(runner: GroupArbRunner) -> None:
         time.sleep(0.05)
 
 
+def _arm_capture(group: InstrumentGroup, functions, window: float) -> float:
+    """Set up the built-in digitizer (it must be INITed before the ARB starts) and
+    return its sample interval.  It records from the same ``*TRG`` as the ARB."""
+    tint = max(1, math.ceil(window / CAPTURE_POINTS / CAPTURE_STEP)) * CAPTURE_STEP
+    for instrument, channels in _frames(group, functions):
+        chan = format_channel_list(channels)
+        session = instrument.session
+        session.write_checked("FORM REAL")
+        session.write_checked("FORM:BORD SWAP")
+        for command in (
+            "SENS:FUNC:VOLT ON",
+            f"SENS:SWE:POIN {CAPTURE_POINTS}",
+            f"SENS:SWE:TINT {tint:.6E}",
+            "SENS:SWE:OFFS:POIN 0",
+            "TRIG:ACQ:SOUR BUS",
+        ):
+            session.write_checked(f"{command},{chan}")
+        session.write_checked(f"INIT:IMM:ACQ {chan}")
+    return tint
+
+
+def _fetch(group: InstrumentGroup, functions, tint: float, out: dict) -> None:
+    """Measured voltage per global channel as ``(sample interval, volts)``.
+
+    A failed fetch is recorded under ``"error"``, not raised: the capture is a
+    check on the run, and must not decide whether the outputs stay on.
+    """
+    for fn in functions:
+        instrument, local = group.instrument_for(fn.channel)
+        try:
+            raw = instrument.session.query_binary(f"FETC:ARR:VOLT? (@{local})")
+            out[fn.channel] = (tint, decode_real32(split_block_list(raw)[0], "SWAP").tolist())
+        except Exception as exc:  # noqa: BLE001
+            out["error"] = f"CH{fn.channel}: {exc}"
+            return
+
+
 def run_plan(
-    group: InstrumentGroup, rows: list[SeqRow], *, wait: bool = True, hold_dc: bool = False
+    group: InstrumentGroup,
+    rows: list[SeqRow],
+    *,
+    wait: bool = True,
+    hold_dc: bool = False,
+    capture: dict | None = None,
 ) -> GroupArbRunner:
     """Run the table. With ``wait`` the outputs are switched off again at the end,
-    unless ``hold_dc``: then each rail stops at its high level and stays on."""
+    unless ``hold_dc``: then each rail stops at its high level and stays on.
+
+    Pass a dict as ``capture`` to record every channel with the digitizer; it is
+    filled with ``{channel: (sample interval, volts)}`` (plus ``"error"`` if a fetch
+    failed).  The capture has to finish before the outputs go off, so a captured
+    run waits for the whole record."""
     functions = to_functions(rows, hold_dc)
     if not functions:
         raise PlanRejected("no enabled channels in the table")
@@ -187,12 +248,20 @@ def run_plan(
     try:
         _apply_levels(group, functions)
         runner.load()
-        start_together(group, functions)
+        window = tint = 0.0
+        if capture is not None:
+            window = runner.total_duration * 1.2 + 0.01
+            tint = _arm_capture(group, functions, window)
+        started = time.monotonic()
+        start_together(group, functions, capture is not None)
         for frame in runner.runners:
             frame.mark_triggered()
         runner.state = ArbState.RUNNING
         if wait:
             _wait(runner)
+            if capture is not None:
+                time.sleep(max(0.0, tint * CAPTURE_POINTS - (time.monotonic() - started)) + 0.05)
+                _fetch(group, functions, tint, capture)
             if not hold_dc:
                 outputs_off(group)
     except OutputsNotConfirmedOff:

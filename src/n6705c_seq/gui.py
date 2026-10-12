@@ -80,6 +80,8 @@ class App:
         self.resources = [tk.StringVar(value=r) for r in (saved["resources"] + [""] * FRAMES)[:FRAMES]]
         self.demo = tk.BooleanVar(value=saved["demo"])
         self.hold_dc = tk.BooleanVar(value=False)
+        self.capture = tk.BooleanVar(value=False)
+        self.measured: dict = {}  # channel -> (sample interval, volts) from the last captured run
         self.conn_status = [tk.StringVar() for _ in range(FRAMES)]
         self.message = tk.StringVar()
         self._connection_bar()
@@ -161,6 +163,7 @@ class App:
         ttk.Button(bar, text="儲存 CSV", command=self.save_csv).pack(side="left", padx=6)
         self.run_button = ttk.Button(bar, text="▶ 執行上電", command=self.run)
         self.run_button.pack(side="right")
+        ttk.Checkbutton(bar, text="擷取實測波形（數位化器）", variable=self.capture).pack(side="right", padx=12)
         self.off_button = ttk.Button(bar, text="■ 全部關閉", command=self.all_off)
         self.off_button.pack(side="right", padx=(0, 12))
         ttk.Checkbutton(
@@ -283,6 +286,14 @@ class App:
             y = lambda v: y_lo - (y_lo - y_hi) * (v - lo) / (hi - lo)  # noqa: E731
             pts = [(x(t * 1000), y(v)) for t, v in waveform(r, t_end / 1000, hold_dc)]
             c.create_line(*[p for pt in pts for p in pt], fill=color, width=2.5)
+            if r.channel in self.measured:
+                dt, volts = self.measured[r.channel]
+                stride = max(1, len(volts) // max(width, 1))
+                got = [(x(i * dt * 1000), y(volts[i])) for i in range(0, len(volts), stride) if i * dt * 1000 <= t_end]
+                if len(got) > 1:
+                    c.create_line(*[p for pt in got for p in pt], fill="#111827", width=1)
+            if r.channel in self.measured:
+                c.create_text(left - 6, y0 + lane / 2 + 14, text="黑線＝實測", fill="#111827", anchor="e", font=("", 8))
             c.create_text(left - 6, y0 + lane / 2, text=r.name, fill=color, anchor="e", font=("", 11, "bold"))
             arrow = dict(fill=color, dash=(4, 3), arrow="both")
             ym = (y_hi + y_lo) / 2  # delay and hold never overlap in time, so they share a line
@@ -358,10 +369,11 @@ class App:
             return
         self._save_config()
         self.busy = True
+        self.measured = {}
         self.run_button.state(["disabled"])
         self.off_button.state(["disabled"])
         threading.Thread(
-            target=self._work, args=(rows, frames, resources, demo, self.hold_dc.get()), daemon=True
+            target=self._work, args=(rows, frames, resources, demo, self.hold_dc.get(), self.capture.get()), daemon=True
         ).start()
 
     def all_off(self) -> None:
@@ -393,15 +405,19 @@ class App:
             for inst in group.instruments:
                 inst.close()
 
-    def _work(self, rows: list[SeqRow], frames: int, resources: list[str], demo: bool, hold_dc: bool) -> None:
+    def _work(self, rows: list[SeqRow], frames: int, resources: list[str], demo: bool, hold_dc: bool, capture: bool) -> None:
         try:
             group = InstrumentGroup.demo(frames, slots=DEMO_SLOTS) if demo else connect_group(resources)
         except Exception as exc:  # noqa: BLE001
             self.queue.put(("error", f"連線失敗：{exc}"))
             return
         try:
-            run_plan(group, rows, hold_dc=hold_dc)
-            self.queue.put(("done", "時序完成，輸出維持在高點（未關閉）。" if hold_dc else "時序完成，輸出已關閉。"))
+            cap: dict | None = {} if capture else None
+            run_plan(group, rows, hold_dc=hold_dc, capture=cap)
+            text = "時序完成，輸出維持在高點（未關閉）。" if hold_dc else "時序完成，輸出已關閉。"
+            if cap and "error" in cap:
+                text += f"\n實測波形擷取失敗：{cap.pop('error')}"
+            self.queue.put(("done", text, cap))
         except Exception as exc:  # noqa: BLE001 - run_plan already forced outputs off
             note = (
                 "" if isinstance(exc, OutputsNotConfirmedOff)
@@ -424,6 +440,9 @@ class App:
                 self.busy = False
                 self.run_button.state(["!disabled"])
                 self.off_button.state(["!disabled"])
+                if len(rest) > 1 and rest[1]:
+                    self.measured = rest[1]
+                    self.schedule()
                 (messagebox.showinfo if kind == "done" else messagebox.showerror)("執行結果", rest[0])
         self.root.after(100, self._poll)
 

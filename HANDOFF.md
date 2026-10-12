@@ -118,11 +118,13 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 - 忽略 hold／fall：改用 `RampArb`（delay → rise → 高點，`end_time=0`），`terminate_last` 把高點留成 DC；`run_plan(hold_dc=True)` 結束後**不關輸出**（出錯仍強制關）。
 - 實機：CH1 升到 1 V 後 3 s 仍 1.0004 V，斷線重連後輸出仍開著。GUI 有「■ 全部關閉」按鈕（連到已填的位址，`outputs_off` 關閉並讀回確認；Demo 模式不可用，執行中停用）；CLI 沒有對應指令。
 
-### 4.9 GUI 擷取實測波形：做過、已取消（使用者決定不要）
-程式已還原，不在 repo 內。若日後重做，實機踩過的順序（舊專案 `core/acquire.py` 的 `AcquireSession` 可重用）：
-- `INIT:ACQ` 要在 ARB load／arm **之前**，否則不會被共用的 `*TRG` 觸發（`FETC` 回 +303 且逾時，不是報錯）。
-- 要等擷取完成**再** `OUTP OFF`，否則關輸出會讓擷取作廢（約 1/8 機率）。
-- 模擬器不會產生真實軌壓（擷取到平的 0 V），只能在實機驗證。
+### 4.9 GUI 擷取實測波形（先做過、取消，後來重新加回）
+`run_plan(capture={})` 與 GUI 勾選「擷取實測波形（數位化器）」：實測電壓以黑線疊在預期波形上。實作在 `execute._arm_capture`／`_fetch`。
+- 擷取在 `start_together` 的每台執行緒裡，於 `INIT:TRAN` 後立刻送 `*TRG`（ARB 在 INIT 起跑，擷取等 `*TRG`），所以擷取時間軸比 ARB 起點晚一個 INIT→`*TRG` 間隔（同台實測 < 0.15 ms）。
+- `INIT:ACQ` 要在 ARB 啟動**之前**；要等整段記錄完成**再** `OUTP OFF`（否則擷取作廢），所以擷取時會多等到記錄結束。
+- 取回用 `FORM REAL`＋`FORM:BORD SWAP` 二進位（模擬器只回二進位）；每通道 6000 點、`SENS:SWE:TINT` 取 20.48 µs 的整數倍。
+- 取回失敗只記錄在 `capture["error"]`，不影響輸出開關。模擬器擷取到平的 0 V，只能在實機驗證。
+- 實機（3 通道）：50% 上升／下降點與設定相差 < 0.15 ms；`hold_dc` 時末端維持高點。
 
 ## 5. ⚠️ 尚未驗證
 
