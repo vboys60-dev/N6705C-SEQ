@@ -43,7 +43,7 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | 檔案 | 責任 |
 |---|---|
 | `src/n6705c_seq/plan.py` | `SeqRow`、`load_csv`／`write_csv`、`to_functions`、打平偵測 `order_warnings`、`suggest_assignment`、`timeline` |
-| `src/n6705c_seq/execute.py` | `run_plan`：驗證 → 設定電壓／電流並開輸出 → load → arm → 同時發 `*TRG` → 等待 → 關輸出 |
+| `src/n6705c_seq/execute.py` | `run_plan`：驗證 → 設定電壓／電流並開輸出 → load → arm → 同時發 `*TRG` → 等待 → 關輸出。另有 `connect_group` |
 | `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
 | `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（掃描／測試連線）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
 | `tests/` | `test_plan.py`（17）、`test_execute.py`（11）、`test_cli.py`（9）、`test_gui.py`（6：波形轉折點、刻度、設定檔） |
@@ -102,7 +102,17 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 - **這台的 `*IDN?` 型號欄位是固定亂碼**（`\xe4\x9b\xcf\xbe\xe1\xc4F`），舊函式庫用 ASCII 解碼會丟 `UnicodeDecodeError`。本專案用 `execute.connect_group()`（把 pyvisa `encoding` 設成 latin-1）繞過，舊專案沒改；連線時會印一行「not an N6705 family mainframe」警告，可忽略。CLI／GUI 都走這個函式。
 - 用 `MEAS:VOLT?` 連續取樣（約 40 Hz，沒有示波器）看 0.5 s 延遲、1 s 上升到 1 V、2 s 維持、1 s 下降：起點在 trigger 後約 0.53 s，斜率線性，維持 1.0003 V，下降後回到起始準位並停住，**`TRAP:END:TIM 0` 在 N6752A 上可用**。錯誤佇列前後皆為 `No error`，最後讀回輸出關閉。
 - 空接時 `MEAS:VOLT?` 在設定值 0 V 時讀到約 **20 mV**（執行前後相同），應是量測偏移或空載，沒用示波器確認。
-- 取樣只有 ~25 ms 解析度，**不能**驗證 ms 級的延遲精度；`examples/hw_smoke.csv` 是 150 ms 的冒煙測試表。
+- `MEAS:VOLT?` 輪詢只有 ~25 ms 解析度，不能驗證 ms 級精度；`examples/hw_smoke.csv` 是 150 ms 的冒煙測試表。
+- **機台內建數位化器可當示波器用**（`docs/hw_smoke_capture.png`）：`SENS:SWE:POIN 6000`、`SENS:SWE:TINT 40.96E-6`、`SENS:SWE:OFFS:POIN 0`、`TRIG:ACQ:SOUR BUS`（皆 `,(@1)`），在 `run_plan` **之前** `INIT:IMM:ACQ (@1)`，同一個 `*TRG` 就會同時啟動 ARB 與擷取，之後 `FETC:ARR:VOLT? (@1)`。`hw_smoke.csv` 實測：0.5 V 交越在 19.42 ms／139.55 ms（程式值 20／140 ms），差 < 0.6 ms；上升、維持、下降都正確。波形前後基線都是 ~20 mV（偏移，非時序問題），使 0.1 V 交越提早約 0.4 ms。
+  - 這是**同一台**自己的觸發時間基準，量不到**跨台**差。跨台仍需外部儀器或 §7 第 2 點的做法。
+  - `FETC:ARR:CURR?` 預設無效（+303 no valid acquisition），要先啟用電流擷取；沒做。
+- **`DISP:VIEW SCOPe` 在韌體 F.1.1.0 不支援**（-224），只有 `METER1`／`METER4`；前面板 Scope View 只能手動切。`HCOP:SDUM:DATA?` 可回 320×240 PNG 螢幕截圖。
+
+### 4.9 GUI 擷取實測波形：做過、已取消（使用者決定不要）
+程式已還原，不在 repo 內。若日後重做，實機踩過的順序（舊專案 `core/acquire.py` 的 `AcquireSession` 可重用）：
+- `INIT:ACQ` 要在 ARB load／arm **之前**，否則不會被共用的 `*TRG` 觸發（`FETC` 回 +303 且逾時，不是報錯）。
+- 要等擷取完成**再** `OUTP OFF`，否則關輸出會讓擷取作廢（約 1/8 機率）。
+- 模擬器不會產生真實軌壓（擷取到平的 0 V），只能在實機驗證。
 
 ## 5. ⚠️ 尚未驗證
 
