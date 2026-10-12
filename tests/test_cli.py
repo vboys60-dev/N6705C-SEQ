@@ -64,3 +64,11 @@ def test_suggest_out_with_no_solution_fails_and_writes_nothing(tmp_path, capsys)
     assert main(["check", str(plan), "--suggest-out", str(out_file)]) == 1
     assert "No frame assignment" in capsys.readouterr().out
     assert not out_file.exists()
+
+
+def test_suggest_out_still_writes_a_file_when_there_is_nothing_to_fix(tmp_path, capsys):
+    table = tmp_path / "ok.csv"
+    table.write_text("enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms\n1,A,1,0,1,1,1,1\n")
+    out = tmp_path / "out.csv"
+    assert main(["check", str(table), "--suggest-out", str(out)]) == 0
+    assert out.exists()

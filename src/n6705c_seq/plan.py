@@ -7,6 +7,7 @@ matches the table the sequence is designed in, disabled rows included.
 from __future__ import annotations
 
 import csv
+import math
 from dataclasses import dataclass, replace
 from itertools import combinations
 from pathlib import Path
@@ -62,6 +63,8 @@ def _number(row: dict, column: str, line: int) -> float:
         value = float(text)
     except ValueError:
         raise ValueError(f"line {line}, column {column}: {text!r} is not a number") from None
+    if not math.isfinite(value):
+        raise ValueError(f"line {line}, column {column}: {text} is not a finite number")
     if value < 0:
         raise ValueError(f"line {line}, column {column}: {text} is negative")
     return value
@@ -86,6 +89,8 @@ def load_csv(path: str | Path) -> list[SeqRow]:
         for number, raw in enumerate(reader, start=1):
             line = reader.line_num
             limit = (raw.get("current_limit_a") or "").strip()
+            if limit and _number(raw, "current_limit_a", line) == 0:
+                raise ValueError(f"line {line}, column current_limit_a: 0 A is not a limit; leave it blank for none")
             rows.append(
                 SeqRow(
                     channel=number,

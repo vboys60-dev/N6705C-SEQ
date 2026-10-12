@@ -4,6 +4,7 @@ addresses and run.  Plain tkinter -- no extra dependency."""
 from __future__ import annotations
 
 import json
+import math
 import queue
 import threading
 import tkinter as tk
@@ -14,7 +15,7 @@ from n6705c.core.group import CHANNELS_PER_FRAME, TRIGGER_SKEW_SECONDS, Instrume
 from n6705c.core.instrument import N6705C
 from n6705c.core.transport import list_resources
 
-from .execute import DEMO_SLOTS, run_plan
+from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, run_plan
 from .plan import SeqRow, load_csv, order_warnings, write_csv
 
 FRAMES = 2
@@ -45,8 +46,21 @@ def waveform(row: SeqRow, t_end: float) -> list[tuple[float, float]]:
     return [(0, row.low_v), (t1, row.low_v), (t2, row.high_v), (t3, row.high_v), (t4, row.low_v), (t_end, row.low_v)]
 
 
-def _tick_step(span_ms: float) -> float:
-    return next(s for s in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000) if span_ms / s <= 10)
+def _tick_step(span_ms: float) -> int:
+    """1/2/5 x 10^k ms, at most ~10 ticks, never below 1 ms."""
+    raw = max(span_ms / 10, 1)
+    decade = 10 ** math.floor(math.log10(raw))
+    return int(next(m * decade for m in (1, 2, 5, 10) if m * decade >= raw))
+
+
+def _load_config() -> dict:
+    """Saved addresses; a missing or damaged file just means the defaults."""
+    try:
+        saved = json.loads(CONFIG.read_text())
+        resources = [r for r in saved["resources"] if isinstance(r, str)]
+        return {"resources": resources, "demo": bool(saved.get("demo", True))}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"resources": [], "demo": True}
 
 
 class App:
@@ -57,9 +71,9 @@ class App:
         self.busy = False
         self._pending = None
         self.forms: list[dict] = []
-        saved = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
-        self.resources = [tk.StringVar(value=r) for r in (saved.get("resources", []) + [""] * FRAMES)[:FRAMES]]
-        self.demo = tk.BooleanVar(value=saved.get("demo", True))
+        saved = _load_config()
+        self.resources = [tk.StringVar(value=r) for r in (saved["resources"] + [""] * FRAMES)[:FRAMES]]
+        self.demo = tk.BooleanVar(value=saved["demo"])
         self.conn_status = [tk.StringVar() for _ in range(FRAMES)]
         self.message = tk.StringVar()
         self._connection_bar()
@@ -70,7 +84,15 @@ class App:
         self.canvas.pack(fill="both", expand=True, padx=10, pady=(4, 10))
         self.canvas.bind("<Configure>", lambda _e: self.schedule())
         root.after(100, self._poll)
+        root.protocol("WM_DELETE_WINDOW", self.close)
         self.schedule()
+
+    def close(self) -> None:
+        # The worker is a daemon thread: quitting mid-run would skip run_plan's shutdown.
+        if self.busy:
+            messagebox.showwarning("執行中", "時序執行中，請等它結束再關閉視窗。")
+        else:
+            self.root.destroy()
 
     # -- layout ---------------------------------------------------------------
 
@@ -145,7 +167,7 @@ class App:
             for key, unit in NUMERIC.items():
                 try:
                     v = float(f[key].get())
-                    if v < 0:
+                    if v < 0 or not math.isfinite(v):
                         raise ValueError
                 except ValueError:
                     if on:
@@ -155,9 +177,11 @@ class App:
             limit = f["limit"].get().strip()
             try:
                 current = float(limit) if limit else None
+                if current is not None and not (math.isfinite(current) and current > 0):
+                    raise ValueError
             except ValueError:
                 if on:
-                    raise ValueError(f"{label}：電流限制不是數字") from None
+                    raise ValueError(f"{label}：電流限制必須是大於 0 的數字（不限制請留空）") from None
                 current = None
             rows.append(
                 SeqRow(i, on, label, vals["delay"], vals["low"], vals["high"], vals["rise"], vals["hold"], vals["fall"], current)
@@ -199,7 +223,10 @@ class App:
             return messagebox.showerror("欄位錯誤", str(exc))
         path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")])
         if path:
-            write_csv(rows, path)
+            try:
+                write_csv(rows, path)
+            except OSError as exc:
+                messagebox.showerror("儲存失敗", str(exc))
 
     # -- chart ----------------------------------------------------------------
 
@@ -230,7 +257,7 @@ class App:
         lane = (height - top - bottom) / len(live)
 
         step = _tick_step(t_end)
-        for tick in range(0, int(t_end) + 1, int(step) if step >= 1 else 1):
+        for tick in range(0, int(t_end) + 1, step):
             c.create_line(x(tick), top, x(tick), height - bottom, fill="#e5e7eb")
             c.create_text(x(tick), height - bottom + 12, text=f"{tick:g}", fill="#475569")
         c.create_text(x(t_end), height - bottom + 12, text=f"{t_end:.1f}", fill="#475569")
@@ -331,7 +358,8 @@ class App:
             run_plan(group, rows)
             self.queue.put(("done", "時序完成，輸出已關閉。"))
         except Exception as exc:  # noqa: BLE001 - run_plan already forced outputs off
-            self.queue.put(("error", f"{exc}\n（輸出已強制關閉）"))
+            note = "" if isinstance(exc, OutputsNotConfirmedOff) else "\n（輸出已強制關閉）"
+            self.queue.put(("error", f"{exc}{note}"))
         finally:
             for inst in group.instruments:
                 inst.close()

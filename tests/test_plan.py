@@ -135,3 +135,18 @@ def test_written_csv_loads_back_the_same(tmp_path):
         assert (a.delay, a.low_v, a.high_v, a.rise, a.hold, a.fall) == pytest.approx(
             (b.delay, b.low_v, b.high_v, b.rise, b.hold, b.fall)
         )
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf"])
+def test_non_finite_numbers_are_rejected(tmp_path, bad):
+    path = tmp_path / "p.csv"
+    path.write_text(f"enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms\n1,A,{bad},0,1,1,1,1\n")
+    with pytest.raises(ValueError, match="delay_ms.*finite"):
+        load_csv(path)
+
+
+def test_a_zero_current_limit_is_rejected_not_silently_dropped(tmp_path):
+    path = tmp_path / "p.csv"
+    path.write_text("enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a\n1,A,1,0,1,1,1,1,0\n")
+    with pytest.raises(ValueError, match="current_limit_a.*0 A"):
+        load_csv(path)

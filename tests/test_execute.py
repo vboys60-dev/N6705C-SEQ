@@ -74,3 +74,12 @@ def test_outputs_are_forced_off_if_the_trigger_fails(monkeypatch):
         run_plan(group, [row(1), row(5)])
     for inst in group.instruments:
         assert not any(inst.output_state(inst.populated_channels).values())
+
+
+def test_a_shutdown_that_cannot_be_confirmed_is_an_error(monkeypatch):
+    from n6705c.core.instrument import N6705C
+    from n6705c_seq.execute import OutputsNotConfirmedOff
+
+    monkeypatch.setattr(N6705C, "all_outputs_off", lambda self: None)  # the stop silently does nothing
+    with pytest.raises(OutputsNotConfirmedOff, match="still reports an output on"):
+        run_plan(demo(1), [row(1)])

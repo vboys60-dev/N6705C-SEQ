@@ -12,7 +12,7 @@ from n6705c.core.group import (
     InstrumentGroup,
 )
 
-from .execute import DEMO_SLOTS, run_plan
+from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, run_plan
 from .plan import load_csv, order_warnings, suggest_assignment, timeline, write_csv
 
 
@@ -46,7 +46,7 @@ def _report(rows, suggest_out: str | None = None) -> int:
     for warning in warnings:
         print(f"WARNING: {warning}")
     if not warnings:
-        return 0
+        return _write(rows, suggest_out, "No cross-frame ties; wrote the table unchanged")
     frames = -(-max(r.channel for r in rows if r.enabled) // CHANNELS_PER_FRAME)
     result = suggest_assignment(rows, TRIGGER_SKEW_SECONDS, frames)
     if result is None:
@@ -64,10 +64,20 @@ def _report(rows, suggest_out: str | None = None) -> int:
     for row, channel in moves:
         print(f"  {row.name}: {row.label} -> {GlobalChannel.from_index(channel).label()}")
     if suggest_out:
-        write_csv(new_rows, suggest_out)
-        print(f"Wrote {suggest_out}. Rewire the rails to match, then run that file.")
-    else:
-        print("Add --suggest-out FILE to write the adjusted table.")
+        return _write(new_rows, suggest_out, "Rewire the rails to match, then run that file")
+    print("Add --suggest-out FILE to write the adjusted table.")
+    return 0
+
+
+def _write(rows, path: str | None, note: str) -> int:
+    if not path:
+        return 0
+    try:
+        write_csv(rows, path)
+    except OSError as exc:
+        print(f"error: cannot write {path}: {exc}", file=sys.stderr)
+        return 1
+    print(f"Wrote {path}. {note}.")
     return 0
 
 
@@ -107,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
         print("interrupted; outputs forced off", file=sys.stderr)
         return 130
     except Exception as exc:  # noqa: BLE001 - run_plan already forced outputs off
-        print(f"error: {exc}; outputs forced off", file=sys.stderr)
+        forced = "" if isinstance(exc, OutputsNotConfirmedOff) else "; outputs forced off"
+        print(f"error: {exc}{forced}", file=sys.stderr)
         return 1
     finally:
         for instrument in group.instruments:

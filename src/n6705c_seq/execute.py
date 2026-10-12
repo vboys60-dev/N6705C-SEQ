@@ -17,13 +17,38 @@ from n6705c.core.scpi import format_channel_list
 
 from .plan import SeqRow, to_functions
 
-__all__ = ["DEMO_SLOTS", "fire_together", "run_plan"]
+__all__ = ["DEMO_SLOTS", "OutputsNotConfirmedOff", "fire_together", "run_plan"]
 
 #: The simulator configured like the real frames (four N6762A modules).
 DEMO_SLOTS = ("N6762A",) * 4
 
 #: How long past the programmed end a channel may still report running.
 GRACE_SECONDS = 2.0
+
+#: How long a frame's trigger thread waits for the others before giving up.
+BARRIER_SECONDS = 5.0
+
+
+class OutputsNotConfirmedOff(RuntimeError):
+    """The emergency stop ran but the mainframes did not report every output off."""
+
+
+def _outputs_off(group: InstrumentGroup) -> None:
+    """``all_outputs_off`` swallows errors by design, so read the state back.
+
+    ``OUTP?`` is the commanded state, not the rail voltage -- it proves the write
+    arrived, nothing more.
+    """
+    group.all_outputs_off()
+    problems = []
+    for index, inst in enumerate(group.instruments, start=1):
+        try:
+            if any(inst.output_state(inst.populated_channels).values()):
+                problems.append(f"frame {index} still reports an output on")
+        except Exception as exc:  # noqa: BLE001 - an unreadable frame is not a confirmed-off frame
+            problems.append(f"frame {index} unreadable ({exc})")
+    if problems:
+        raise OutputsNotConfirmedOff("could not confirm outputs off: " + "; ".join(problems))
 
 
 def fire_together(runners: list[MultiArbRunner]) -> None:
@@ -36,8 +61,8 @@ def fire_together(runners: list[MultiArbRunner]) -> None:
     errors: list[BaseException] = []
 
     def fire(runner: MultiArbRunner) -> None:
-        barrier.wait()
         try:
+            barrier.wait(BARRIER_SECONDS)
             runner.trigger()
         except BaseException as exc:  # noqa: BLE001 - re-raised below
             errors.append(exc)
@@ -57,7 +82,7 @@ def _apply_levels(group: InstrumentGroup, functions) -> None:
         instrument, local = group.instrument_for(fn.channel)
         chan = format_channel_list(local)
         instrument.session.write_checked(f"VOLT {fn.voltage:.6G},{chan}")
-        if fn.current:
+        if fn.current:  # the table rejects a 0 A limit, so 0.0 here only ever means "none"
             instrument.session.write_checked(f"CURR {fn.current:.6G},{chan}")
     group.set_output([fn.channel for fn in functions], True)
 
@@ -95,8 +120,13 @@ def run_plan(group: InstrumentGroup, rows: list[SeqRow], *, wait: bool = True) -
         runner.state = ArbState.RUNNING
         if wait:
             _wait(runner)
-            group.all_outputs_off()
-    except BaseException:
-        group.all_outputs_off()
+            _outputs_off(group)
+    except OutputsNotConfirmedOff:
+        raise
+    except BaseException as exc:
+        try:
+            _outputs_off(group)
+        except OutputsNotConfirmedOff as off:
+            raise OutputsNotConfirmedOff(f"{exc}; also {off}") from exc
         raise
     return runner
