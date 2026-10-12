@@ -10,7 +10,10 @@ pyinstaller packaging\n6705c_seq.spec --noconfirm
 if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
 
 # A build can import everything and still miss a backend; run the real path (simulator).
-& "$app\n6705c-seq-cli.exe" run examples\powerup.csv --demo --yes
+# Resolve to an absolute path first: the `&` call operator can misresolve a relative
+# exe path when the working directory is a UNC path (e.g. a mapped \\server\share).
+$cli = (Resolve-Path "$app\n6705c-seq-cli.exe").Path
+& $cli run examples\powerup.csv --demo --yes
 if ($LASTEXITCODE -ne 0) { throw "self-test failed" }
 
 Copy-Item examples -Destination $app -Recurse

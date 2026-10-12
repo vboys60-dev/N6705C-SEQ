@@ -4,12 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "n6705c-seq"
-version = "0.1.0"
+version = "0.1.2"
 description = "Multi-mainframe power-up sequencing for Keysight N6705C"
 requires-python = ">=3.11"
 dependencies = [
     "pyvisa>=1.14",
-    "pyvisa-py>=0.7",   # pure-Python backend; required on macOS (LAN only)
+    "pyvisa-py>=0.7",   # pure-Python backend; LAN always, USB (USBTMC) with pyusb below
+    "pyusb>=1.2",       # USBTMC transport for pyvisa-py
+    "libusb-package>=1.0",  # bundled libusb DLL so pyusb works without a system install
     "numpy>=1.26",
 ]
 

@@ -13,13 +13,20 @@
 | Python | >= 3.11 | 已在 3.13 測試 |
 | tkinter | 隨 Python 附帶 | GUI 用；Linux 需另裝 `python3-tk` |
 | `pyvisa` | >= 1.14 | 隨本專案安裝 |
-| `pyvisa-py` | >= 0.7 | 純 Python 後端；macOS 走 LAN 時必要（隨本專案安裝） |
+| `pyvisa-py` | >= 0.7 | 純 Python 後端；LAN 一定可用，搭配下面兩項也能走 USB（隨本專案安裝） |
+| `pyusb` | >= 1.2 | `pyvisa-py` 走 USB（USBTMC）所需（隨本專案安裝） |
+| `libusb-package` | >= 1.0 | 附帶 libusb DLL，讓 `pyusb` 不必另裝系統 libusb（隨本專案安裝） |
 | `numpy` | >= 1.26 | 隨本專案安裝 |
 | `pytest` | >= 8 | 只有跑測試才需要（`dev` extra） |
 
 儀器控制核心（`src/n6705c/core`）已內含在本專案，不需要另外安裝舊專案 `N6705C-APP`。
 
-USB 連線（`USB0::...::INSTR`）需要系統安裝 Keysight／NI VISA；只用 LAN 或 `pyvisa-py` 則不需要。
+USB 連線（`USB0::...::INSTR`）有兩條路：
+
+1. 系統安裝 Keysight IO Libraries／NI-VISA（LAN、USB、GPIB 都可用）。
+2. 不裝 VISA，改用 `pyvisa-py` + `pyusb` + `libusb-package`（只有 LAN 與 USB，沒有 GPIB）。**Windows 上要先把儀器的 USB 驅動換成 WinUSB**（例如用 Zadig），換了之後 Keysight IO Libraries 就認不到這台儀器，兩條路不能並用。這條路尚未在實機驗證。
+
+只用 LAN（`TCPIP...`）則兩者都不需要。
 
 ## 安裝
 
@@ -86,7 +93,7 @@ enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a
 
 **使用者（不需要 Python）：** 從 GitHub Releases 下載 `N6705C-SEQ-<版本>-windows-x64.zip`，解壓縮後執行 `N6705C-SEQ.exe`（GUI）；命令列版是同資料夾的 `n6705c-seq-cli.exe`。
 
-- 連 USB 儀器前，電腦要先安裝 **Keysight IO Libraries Suite** 或 **NI-VISA**（執行檔不含 VISA 驅動）。只用 LAN 且 VISA 資源填 `TCPIP...` 時，`pyvisa-py` 已內含，可不裝。
+- 連 USB 儀器前，電腦要先安裝 **Keysight IO Libraries Suite** 或 **NI-VISA**（執行檔不含 VISA 驅動）；或改用內含的 `pyvisa-py` + `pyusb` + libusb DLL，但儀器的 USB 驅動須是 WinUSB（見上方，尚未實機驗證）。只用 LAN 且 VISA 資源填 `TCPIP...` 時，兩者都不需要。
 - 沒有程式碼簽章，第一次執行 Windows SmartScreen 會警告：點「其他資訊」→「仍要執行」。
 
 **發佈者：**

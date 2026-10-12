@@ -15,7 +15,7 @@
 
 ```bash
 cd N6705C-SEQ
-pip install -e ".[dev]"           # 依賴：pyvisa、pyvisa-py、numpy（不需要舊專案）
+pip install -e ".[dev]"           # 依賴：pyvisa、pyvisa-py、pyusb、libusb-package、numpy（不需要舊專案）
 python3 -m pytest -q              # 46 passed
 
 n6705c-seq check examples/powerup.csv                       # 只驗證、印時間軸，不碰儀器
@@ -49,7 +49,7 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | `tests/` | `test_plan.py`（17）、`test_execute.py`（11）、`test_cli.py`（9）、`test_gui.py`（6：波形轉折點、刻度、設定檔） |
 | `docs/plan.md` | 實作計畫，已更新到打平建議（Task 5）；測試程式碼以 `tests/` 為準 |
 
-本專案只用標準函式庫；核心用 pyvisa、pyvisa-py、numpy。沒有 YAML。Python 3.13、pytest 8.4.2。
+本專案只用標準函式庫；核心用 pyvisa、pyvisa-py、pyusb、libusb-package、numpy。沒有 YAML。Python 3.13、pytest 8.4.2。
 
 每個通道 = 一個 `TrapezoidArb`：`start_level=low_v`、`start_time=delay`、`rise_time`、`top_level=high_v`、`top_time=hold`、`fall_time`、`end_time=0`，`terminate_last=True`。
 
@@ -130,11 +130,21 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 
 - 使用者下載 GitHub Release 的 `N6705C-SEQ-<版本>-windows-x64.zip`，解壓後執行 `N6705C-SEQ.exe`（GUI）或 `n6705c-seq-cli.exe`。
 - **USB 儀器要先在該電腦裝 Keysight IO Libraries 或 NI-VISA**，執行檔不含 VISA 驅動。LAN（`TCPIP...`）由內含的 `pyvisa-py` 處理。
+- **無 VISA 的 USB 路徑（未實機驗證）**：spec 已把 `usb` 與 libusb DLL 打進去，`transport._register_libusb()` 在開 `@py` 前讓 pyusb 找到該 DLL（做法是包裝 `usb.core.find`，非 pyvisa-py 標準機制；若實機仍列不出 USB 資源，先查這裡）。Windows 需把儀器驅動換成 WinUSB（Zadig），之後 Keysight IO Libraries 認不到該儀器。
 - 沒有程式碼簽章，SmartScreen 會警告。
 - `packaging/`：`n6705c_seq.spec`（PyInstaller onedir，GUI + CLI 兩個 exe）、`build.ps1`（建置 → 用 `--demo` 自我測試 → 打包 zip）、`gui_entry.py`／`cli_entry.py`。
 - `.github/workflows/ci.yml`：push／PR 在 Windows、macOS、Ubuntu × Python 3.11、3.13 跑 pytest；通過後建 Windows zip；推 `v*` tag 才建立 Release。
 - 發版：改 `pyproject.toml` 的 version → `git tag vX.Y.Z && git push origin vX.Y.Z`。
-- 已驗證：CI 全綠、macOS 本機打包的 CLI／GUI 能跑。**未驗證**：真正在 Windows 11 開 GUI、接實機。
+- 已驗證：CI 全綠、macOS 本機打包的 CLI／GUI 能跑。**2026-10-12 補上**：Windows 11 本機（Python 3.12.8）`pip install -e ".[dev,build]"` → 46 測試全過 → `packaging\build.ps1` 打包成功，`N6705C-SEQ.exe` 開得起來（視窗存活）、`n6705c-seq-cli.exe --demo --yes` 跑完輸出正確。**仍未驗證**：接實機。
+  - 修了兩個打包問題：① `n6705c_seq.spec` 的 `collect_submodules("pyvisa_py")` 會連 `pyvisa_py.testsuite` 一起收進來，分析期間 import 到 `pyvisa.testsuite` 會讓 PyInstaller 的 isolated subprocess 當掉（`STATUS_STACK_BUFFER_OVERRUN`）；改成過濾掉 `pyvisa_py.testsuite` 並加進 `excludes`。② `build.ps1` 用 `& "$app\n6705c-seq-cli.exe" ...` 相對路徑呼叫，在 UNC 工作目錄（`\\server\share\...`）下 PowerShell 5.1 會誤判成要載入模組（`The module 'dist' could not be loaded`）；改成先 `Resolve-Path` 成絕對路徑再呼叫。
+
+### 4.13 Windows 上「開 IVI 後端就讓整個程式當機」（2026-10-12 修）
+- **症狀**：使用者回報 GUI 點「掃描」會直接當機、視窗關閉；執行完 exe 本身偶爾也會當機。
+- **根因**：`pyvisa.ResourceManager("")`（走系統原生 VISA）在這台機器上**不是丟 Python 例外，而是直接讓整個行程當掉**（`exit code -1073740791` = `STATUS_STACK_BUFFER_OVERRUN`）。確認過：`C:\WINDOWS\system32\visa32.dll`／`visa64.dll` 存在（IVI Foundation 的轉發／路由 DLL，`8.0.7331.0`），但背後沒有真正掛上任何廠商 VISA（Keysight IO Libraries／NI-VISA）實作——只裝了共用元件、沒裝完整驅動時常見的半殘狀態。`try/except Exception` 包不住這種行程層級的當機，`VisaTransport.__init__`、`list_resources()`、`native_visa_available()` 三個地方原本都直接在主行程呼叫 `pyvisa.ResourceManager("")`，踩到就整支程式消失。
+- **修法**（`src/n6705c/core/transport.py`）：新增 `_native_backend_safe()`，用 `multiprocessing.Process` 把 `pyvisa.ResourceManager("")` 丟到一個用過就丟的子行程裡探測；子行程崩掉或在逾時（預設 8 s，一個 deadline 預算，不是兩段相加）內沒回應都當作「原生後端不安全」。結果快取整個程式生命週期內只探測一次。三個呼叫點都改走新的 `_candidates(backend)`，`backend="auto"` 時原生後端不安全就直接跳過、只留 `"@py"`。`packaging/gui_entry.py`、`cli_entry.py` 加了 `multiprocessing.freeze_support()`（Windows 上凍結執行檔用 `multiprocessing.Process` 的必要條件）。
+- **驗證**：源碼直接呼叫 `native_visa_available()` 不再讓 Python 行程消失（回傳 `False`，約 8 s 內有結果，不是等到真正當機的 ~29 s）；打包後的 `n6705c-seq-cli.exe run ... --resource "USB0::..."`（真的走 `VisaTransport`）不再當機，乾淨印出 `connection failed: ... Please install PyUSB` 並以 exit code 1 結束。GUI 本身因為 tkinter 元件不會註冊進 Windows UI Automation 樹，没能自動化點擊「掃描」驗證，但掃描跟連線走的是同一個 `_candidates()`／`_native_backend_safe()`，CLI 路徑驗證過即視為等價覆蓋。
+- ⚠️ **（以下為修補當時的狀況；之後已加入 `pyusb`／`libusb-package`，見 §4.12「無 VISA 的 USB 路徑」，仍待實機驗證）這修法只讓程式不當機，不能讓 USB 真的動起來**：這台機器仍然沒有可用的原生 VISA，`@py` 後端沒裝 `pyusb` 也碰不到 USB 儀器，所以掃描/連線 USB 資源仍會回空清單／清楚的錯誤（而不是當機）。要接 USB 實機，使用者電腦還是要裝好 Keysight IO Libraries Suite 或 NI-VISA（完整安裝，不是只剩 IVI 共用元件）。LAN（`TCPIP::...`）不受影響，`@py` 原生支援。
+- 這個 bug 在 `n6705c.core`（§0 第 1 點提到的「已複製進本專案」核心），舊專案 `N6705C-APP` 若也有同一份 `transport.py`，建議手動同步這次的修法。
 
 ## 5. ⚠️ 尚未驗證
 

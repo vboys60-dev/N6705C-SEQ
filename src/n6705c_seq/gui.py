@@ -13,7 +13,6 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from n6705c.core.group import CHANNELS_PER_FRAME, TRIGGER_SKEW_SECONDS, InstrumentGroup
 from n6705c.core.instrument import N6705C
-from n6705c.core.transport import list_resources
 
 from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, outputs_off, run_plan
 from .plan import SeqRow, load_csv, order_warnings, write_csv
@@ -74,7 +73,6 @@ class App:
         root.title("N6705C 上電時序工具-品勛科技股份有限公司 免費提供 ")
         self.queue: queue.Queue = queue.Queue()
         self.busy = False
-        self.scanning = False
         self._pending = None
         self.forms: list[dict] = []
         saved = _load_config()
@@ -106,19 +104,16 @@ class App:
     # -- layout ---------------------------------------------------------------
 
     def _connection_bar(self) -> None:
-        bar = ttk.LabelFrame(self.root, text="機台連線（VISA 位址，例：TCPIP0::192.168.1.10::inst0::INSTR 或 USB0::...）")
+        bar = ttk.LabelFrame(self.root, text="機台連線（直接貼上 VISA 位址，例：TCPIP0::192.168.1.10::inst0::INSTR 或 USB0::...）")
         bar.pack(fill="x", padx=10, pady=(10, 4))
         bar.columnconfigure(1, weight=1)
-        self.boxes = []
         for i in range(FRAMES):
             ttk.Label(bar, text=f"機台 {i + 1}（CH{i * CHANNELS_PER_FRAME + 1}–{(i + 1) * CHANNELS_PER_FRAME}）").grid(
                 row=i, column=0, padx=6, pady=3, sticky="w"
             )
-            box = ttk.Combobox(bar, textvariable=self.resources[i])
+            box = ttk.Entry(bar, textvariable=self.resources[i])
             box.grid(row=i, column=1, sticky="ew", padx=6)
-            self.boxes.append(box)
             ttk.Label(bar, textvariable=self.conn_status[i], width=34).grid(row=i, column=2, padx=6, sticky="w")
-        ttk.Button(bar, text="掃描", command=self.scan).grid(row=0, column=3, padx=6)
         ttk.Button(bar, text="測試連線", command=self.test_connection).grid(row=1, column=3, padx=6)
         ttk.Checkbutton(bar, text="Demo（模擬器）", variable=self.demo).grid(row=0, column=4, rowspan=2, padx=8)
 
@@ -315,23 +310,6 @@ class App:
     def _save_config(self) -> None:
         CONFIG.write_text(json.dumps({"resources": [v.get() for v in self.resources], "demo": self.demo.get()}))
 
-    def scan(self) -> None:
-        # list_resources can block for a long time on Windows (LAN/USB probing): keep it off the Tk thread.
-        if self.scanning:
-            return
-        self.scanning = True
-        self.message.set("掃描中…")
-        threading.Thread(target=lambda: self.queue.put(("scan", list_resources())), daemon=True).start()
-
-    def _scan_done(self, found: list[str]) -> None:
-        self.scanning = False
-        for box in self.boxes:
-            box["values"] = found
-        for var, res in zip(self.resources, found):
-            if not var.get():
-                var.set(res)
-        self.message.set(f"找到 {len(found)} 個 VISA 資源" if found else "找不到 VISA 資源，請手動輸入位址")
-
     def test_connection(self) -> None:
         if self.busy:
             return
@@ -441,9 +419,7 @@ class App:
     def _poll(self) -> None:
         while not self.queue.empty():
             kind, *rest = self.queue.get()
-            if kind == "scan":
-                self._scan_done(rest[0])
-            elif kind == "status":
+            if kind == "status":
                 self.conn_status[rest[0]].set(rest[1])
             elif kind == "idle":
                 self.busy = False

@@ -6,22 +6,30 @@ more antivirus false positives).  Two executables share one folder: the windowed
 ``N6705C-SEQ.exe`` and the console ``n6705c-seq-cli.exe`` (a windowed exe cannot
 print, so the build self-test runs the CLI).
 
-VISA is NOT bundled: USB needs Keysight IO Libraries or NI-VISA on the target PC.
+Vendor VISA is NOT bundled.  USB works either through Keysight IO Libraries / NI-VISA
+on the target PC, or through pyvisa-py + pyusb + the libusb DLL bundled below (the
+instrument's USB driver must then be WinUSB, e.g. via Zadig).
 """
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).parent
 # pyvisa loads its backends by name, so nothing imports pyvisa_py statically.
-hidden = [*collect_submodules("pyvisa_py"), "pyvisa.resources"]
-excludes = ["matplotlib", "IPython", "pytest", "PyQt5", "PyQt6", "pyqtgraph", "pyarrow"]
+# pyvisa_py.testsuite is test-only and drags in pyvisa.testsuite, which crashes
+# PyInstaller's isolated-subprocess binary-dependency analysis on Windows; exclude it.
+hidden = [m for m in collect_submodules("pyvisa_py") if not m.startswith("pyvisa_py.testsuite")]
+hidden.append("pyvisa.resources")
+hidden += collect_submodules("usb") + ["libusb_package"]
+usb_binaries = collect_dynamic_libs("libusb_package")
+excludes = ["matplotlib", "IPython", "pytest", "PyQt5", "PyQt6", "pyqtgraph", "pyarrow",
+            "pyvisa.testsuite", "pyvisa_py.testsuite"]
 
 
 def analysis(script):
     return Analysis([str(ROOT / "packaging" / script)], pathex=[str(ROOT / "src")],
-                    hiddenimports=hidden, excludes=excludes)
+                    binaries=usb_binaries, hiddenimports=hidden, excludes=excludes)
 
 
 gui, cli = analysis("gui_entry.py"), analysis("cli_entry.py")
