@@ -71,9 +71,10 @@ def _load_config() -> dict:
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        root.title("N6705C 上電時序")
+        root.title("N6705C 上電時序工具-品勛科技股份有限公司 免費提供 ")
         self.queue: queue.Queue = queue.Queue()
         self.busy = False
+        self.scanning = False
         self._pending = None
         self.forms: list[dict] = []
         saved = _load_config()
@@ -315,7 +316,15 @@ class App:
         CONFIG.write_text(json.dumps({"resources": [v.get() for v in self.resources], "demo": self.demo.get()}))
 
     def scan(self) -> None:
-        found = list_resources()
+        # list_resources can block for a long time on Windows (LAN/USB probing): keep it off the Tk thread.
+        if self.scanning:
+            return
+        self.scanning = True
+        self.message.set("掃描中…")
+        threading.Thread(target=lambda: self.queue.put(("scan", list_resources())), daemon=True).start()
+
+    def _scan_done(self, found: list[str]) -> None:
+        self.scanning = False
         for box in self.boxes:
             box["values"] = found
         for var, res in zip(self.resources, found):
@@ -432,7 +441,9 @@ class App:
     def _poll(self) -> None:
         while not self.queue.empty():
             kind, *rest = self.queue.get()
-            if kind == "status":
+            if kind == "scan":
+                self._scan_done(rest[0])
+            elif kind == "status":
                 self.conn_status[rest[0]].set(rest[1])
             elif kind == "idle":
                 self.busy = False
