@@ -189,6 +189,7 @@ class VisaTransport:
         self._backend_used = ""
         candidates = _candidates(backend)
         last_error: Exception | None = None
+        errors: list[str] = []
         for candidate in candidates:
             try:
                 if candidate == "@py":
@@ -197,15 +198,24 @@ class VisaTransport:
                 inst = rm.open_resource(resource)
             except Exception as exc:  # pragma: no cover - depends on host setup
                 last_error = exc
+                errors.append(f"  [{candidate or 'ivi'}] {exc}")
                 continue
             self._rm = rm
             self._inst = inst
             self._backend_used = candidate or "ivi"
             break
         else:  # pragma: no cover - depends on host setup
+            hint = ""
+            if "" not in candidates and resource.strip().upper().startswith(("USB", "GPIB")):
+                hint = (
+                    "\n\n原生 VISA 未啟用（探測未通過），只嘗試了 pyvisa-py；"
+                    "USB/GPIB 需要原生 VISA（Keysight IO Libraries 或 NI-VISA）。"
+                )
             raise TransportError(
-                f"could not open {resource!r} with backend {backend!r}: "
-                f"{last_error}{_backend_advice(last_error)}"
+                f"could not open {resource!r}; tried backends {candidates}:\n"
+                + "\n".join(errors)
+                + hint
+                + _backend_advice(last_error)
             ) from last_error
 
         self._inst.timeout = timeout_ms

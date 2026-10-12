@@ -332,7 +332,8 @@ class App:
                 finally:
                     inst.close()
             except Exception as exc:  # noqa: BLE001 - backend errors vary
-                self.queue.put(("status", i, f"✘ {str(exc)[:60]}"))
+                self.queue.put(("status", i, f"✘ {str(exc).splitlines()[0][:60]}"))
+                self.queue.put(("connerr", f"機台 {i + 1} 連線失敗：\n{exc}"))
         self.queue.put(("idle",))
 
     # -- run ------------------------------------------------------------------
@@ -423,6 +424,8 @@ class App:
                 self.conn_status[rest[0]].set(rest[1])
             elif kind == "idle":
                 self.busy = False
+            elif kind == "connerr":
+                messagebox.showerror("連線失敗", rest[0])
             else:
                 self.busy = False
                 self.run_button.state(["!disabled"])
