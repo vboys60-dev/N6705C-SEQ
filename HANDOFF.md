@@ -3,7 +3,7 @@
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），
 在多台主機上依表上電。第一版只做時序，不做量測。目前設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-12　狀態：模擬器全過（46 tests）。**單台實機（4× N6752A）單通道已跑通**（見 §4.8），跨台同步仍未量。Codex 審查第 2 輪已核准（見 §8）。
+最後更新：2026-10-14　狀態：模擬器全過（145 tests）。**ARB List 模式開發中，見 §9**。**單台實機（4× N6752A）單通道已跑通**（見 §4.8），跨台同步仍未量。Codex 審查第 2 輪已核准（見 §8）。
 
 ## 0. 先讀這幾件事
 
@@ -16,7 +16,7 @@
 ```bash
 cd N6705C-SEQ
 pip install -e ".[dev]"           # 依賴：pyvisa、pyvisa-py、pyusb、libusb-package、numpy（不需要舊專案）
-python3 -m pytest -q              # 46 passed
+python3 -m pytest -q              # 145 passed
 
 n6705c-seq check examples/powerup.csv                       # 只驗證、印時間軸，不碰儀器
 n6705c-seq check plan.csv --suggest-out fixed.csv           # 有跨台打平時，另存建議的通道分配
@@ -43,7 +43,8 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | 檔案 | 責任 |
 |---|---|
 | `src/n6705c_seq/plan.py` | `SeqRow`、`load_csv`／`write_csv`、`to_functions`、打平偵測 `order_warnings`、`suggest_assignment`、`timeline` |
-| `src/n6705c_seq/execute.py` | `run_plan`：驗證 → 設定電壓／電流並開輸出 → load → 每台一道 `INIT:TRAN` 同時啟動（`start_together`）→ 等待 → 關輸出。另有 `connect_group` |
+| `src/n6705c_seq/execute.py` | `run_plan`（CSV）→ `run_functions`（CSV 與 List 模式共用）：驗證 → 設定電壓／電流並開輸出 → load → 每台一道 `INIT:TRAN` 同時啟動（`start_together`）→ 等待 → 關輸出（`keep_on` 時不關）。另有 `connect_group` |
+| `src/n6705c_seq/listplan.py` | List 模式：`Segment`／`ChannelList`／`ListPlan`、各波形欄位表 `FIELDS`、`load_json`／`write_json`（§9） |
 | `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
 | `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（掃描／測試連線）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
 | `tests/` | `test_plan.py`（17）、`test_execute.py`（11）、`test_cli.py`（9）、`test_gui.py`（6：波形轉折點、刻度、設定檔） |
@@ -184,3 +185,43 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
   - 另採納 SUGGESTION：逾時訊息的通道改為全域編號。
   - 結果：`VERDICT: APPROVED`。
 - 第 2 輪沙箱為唯讀，Codex 只跑得了 26 個測試；完整 42 個我這邊全過。
+
+## 9. ARB List 模式（2026-10-13 起，開發中）
+
+每個通道一串波形段落，在電腦端合成一條 CDW（65,535 點）下載。CSV 上電時序表**不動**，GUI 另開分頁。
+
+### 9.1 文件（先讀）
+
+| 文件 | 內容 |
+|---|---|
+| `docs/arb_list_mode.md` | 設計決定與理由（為什麼 CDW、dwell 規則、全部通道一起重複、14585A 參考） |
+| `docs/arb_list_mode_plan.md` | **實作規劃**：檔案邊界、凍結的合約（§2）、合成規則 R1–R7（§3）、偽代碼（§4）、並行 Track（§5）、`synth` 必測項目（§6） |
+
+### 9.2 進度
+
+| Track | 內容 | 狀態 |
+|---|---|---|
+| P0 | `listplan.py`、`examples/list_demo.json`、`tests/test_listplan.py` | ✅ `3032c1a` |
+| C | `execute.run_functions`（`run_plan` 改成呼叫它，行為不變） | ✅ `3032c1a` |
+| A | `synth.py`：段落 → 點陣列、自動 dwell、補齊、警告／擋下、`to_functions` | ⏳ 待使用者說開工 |
+| D | `list_gui.py` + `gui.py` 分頁、「■ 全部關閉」移到連線列 | ⏳ 待開工（A 未完成可先 monkeypatch `compile_plan`） |
+| H | `scripts/hw_list_check.py` 實機量測（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | ⏳ 待開工，需要人在 Windows 實機旁 |
+| I | 整合、回填實測常數、端到端測試、版本 0.2.0 | ⏳ A、C、D、H 完成後 |
+
+### 9.3 工作方式（使用者要求）
+
+- **使用者對每個 Track 說「開工」才動程式碼**；沒點名的 Track 不准碰。
+- 實作交給 **Codex**，Claude 負責驗收。做法：
+  ```bash
+  cat common.txt track.txt | codex exec -s workspace-write -C . -o result.md - > log.txt 2>&1
+  ```
+  `common.txt` 的內容＝規劃 §0 的規則，再加上：同一個工作目錄裡有別的 agent 在改其他檔案、不准 commit、最後跑 `python3 -m pytest -q` 並回報改了哪些檔案和偏離規劃的地方。
+  `track.txt` 寫明：只准改哪些檔案、要對照規劃哪幾節、驗收條件。
+  改的檔案沒有重疊的 Track 可以同時跑。
+- 驗收清單：`git status` 確認沒改到範圍外的檔案 → 對照規劃 §2 合約 → 讀程式碼 → 探測邊界輸入 → 跑完整測試 → 回報使用者，**使用者說 commit 才 commit**。
+- 驗收時發現的問題：規劃有漏的，先補規劃，再交回 Codex 修（P0 的 `current_limit` 必須 > 0 就是這樣補的）。
+
+### 9.4 實機模組型號（2026-10-14 已確認）
+
+- 實機是 **4× N6752A**（使用者確認，同 §4.8）。`docs/arb_list_mode.md` 的 Sine 頻寬推論已改正；原本誤用的 N6762A 是舊專案那台（`core/delay.py` 註解：fw E.02.09，四個 N6762A）。
+- **還沒改**：`execute.DEMO_SLOTS` 仍是 N6762A，註解寫「configured like the real frames」是錯的。模擬器對兩者的額定值一樣（`fake._module_ratings` 都回預設 50 V／1 A），改成 N6752A 不影響測試結果。這是程式碼，等使用者指示（可併入 Track I）。
