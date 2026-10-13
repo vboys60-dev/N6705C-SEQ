@@ -161,6 +161,8 @@
 
 ## 6. 開工時需要注意的程式碼（僅供參考，未修改）
 
+> 實作規劃（檔案邊界、合約、偽代碼、並行分工）見 `docs/arb_list_mode_plan.md`。
+
 - 存檔格式：JSON，與 CSV 分開。
 - 執行流程沿用 `execute.run_plan` 的同步啟動、擷取、強制關輸出；CDW 走 `ArbRunner`（`ArbSpec`），`execute._running()` 的 `arb.spec.channel` 可以直接用。若改走 Sequence，這裡要改。
 - 可重用：`n6705c.core.arb.ConstantDwellArb`、`hold_step`／`starting_level`（`core/arb/delay.py`）。
