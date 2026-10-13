@@ -83,7 +83,7 @@ def load_json(path) -> ListPlan     # 錯誤一律 ValueError，訊息帶位置�
 def write_json(plan: ListPlan, path) -> None
 ```
 
-載入檢查（只檢查格式，不檢查是否塞得下）：shape 合法、欄位齊全且是數字、時間 ≥ 0、`frequency > 0`、`n_steps`／`repeat` 是 ≥ 1 的整數、`plan.repeat` 在 1..256、通道不重複。
+載入檢查（只檢查格式，不檢查是否塞得下）：shape 合法、欄位齊全且是數字、時間 ≥ 0、`frequency > 0`、`n_steps`／`repeat` 是 ≥ 1 的整數、`plan.repeat` 在 1..256、通道不重複、`current_limit` 若有值必須 > 0（同 CSV：0 A 會被 `or 0.0` 當成不限流）。
 
 JSON 長相（`version` 留著，換格式時才用得到）：
 

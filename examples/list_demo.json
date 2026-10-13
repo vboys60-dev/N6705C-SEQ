@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "repeat": 2,
+  "hold_last": false,
+  "dwell": null,
+  "channels": [
+    {
+      "channel": 1,
+      "enabled": true,
+      "label": "斜坡與正弦",
+      "delay": 0.001,
+      "current_limit": 0.1,
+      "segments": [
+        {"shape": "ramp", "repeat": 1,
+         "params": {"start": 0, "end": 2, "delay": 0, "ramp_time": 0.01, "end_time": 0.005}},
+        {"shape": "sine", "repeat": 3,
+         "params": {"offset": 2, "amplitude": 1, "frequency": 100, "phase": 0}}
+      ]
+    },
+    {
+      "channel": 2,
+      "enabled": true,
+      "label": "梯形與階躍",
+      "delay": 0.002,
+      "current_limit": 0.1,
+      "segments": [
+        {"shape": "trapezoid", "repeat": 1,
+         "params": {"offset": 0, "amplitude": 3.3, "start_time": 0.002, "up_time": 0.005,
+                    "high_time": 0.01, "down_time": 0.005, "end_time": 0.002}},
+        {"shape": "step", "repeat": 1,
+         "params": {"start": 0, "end": 1.8, "delay": 0.002, "end_time": 0.01}}
+      ]
+    }
+  ]
+}

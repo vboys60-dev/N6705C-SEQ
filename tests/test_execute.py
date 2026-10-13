@@ -124,3 +124,48 @@ def test_hold_dc_stops_at_the_high_level_and_leaves_outputs_on():
     assert all(inst.output_state([1, 2]).values())
     assert not any("TRAP" in c for c in sent(inst))
     assert any(c.startswith("ARB:VOLT:RAMP:END 1.5") for c in sent(inst))
+
+
+@pytest.mark.parametrize("keep_on", [False, True])
+def test_run_functions_plays_constant_dwell_and_controls_outputs(keep_on):
+    from n6705c.core.arb import ArbSpec, ArbState, ConstantDwellArb, GroupArbRunner
+    from n6705c.core.function import ChannelFunction
+    from n6705c_seq.execute import run_functions
+
+    group = demo(1)
+    functions = [
+        ChannelFunction(
+            channel=channel,
+            voltage=levels[0],
+            output_on=True,
+            arb_enabled=True,
+            spec=ArbSpec(
+                channel=channel,
+                waveform=ConstantDwellArb(levels=levels, dwell=10.24e-6 * 100),
+                count=3,
+                terminate_last=True,
+            ),
+        )
+        for channel, levels in [(1, [0.0, 0.5, 1.0]), (2, [0.0, 1.0, 2.0])]
+    ]
+    runner = run_functions(group, functions, keep_on=keep_on)
+    assert isinstance(runner, GroupArbRunner)
+    assert not runner.is_running
+    assert all(arb.state is ArbState.DONE for frame in runner.runners for arb in frame.runners)
+    inst = group.instruments[0]
+    cmds = sent(inst)
+    for channel in [1, 2]:
+        assert any(c.startswith("ARB:VOLT:CDW ") and f"(@{channel})" in c for c in cmds)
+        assert f"ARB:COUN 3,(@{channel})" in cmds
+    assert inst.output_state(inst.populated_channels) == {1: keep_on, 2: keep_on, 3: False, 4: False}
+
+
+def test_run_functions_rejects_empty_input_before_instrument_commands():
+    from n6705c_seq.execute import PlanRejected, run_functions
+
+    group = demo(1)
+    inst = group.instruments[0]
+    before = sent(inst)
+    with pytest.raises(PlanRejected, match="no enabled channels in the table"):
+        run_functions(group, [])
+    assert sent(inst) == before

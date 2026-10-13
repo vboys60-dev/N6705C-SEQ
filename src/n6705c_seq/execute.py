@@ -21,7 +21,7 @@ from n6705c.core.transport import VisaTransport
 
 from .plan import SeqRow, to_functions
 
-__all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "start_together", "run_plan", "outputs_off"]
+__all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "start_together", "run_plan", "run_functions", "outputs_off"]
 
 #: The simulator configured like the real frames (four N6762A modules).
 DEMO_SLOTS = ("N6762A",) * 4
@@ -234,6 +234,26 @@ def run_plan(
     functions = to_functions(rows, hold_dc)
     if not functions:
         raise PlanRejected("no enabled channels in the table")
+    return run_functions(group, functions, wait=wait, keep_on=hold_dc, capture=capture)
+
+
+def run_functions(
+    group: InstrumentGroup,
+    functions,
+    *,
+    wait: bool = True,
+    keep_on: bool = False,
+    capture: dict | None = None,
+) -> GroupArbRunner:
+    """Run the functions. With ``wait`` the outputs are switched off at the end,
+    unless ``keep_on``: then each rail stays on at its waveform's final level.
+
+    Pass a dict as ``capture`` to record every channel with the digitizer; it is
+    filled with ``{channel: (sample interval, volts)}`` (plus ``"error"`` if a fetch
+    failed). The capture has to finish before the outputs go off, so a captured
+    run waits for the whole record."""
+    if not functions:
+        raise PlanRejected("no enabled channels in the table")
     needed = max(GlobalChannel.from_index(fn.channel).frame for fn in functions)
     if needed > group.frame_count:
         raise PlanRejected(
@@ -262,7 +282,7 @@ def run_plan(
             if capture is not None:
                 time.sleep(max(0.0, tint * CAPTURE_POINTS - (time.monotonic() - started)) + 0.05)
                 _fetch(group, functions, tint, capture)
-            if not hold_dc:
+            if not keep_on:
                 outputs_off(group)
     except OutputsNotConfirmedOff:
         raise
