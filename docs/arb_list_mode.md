@@ -25,7 +25,7 @@
 | 波形清單 | Step、Ramp、Trapezoid、Sinusoid、Triangle、Staircase、Exponential；Sinusoid／Triangle 有 **Phase** |
 | 每段 Repeat Count | **第一版就做**，展開成點 |
 | 參數示意圖 | 第一版**只畫曲線**，不加標註箭頭 |
-| 結束行為 | 預設**關輸出**；「維持最後電壓」勾選框（預設不勾，用 `ARB:TERM:LAST`），之後用「■ 全部關閉」關 |
+| 結束行為 | `ARB:TERM:LAST` **一律開**；預設結束後**關輸出**；「維持最後電壓」勾選框（預設不勾）只決定不關輸出，之後用「■ 全部關閉」關 |
 | CLI | 第一版**不做**；合成邏輯用測試檔驗證 |
 | 整串重複次數 | 第一版**只做 Count**（1～256），不做 Continuous |
 
