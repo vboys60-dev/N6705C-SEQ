@@ -8,6 +8,7 @@
 ## 0. 先讀這幾件事
 
 1. 儀器控制核心 `n6705c.core` **已複製進本專案**（`src/n6705c/core`，與舊專案 `../N6705C-APP` 當時內容相同，import 名稱不變）。不再依賴 `n6705c-app`，也**不改**舊專案；之後核心有修正要手動同步。
+   - ⚠️ 同一個 Python 環境**不要同時 editable 安裝 `n6705c-app`**：兩個專案的 import 名稱都是 `n6705c`，`n6705c-app` 會被先找到，測試就會跑到舊專案那份 core（舊專案的 `transport.py` 沒有 `_native_backend_safe()`）。2026-10-14 已在這台 Mac 的 anaconda base 解除安裝 `n6705c-app`；兩個專案都要用的話，各自建一個 venv。確認方式：`python3 -c "import n6705c; print(n6705c.__file__)"` 應指向本專案的 `src/`。
 2. 舊專案的 `HANDOFF.md` 是儀器行為的權威來源，特別是 §3.1（`*TRG`）、§3.9（多機台不同步）、§4.0（實機發現）。
 3. 遠端：私人 repo <https://github.com/vboys60-dev/N6705C-SEQ>（`main`）。換機器只要 `pip install -e .`。
 
