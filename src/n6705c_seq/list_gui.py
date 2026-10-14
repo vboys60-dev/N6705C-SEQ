@@ -14,13 +14,13 @@ from n6705c.core.group import CHANNELS_PER_FRAME, InstrumentGroup
 from . import execute, synth
 from .listplan import FIELDS, SHAPES, TIMES, ChannelList, ListPlan, Segment, load_json, write_json
 
-SHAPE_NAMES = ("階躍", "斜坡", "梯形", "正弦", "三角", "階梯", "指數")
+SHAPE_NAMES = ("Step", "Ramp", "Trapezoid", "Sine", "Triangle", "Staircase", "Exponential")
 TITLES = {
-    "start": "起始電壓", "end": "終止電壓", "offset": "偏移電壓", "amplitude": "振幅",
-    "delay": "延遲", "end_time": "尾端維持", "ramp_time": "斜坡時間", "start_time": "起始維持",
-    "up_time": "上升時間", "high_time": "高點維持", "down_time": "下降時間",
-    "frequency": "頻率", "phase": "相位", "n_steps": "階數", "stair_time": "階梯時間",
-    "tau": "時間常數", "exp_time": "指數時間",
+    "start": "Start Level", "end": "End Level", "offset": "Offset", "amplitude": "Amplitude",
+    "delay": "Delay", "end_time": "End Time", "ramp_time": "Ramp Time", "start_time": "Start Time",
+    "up_time": "Up Time", "high_time": "High Time", "down_time": "Down Time",
+    "frequency": "Frequency", "phase": "Phase", "n_steps": "Steps", "stair_time": "Stair Time",
+    "tau": "Tau", "exp_time": "Exp Time",
 }
 
 
@@ -78,12 +78,12 @@ class ListTab(ttk.Frame):
         self.canvas.bind("<Button-1>", self._lane_click)
         channel_bar = ttk.Frame(self)
         channel_bar.grid(row=1, column=0, sticky="ew", padx=10)
-        ttk.Label(channel_bar, text="編輯通道").pack(side="left")
+        ttk.Label(channel_bar, text="Channel").pack(side="left")
         self.channel_box = ttk.Combobox(channel_bar, textvariable=self.channel_choice, state="readonly", width=7)
         self.channel_box.pack(side="left", padx=5)
         self.channel_box.bind("<<ComboboxSelected>>", self._choose_channel)
-        ttk.Checkbutton(channel_bar, text="啟用", variable=self.enabled).pack(side="left")
-        for title, var, width in (("名稱", self.label, 12), ("延遲 (s)", self.delay, 10), ("限流 (A，空白不限)", self.limit, 10)):
+        ttk.Checkbutton(channel_bar, text="Enabled", variable=self.enabled).pack(side="left")
+        for title, var, width in (("Name", self.label, 12), ("Delay (s)", self.delay, 10), ("Current Limit (A, blank = none)", self.limit, 10)):
             ttk.Label(channel_bar, text=title).pack(side="left", padx=5)
             ttk.Entry(channel_bar, textvariable=var, width=width).pack(side="left")
 
@@ -101,27 +101,27 @@ class ListTab(ttk.Frame):
         self.segment_canvas.configure(xscrollcommand=scroll.set)
         actions = ttk.Frame(self)
         actions.grid(row=4, column=0, sticky="ew", padx=10, pady=4)
-        for title, command in (("左移", lambda: self.move_segment(-1)), ("新增", self.add_segment),
-                               ("修改", self.modify_segment), ("刪除", self.delete_segment),
-                               ("右移", lambda: self.move_segment(1))):
+        for title, command in (("Move Left", lambda: self.move_segment(-1)), ("Add", self.add_segment),
+                               ("Update", self.modify_segment), ("Delete", self.delete_segment),
+                               ("Move Right", lambda: self.move_segment(1))):
             ttk.Button(actions, text=title, command=command).pack(side="left", padx=3)
         ttk.Label(self, textvariable=self.statistics, justify="left").grid(row=5, column=0, sticky="w", padx=10)
         self.budget = tk.Canvas(self, height=20, bg="#f1f5f9", highlightthickness=0)
         self.budget.grid(row=6, column=0, sticky="ew", padx=10, pady=3)
         settings = ttk.Frame(self)
         settings.grid(row=7, column=0, sticky="ew", padx=10)
-        ttk.Label(settings, text="整串重複 (1–256)").pack(side="left")
+        ttk.Label(settings, text="Sequence Repeat (1–256)").pack(side="left")
         ttk.Spinbox(settings, from_=1, to=256, textvariable=self.repeat, width=5).pack(side="left", padx=5)
-        ttk.Checkbutton(settings, text="維持最後電壓", variable=self.hold_last).pack(side="left", padx=8)
+        ttk.Checkbutton(settings, text="Hold Last Level", variable=self.hold_last).pack(side="left", padx=8)
         ttk.Label(settings, text="dwell").pack(side="left")
-        for title, mode in (("自動", "auto"), ("手動", "manual")):
+        for title, mode in (("Auto", "auto"), ("Manual", "manual")):
             ttk.Radiobutton(settings, text=title, variable=self.dwell_mode, value=mode).pack(side="left")
         ttk.Entry(settings, textvariable=self.dwell, width=12).pack(side="left")
         ttk.Label(settings, text="s").pack(side="left")
 
         editor = ttk.Frame(self)
         editor.grid(row=8, column=0, sticky="ew", padx=10, pady=6)
-        ttk.Combobox(editor, textvariable=self.shape, values=SHAPE_NAMES, state="readonly", width=8).pack(side="left", anchor="n")
+        ttk.Combobox(editor, textvariable=self.shape, values=SHAPE_NAMES, state="readonly", width=12).pack(side="left", anchor="n")
         self.parameter_frame = ttk.Frame(editor)
         self.parameter_frame.pack(side="left", padx=12)
         self.preview = tk.Canvas(editor, height=190, width=330, bg="white", highlightthickness=0)
@@ -137,11 +137,11 @@ class ListTab(ttk.Frame):
         self.message.trace_add("write", lambda *_: self._show_warnings())
         bar = ttk.Frame(self)
         bar.grid(row=10, column=0, sticky="ew", padx=10, pady=6)
-        ttk.Button(bar, text="開啟 JSON", command=self.open_json).pack(side="left")
-        ttk.Button(bar, text="儲存 JSON", command=self.save_json).pack(side="left", padx=6)
-        self.run_button = ttk.Button(bar, text="▶ 執行 List", command=self.run)
+        ttk.Button(bar, text="Open JSON", command=self.open_json).pack(side="left")
+        ttk.Button(bar, text="Save JSON", command=self.save_json).pack(side="left", padx=6)
+        self.run_button = ttk.Button(bar, text="▶ Run List", command=self.run)
         self.run_button.pack(side="right")
-        ttk.Checkbutton(bar, text="擷取實測波形（數位化器）", variable=self.capture).pack(side="right", padx=12)
+        ttk.Checkbutton(bar, text="Capture Measured (Digitizer)", variable=self.capture).pack(side="right", padx=12)
 
     @property
     def channel(self):
@@ -161,7 +161,7 @@ class ListTab(ttk.Frame):
             var.trace_add("write", lambda *_: self.schedule())
             ttk.Label(self.parameter_frame, text=f"{TITLES[key]} ({unit})" if unit else TITLES[key]).grid(row=i, column=0, sticky="w")
             ttk.Entry(self.parameter_frame, textvariable=var, width=12).grid(row=i, column=1, padx=5)
-        ttk.Label(self.parameter_frame, text="段落重複次數").grid(row=len(self.params), column=0, sticky="w")
+        ttk.Label(self.parameter_frame, text="Segment Repeat").grid(row=len(self.params), column=0, sticky="w")
         ttk.Entry(self.parameter_frame, textvariable=self.segment_repeat, width=12).grid(row=len(self.params), column=1, padx=5)
         self.schedule()
 
@@ -174,8 +174,8 @@ class ListTab(ttk.Frame):
             if integer and not value.is_integer():
                 raise ValueError
         except ValueError:
-            requirement = "正整數" if integer and positive else "大於 0 的數字" if positive else "非負數字" if minimum == 0 else "有限數字"
-            raise ValueError(f"{title} 必須是有效的{requirement}") from None
+            requirement = "a positive integer" if integer and positive else "a number > 0" if positive else "a non-negative number" if minimum == 0 else "a finite number"
+            raise ValueError(f"{title} must be {requirement}") from None
         return int(value) if integer else value
 
     def read_segment(self):
@@ -183,15 +183,15 @@ class ListTab(ttk.Frame):
         params = {key: self._number(var.get(), TITLES[key], minimum=0 if key in TIMES else None,
                                    positive=key in ("frequency", "tau", "n_steps"), integer=key == "n_steps")
                   for key, var in self.params.items()}
-        repeat = self._number(self.segment_repeat.get(), "段落重複次數", positive=True, integer=True)
+        repeat = self._number(self.segment_repeat.get(), "Segment Repeat", positive=True, integer=True)
         return Segment(shape, params, repeat)
 
     def _read_settings(self):
-        delay = self._number(self.delay.get(), "通道延遲", minimum=0)
-        limit = self._number(self.limit.get(), "電流限制", positive=True) if self.limit.get().strip() else None
-        repeat = self._number(self.repeat.get(), "整串重複次數", positive=True, integer=True)
+        delay = self._number(self.delay.get(), "Channel Delay", minimum=0)
+        limit = self._number(self.limit.get(), "Current Limit", positive=True) if self.limit.get().strip() else None
+        repeat = self._number(self.repeat.get(), "Sequence Repeat", positive=True, integer=True)
         if repeat > 256:
-            raise ValueError("整串重複次數必須在 1..256")
+            raise ValueError("Sequence Repeat must be in 1..256")
         dwell = self._number(self.dwell.get(), "dwell", positive=True) if self.dwell_mode.get() == "manual" else None
         ch = self.channel
         ch.enabled, ch.label, ch.delay, ch.current_limit = self.enabled.get(), self.label.get(), delay, limit
@@ -218,7 +218,7 @@ class ListTab(ttk.Frame):
             self._read_settings()
         except ValueError as exc:
             self.channel_choice.set(f"CH{self.channel.channel}")
-            return messagebox.showerror("欄位錯誤", str(exc), parent=self)
+            return messagebox.showerror("Invalid Field", str(exc), parent=self)
         index = next((i for i, ch in enumerate(self.plan.channels) if ch.channel == channel_number), None)
         if index is None:
             self.plan.channels.append(ChannelList(channel_number, enabled=False))
@@ -255,7 +255,7 @@ class ListTab(ttk.Frame):
         try:
             segment = self.read_segment()
         except ValueError as exc:
-            return messagebox.showerror("欄位錯誤", str(exc), parent=self)
+            return messagebox.showerror("Invalid Field", str(exc), parent=self)
         index = len(self.channel.segments) if self.segment_index is None else self.segment_index + 1
         self.channel.segments.insert(index, segment)
         self.select_segment(index)
@@ -266,7 +266,7 @@ class ListTab(ttk.Frame):
         try:
             segment = self.read_segment()
         except ValueError as exc:
-            return messagebox.showerror("欄位錯誤", str(exc), parent=self)
+            return messagebox.showerror("Invalid Field", str(exc), parent=self)
         self.channel.segments[self.segment_index] = segment
         self.schedule()
 
@@ -285,16 +285,16 @@ class ListTab(ttk.Frame):
             self.select_segment(target)
 
     def open_json(self, path=None):
-        path = path or filedialog.askopenfilename(parent=self, filetypes=[("JSON", "*.json"), ("所有檔案", "*")])
+        path = path or filedialog.askopenfilename(parent=self, title="Open JSON", filetypes=[("JSON", "*.json"), ("All Files", "*")])
         if not path:
             return
         try:
             plan = load_json(path)
             capacity = len(self.app.resources) * CHANNELS_PER_FRAME
             if any(ch.channel > capacity for ch in plan.channels):
-                raise ValueError(f"這個介面最多支援 {capacity} 個通道")
+                raise ValueError(f"This interface supports up to {capacity} channels")
         except ValueError as exc:
-            return messagebox.showerror("JSON 錯誤", str(exc), parent=self)
+            return messagebox.showerror("JSON Error", str(exc), parent=self)
         self.plan = plan
         self._empty_channel = ChannelList(1, enabled=False)
         self.channel_index = 0 if plan.channels else None
@@ -310,11 +310,11 @@ class ListTab(ttk.Frame):
     def save_json(self, path=None):
         try:
             plan = self._read_settings()
-            path = path or filedialog.asksaveasfilename(parent=self, defaultextension=".json", filetypes=[("JSON", "*.json")])
+            path = path or filedialog.asksaveasfilename(parent=self, title="Save JSON", defaultextension=".json", filetypes=[("JSON", "*.json")])
             if path:
                 write_json(plan, path)
         except ValueError as exc:
-            messagebox.showerror("儲存失敗", str(exc), parent=self)
+            messagebox.showerror("Save Failed", str(exc), parent=self)
 
     def schedule(self):
         if self._loading:
@@ -342,10 +342,10 @@ class ListTab(ttk.Frame):
             infos = c.segments.get(self.channel.channel, [])
             if self.segment_index is not None and self.segment_index < len(infos):
                 info = infos[self.segment_index]
-                details = f"第 {self.segment_index + 1} 段：{info.points:,} 點；要求 {info.requested:.6g} s／實際 {info.actual:.6g} s／誤差 {info.actual - info.requested:+.6g} s\n"
-            self.statistics.set(details + f"共同週期 P＝{c.n_points * c.dwell:.6g} s　dwell＝{c.dwell:.6g} s　"
-                                f"本通道 {len(self.channel.segments)} 段　點數 {c.n_points:,} / 65,535\n"
-                                f"本通道延遲 {c.delay_points.get(self.channel.channel, 0):,} 點（灰）／補齊 {c.pad_points.get(self.channel.channel, 0):,} 點（橙）")
+                details = f"Segment {self.segment_index + 1}: {info.points:,} pts; requested {info.requested:.6g} s / actual {info.actual:.6g} s / error {info.actual - info.requested:+.6g} s\n"
+            self.statistics.set(details + f"Period P = {c.n_points * c.dwell:.6g} s   dwell = {c.dwell:.6g} s   "
+                                f"This channel: {len(self.channel.segments)} segments   Points {c.n_points:,} / 65,535\n"
+                                f"Channel delay {c.delay_points.get(self.channel.channel, 0):,} pts (gray) / padding {c.pad_points.get(self.channel.channel, 0):,} pts (orange)")
             self._draw_lanes()
             self._draw_budget()
         self._draw_segments()
@@ -356,14 +356,123 @@ class ListTab(ttk.Frame):
         self._button_state()
 
     def _draw_curve(self, canvas, segment, left, top, width, height):
-        if canvas is self.preview:
+        annotated = canvas is self.preview
+        if annotated:
             canvas.delete("all")
         duration = synth.base_duration(segment)
         values = [synth.value(segment, duration * i / 199) for i in range(200)]
         lo, hi = min(values), max(values)
+        if not annotated:
+            span = hi - lo or 1
+            coords = [coord for i, value in enumerate(values)
+                      for coord in (left + 5 + (width - 10) * i / 199,
+                                    top + height - 5 - (height - 10) * (value - lo) / span)]
+            canvas.create_line(*coords, fill="#2563eb", width=2)
+            return
+
+        p, shape = segment.params, segment.shape
+        periodic = shape in ("sine", "triangle")
+        if periodic or shape == "trapezoid":
+            levels = [("Offset", p["offset"]), ("Offset+Amp", p["offset"] + p["amplitude"])]
+        else:
+            levels = [("Start", p["start"]), ("End", p["end"])]
+        bounds = values + [v for _, v in levels]
+        if periodic:
+            bounds.append(p["offset"] - p["amplitude"])
+        lo, hi = min(bounds), max(bounds)
         span = hi - lo or 1
-        coords = [coord for i, value in enumerate(values)
-                  for coord in (left + 5 + (width - 10) * i / 199, top + height - 5 - (height - 10) * (value - lo) / span)]
+        font = ("TkDefaultFont", 9)
+
+        def text(x, y, label, tag, **options):
+            return canvas.create_text(x, y, text=label, font=font,
+                                      tags=("annotation", tag), **options)
+
+        def line(*coords, **options):
+            return canvas.create_line(*coords, fill="#94a3b8", tags="annotation", **options)
+
+        def time_label(seconds):
+            return f"{seconds * 1000:.4g} ms" if seconds < 1 else f"{seconds:.4g} s"
+
+        # Measure the longest possible level label to reserve its left margin.
+        combined = (f"{levels[0][0]} = {levels[1][0]} {levels[0][1]:.4g} V"
+                    if levels[0][1] == levels[1][1] else
+                    f"{levels[0][0]} {levels[0][1]:.4g} V / {levels[1][0]} {levels[1][1]:.4g} V")
+        label_items = [text(0, 0, f"{name} {v:.4g} V", "level_label", anchor="e")
+                       for name, v in levels[:1 if periodic else 2]]
+        close_levels = not periodic and abs(levels[0][1] - levels[1][1]) / span * (height - 75) < 14
+        measured_items = list(label_items)
+        if close_levels:
+            measured_items.append(text(0, 0, combined, "level_label", anchor="e"))
+        margin = max(80, max(canvas.bbox(i)[2] - canvas.bbox(i)[0]
+                             for i in measured_items) + 10)
+        if close_levels:
+            canvas.delete(measured_items[-1])
+        x0, x1 = left + margin, left + width - 10
+        y0, y1 = top + 30, top + height - 45
+        x = lambda t: x0 + (x1 - x0) * t / (duration or 1)
+        y = lambda v: y1 - (y1 - y0) * (v - lo) / span
+
+        # Time spans use the same x mapping as the curve. Wide labels go below
+        # the first row; measured bounds keep adjacent labels apart.
+        times = [("Period", duration)] if periodic else [
+            (TITLES[key], p[key]) for key in FIELDS[shape]
+            if key in TIMES and key != "tau" and p[key] > 0]
+        elapsed, row_ends = 0.0, {}
+        for title, seconds in times:
+            start, end = x(elapsed), x(elapsed + seconds)
+            elapsed += seconds
+            item = text(0, 0, f"{title} {time_label(seconds)}", "time_label")
+            box = canvas.bbox(item)
+            label_width = box[2] - box[0]
+            row = 0 if label_width + 4 <= end - start else 1
+            center = (start + end) / 2
+            while True:
+                label_left = max(left + 4, min(center - label_width / 2,
+                                              left + width - 4 - label_width))
+                label_left = max(label_left, row_ends.get(row, left) + 4)
+                if label_left + label_width <= left + width - 4:
+                    break
+                row += 1
+            center = label_left + label_width / 2
+            canvas.coords(item, center, y1 + 18 + row * 18)
+            row_ends[row] = canvas.bbox(item)[2]
+            line(start, y1 + 6, end, y1 + 6)
+            for tick in (start, end):
+                line(tick, y1 + 2, tick, y1 + 10)
+        # Rare crowded forms get enough space for extra rows without clipping.
+        canvas.configure(height=max(190, height + max(0, max(row_ends, default=0) - 1) * 18))
+
+        if not periodic and abs(y(levels[0][1]) - y(levels[1][1])) < 14:
+            canvas.delete(label_items[1])
+            label_items = label_items[:1]
+            canvas.itemconfigure(label_items[0], text=combined)
+            guides = [(levels[0][1] + levels[1][1]) / 2]
+        else:
+            guides = [v for _, v in levels[:1 if periodic else 2]]
+        for item, v in zip(label_items, guides):
+            canvas.coords(item, x0 - 6, y(v))
+            line(x0, y(v), x1, y(v), dash=(3, 3))
+        if periodic:
+            base, peak = y(p["offset"]), y(p["offset"] + p["amplitude"])
+            dimension_x = x1 - 8
+            line(dimension_x, base, dimension_x, peak)
+            for tick in (base, peak):
+                line(dimension_x - 4, tick, dimension_x + 4, tick)
+            text(dimension_x - 6, (base + peak) / 2,
+                 f"Amplitude {p['amplitude']:.4g} V", "amplitude_label", anchor="e")
+        extras = []
+        if periodic:
+            extras.append(f"Frequency {p['frequency']:.4g} Hz   Phase {p['phase']:.4g}°")
+        elif shape == "staircase":
+            extras.append(f"Steps {p['n_steps']:.4g}")
+        elif shape == "exponential":
+            extras.append(f"Tau {time_label(p['tau'])}")
+        if segment.repeat > 1:
+            extras.append(f"×{segment.repeat}")
+        if extras:
+            text(x1, top + 12, "   ".join(extras), "extra_label", anchor="e")
+        coords = [coord for i, v in enumerate(values)
+                  for coord in (x(duration * i / 199), y(v))]
         canvas.create_line(*coords, fill="#2563eb", width=2)
 
     def _draw_segments(self):
@@ -455,11 +564,11 @@ class ListTab(ttk.Frame):
         resources = [v.get().strip() for v in self.app.resources[:frames]]
         demo = self.app.demo.get()
         if not demo and not all(resources):
-            return messagebox.showerror("未設定位址", f"需要 {frames} 台機台的 VISA 位址", parent=self)
-        text = ("【Demo】" if demo else "【實機】") + "將開啟輸出並執行 List"
+            return messagebox.showerror("Missing Address", f"VISA addresses are required for {frames} instruments", parent=self)
+        text = ("[Demo] " if demo else "[Hardware] ") + "Outputs will turn on and run the List"
         if plan.hold_last:
-            text += "，結束後輸出維持最後電壓不會關閉"
-        if not messagebox.askyesno("確認", text + "，繼續？", icon="warning", parent=self):
+            text += "; outputs will stay on at the last level after completion"
+        if not messagebox.askyesno("Confirm", text + ". Continue?", icon="warning", parent=self):
             return
         self.app._save_config()
         self.app.busy = True
@@ -473,7 +582,7 @@ class ListTab(ttk.Frame):
         try:
             group = InstrumentGroup.demo(frames=frames, slots=execute.DEMO_SLOTS) if demo else execute.connect_group(resources)
         except Exception as exc:  # noqa: BLE001 - backend errors vary
-            self.queue.put(("error", f"連線失敗：{exc}"))
+            self.queue.put(("error", f"Connection failed: {exc}"))
             return
         try:
             try:
@@ -482,14 +591,14 @@ class ListTab(ttk.Frame):
                 raise execute.PlanRejected(str(exc)) from exc
             cap = {} if capture else None
             execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap)
-            text = "List 完成，輸出維持最後電壓（未關閉）。" if plan.hold_last else "List 完成，輸出已關閉。"
+            text = "List complete; outputs remain on at the last level." if plan.hold_last else "List complete; outputs are off."
             if cap and "error" in cap:
-                text += f"\n實測波形擷取失敗：{cap.pop('error')}"
+                text += f"\nMeasured waveform capture failed: {cap.pop('error')}"
             self.queue.put(("done", text, cap))
         except Exception as exc:  # noqa: BLE001 - execution handles output shutdown
             note = ("" if isinstance(exc, execute.OutputsNotConfirmedOff)
-                    else "\n（時序在開輸出前被拒絕）" if isinstance(exc, execute.PlanRejected)
-                    else "\n（輸出已強制關閉）")
+                    else "\n(Sequence rejected before outputs were enabled)" if isinstance(exc, execute.PlanRejected)
+                    else "\n(Outputs were forced off)")
             self.queue.put(("error", f"{exc}{note}"))
         finally:
             for inst in group.instruments:
@@ -504,7 +613,7 @@ class ListTab(ttk.Frame):
             if rest and rest[0]:
                 self.measured = rest[0]
             self.schedule()
-            (messagebox.showinfo if kind == "done" else messagebox.showerror)("執行結果", text, parent=self)
+            (messagebox.showinfo if kind == "done" else messagebox.showerror)("Run Result", text, parent=self)
         self._button_state()
         self._poll_id = self.after(100, self._poll)
 

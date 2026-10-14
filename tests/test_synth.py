@@ -74,7 +74,7 @@ def test_repeat_boundary_uses_endpoint_instead_of_start():
     seg = ramp(DWELL * 4, repeat=2)
     c = compile_plan(ListPlan([ChannelList(1, segments=[seg])], dwell=DWELL))
     assert c.levels[1] == pytest.approx([0.25, 0.5, 0.75, 1.0] * 2)
-    assert any("重複接縫" in w for w in c.warnings)
+    assert any("repeat seam jump" in w for w in c.warnings)
 
 
 def test_rounded_tail_and_float_repeat_boundaries_keep_endpoint():
@@ -86,7 +86,7 @@ def test_rounded_tail_and_float_repeat_boundaries_keep_endpoint():
 
 def test_empty_and_disabled_channels_do_not_form_a_live_plan():
     c = compile_plan(ListPlan([ChannelList(1), ChannelList(2, enabled=False, segments=[ramp()])]))
-    assert c.errors == ["沒有啟用且有段落的通道"]
+    assert c.errors == ["no enabled channel with segments"]
     assert not c.levels
 
 
@@ -128,7 +128,7 @@ def test_auto_dwell_fits_100_seconds_and_ignores_whole_list_repeat():
 
 def test_manual_dwell_exceeding_budget_is_rejected_before_allocating_samples():
     c = compile_plan(ListPlan([ChannelList(1, segments=[ramp(100)])], dwell=CDWELL_DWELL_MIN))
-    assert any("超過 65,535" in error for error in c.errors)
+    assert any("exceed 65,535" in error for error in c.errors)
     assert c.n_points > CDWELL_MAX_POINTS
     assert not c.levels
 
@@ -139,13 +139,13 @@ def test_period_quality_thresholds(shape, ppp, blocked, warned):
     seg = periodic(shape, frequency=1 / (ppp * CDWELL_DWELL_MIN))
     c = compile_plan(ListPlan([ChannelList(1, segments=[seg])], dwell=CDWELL_DWELL_MIN))
     assert bool(c.errors) == blocked
-    assert any("每週期" in w for w in c.warnings) == warned
+    assert any("points per period" in w for w in c.warnings) == warned
 
 
 def test_seam_discontinuity_warns_without_blocking():
     c = compile_plan(ListPlan([ChannelList(1, segments=[ramp(end=1), ramp(start=3, end=4)])], dwell=DWELL))
     assert not c.errors
-    assert any("段落接縫跳動 2 V" in w for w in c.warnings)
+    assert any("seam jump 2 V between segments" in w for w in c.warnings)
 
 
 def test_to_functions_preserves_core_contract_and_filters_inactive_channels():
@@ -171,7 +171,7 @@ def test_to_functions_preserves_core_contract_and_filters_inactive_channels():
 
 def test_to_functions_rejects_errors():
     plan = ListPlan([])
-    with pytest.raises(ValueError, match="沒有啟用"):
+    with pytest.raises(ValueError, match="no enabled channel"):
         to_functions(plan, compile_plan(plan))
 
 
@@ -209,12 +209,12 @@ def test_zero_time_parts_are_skipped(seg, u, expected):
 
 def test_zero_duration_is_an_error_and_tiny_segments_are_retained():
     c = compile_plan(ListPlan([ChannelList(1, segments=[ramp(0)])]))
-    assert any("段落時間必須 > 0" in error for error in c.errors)
+    assert any("segment duration must be > 0" in error for error in c.errors)
     c = compile_plan(ListPlan([ChannelList(1, segments=[ramp(DWELL / 10)] * 3)], dwell=DWELL))
     assert not c.errors
     assert c.n_points == 3
     assert all(s.points == 1 for s in c.segments[1])
-    assert sum("保留 1 點" in w for w in c.warnings) == 3
+    assert sum("kept 1 point" in w for w in c.warnings) == 3
 
 
 def test_edge_quality_warnings():
@@ -264,3 +264,8 @@ def test_list_demo_compiles_and_runs_to_completion_with_outputs_off():
         assert "ARB:COUN 2,(@1)" in commands
     finally:
         group.close()
+
+
+def test_invalid_segment_diagnostic_keeps_channel_and_segment_location():
+    c = compile_plan(ListPlan([ChannelList(2, segments=[ramp(), ramp(), periodic(frequency=0)])]))
+    assert c.errors == ["CH2 segment 3: frequency must be > 0"]

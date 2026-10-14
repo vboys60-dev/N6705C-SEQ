@@ -77,7 +77,7 @@ def test_all_shapes_and_exact_field_keys_load(tmp_path, shape):
 def test_invalid_shape_has_segment_location(tmp_path, bad):
     raw = raw_plan()
     raw["channels"][0]["segments"][2]["shape"] = bad
-    with pytest.raises(ValueError, match="CH2 第 3 段：.*shape"):
+    with pytest.raises(ValueError, match="CH2 segment 3: .*shape"):
         load_json(write(tmp_path, raw))
 
 
@@ -89,7 +89,7 @@ def test_params_must_have_exact_fields(tmp_path, change):
         del params["ramp_time"]
     if change in ("extra", "both"):
         params["rise_time"] = 0.01
-    with pytest.raises(ValueError, match="CH2 第 3 段：.*params"):
+    with pytest.raises(ValueError, match="CH2 segment 3: .*params"):
         load_json(write(tmp_path, raw))
 
 
@@ -97,7 +97,7 @@ def test_params_must_have_exact_fields(tmp_path, change):
 def test_params_must_be_numeric(tmp_path, bad):
     raw = raw_plan()
     raw["channels"][0]["segments"][2]["params"]["start"] = bad
-    with pytest.raises(ValueError, match="CH2 第 3 段：start 必須是數字"):
+    with pytest.raises(ValueError, match="CH2 segment 3: start must be a number"):
         load_json(write(tmp_path, raw))
 
 
@@ -105,7 +105,7 @@ def test_params_must_be_numeric(tmp_path, bad):
 def test_params_must_be_finite(tmp_path, bad):
     raw = raw_plan()
     raw["channels"][0]["segments"][2]["params"]["start"] = bad
-    with pytest.raises(ValueError, match="CH2 第 3 段：start 必須是有限數字"):
+    with pytest.raises(ValueError, match="CH2 segment 3: start must be a finite number"):
         load_json(write(tmp_path, raw))
 
 
@@ -118,14 +118,14 @@ def test_params_must_be_finite(tmp_path, bad):
 def test_negative_times_have_segment_location(tmp_path, shape, key):
     raw = raw_plan(shape)
     raw["channels"][0]["segments"][2]["params"][key] = -0.001
-    with pytest.raises(ValueError, match=f"CH2 第 3 段：{key} 必須"):
+    with pytest.raises(ValueError, match=f"CH2 segment 3: {key} must"):
         load_json(write(tmp_path, raw))
 
 
 def test_negative_channel_delay_has_channel_location(tmp_path):
     raw = raw_plan()
     raw["channels"][0]["delay"] = -0.001
-    with pytest.raises(ValueError, match="CH2：delay 必須 >= 0"):
+    with pytest.raises(ValueError, match="CH2: delay must be >= 0"):
         load_json(write(tmp_path, raw))
 
 
@@ -133,7 +133,7 @@ def test_negative_channel_delay_has_channel_location(tmp_path):
 def test_current_limit_must_be_positive(tmp_path, bad):
     raw = raw_plan()
     raw["channels"][0]["current_limit"] = bad
-    with pytest.raises(ValueError, match="CH2：current_limit 必須 > 0（不限流請留空）"):
+    with pytest.raises(ValueError, match=r"CH2: current_limit must be > 0 \(leave blank for no limit\)"):
         load_json(write(tmp_path, raw))
 
 
@@ -153,14 +153,14 @@ def test_zero_times_are_allowed_without_duration_validation(tmp_path, shape):
 def test_frequency_must_be_positive(tmp_path, shape, bad):
     raw = raw_plan(shape)
     raw["channels"][0]["segments"][2]["params"]["frequency"] = bad
-    with pytest.raises(ValueError, match="CH2 第 3 段：frequency 必須 > 0"):
+    with pytest.raises(ValueError, match="CH2 segment 3: frequency must be > 0"):
         load_json(write(tmp_path, raw))
 
 
 def test_zero_tau_is_rejected(tmp_path):
     raw = raw_plan("exponential")
     raw["channels"][0]["segments"][2]["params"]["tau"] = 0
-    with pytest.raises(ValueError, match="CH2 第 3 段：tau 必須 > 0"):
+    with pytest.raises(ValueError, match="CH2 segment 3: tau must be > 0"):
         load_json(write(tmp_path, raw))
 
 
@@ -168,7 +168,7 @@ def test_zero_tau_is_rejected(tmp_path):
 def test_n_steps_must_be_positive_integer(tmp_path, bad):
     raw = raw_plan("staircase")
     raw["channels"][0]["segments"][2]["params"]["n_steps"] = bad
-    with pytest.raises(ValueError, match="CH2 第 3 段：n_steps 必須"):
+    with pytest.raises(ValueError, match="CH2 segment 3: n_steps must"):
         load_json(write(tmp_path, raw))
 
 
@@ -176,7 +176,7 @@ def test_n_steps_must_be_positive_integer(tmp_path, bad):
 def test_segment_repeat_must_be_positive_integer(tmp_path, bad):
     raw = raw_plan()
     raw["channels"][0]["segments"][2]["repeat"] = bad
-    with pytest.raises(ValueError, match="CH2 第 3 段：repeat 必須是 >= 1 的整數"):
+    with pytest.raises(ValueError, match="CH2 segment 3: repeat must be an integer >= 1"):
         load_json(write(tmp_path, raw))
 
 
@@ -184,7 +184,7 @@ def test_segment_repeat_must_be_positive_integer(tmp_path, bad):
 def test_plan_repeat_must_be_integer_in_range(tmp_path, bad):
     raw = raw_plan()
     raw["repeat"] = bad
-    with pytest.raises(ValueError, match="計畫：repeat 必須"):
+    with pytest.raises(ValueError, match="plan: repeat must"):
         load_json(write(tmp_path, raw))
 
 
@@ -204,19 +204,19 @@ def test_segment_repeat_has_no_plan_repeat_cap(tmp_path):
 def test_duplicate_channel_has_channel_location(tmp_path):
     raw = raw_plan()
     raw["channels"].append({"channel": 2, "enabled": False})
-    with pytest.raises(ValueError, match="CH2：通道不可以重複"):
+    with pytest.raises(ValueError, match="CH2: duplicate channel is not allowed"):
         load_json(write(tmp_path, raw))
 
 
 @pytest.mark.parametrize("raw,location", [
-    ([], "計畫"), ({}, "計畫"), ({"channels": {}}, "計畫"),
-    ({"channels": [None]}, "計畫第 1 個通道"),
+    ([], "plan"), ({}, "plan"), ({"channels": {}}, "plan"),
+    ({"channels": [None]}, "plan channel 1"),
     ({"channels": [{"channel": 2, "segments": {}}]}, "CH2"),
-    ({"channels": [{"channel": 2, "segments": [None]}]}, "CH2 第 1 段"),
-    ({"channels": [{"channel": 2, "segments": [{"shape": "step", "params": []}]}]}, "CH2 第 1 段"),
+    ({"channels": [{"channel": 2, "segments": [None]}]}, "CH2 segment 1"),
+    ({"channels": [{"channel": 2, "segments": [{"shape": "step", "params": []}]}]}, "CH2 segment 1"),
 ])
 def test_malformed_structure_is_value_error_with_location(tmp_path, raw, location):
-    with pytest.raises(ValueError, match=f"{location}："):
+    with pytest.raises(ValueError, match=f"{location}: "):
         load_json(write(tmp_path, raw))
 
 
@@ -224,7 +224,7 @@ def test_malformed_structure_is_value_error_with_location(tmp_path, raw, locatio
 def test_invalid_channel_has_list_location(tmp_path, bad):
     raw = raw_plan()
     raw["channels"][0]["channel"] = bad
-    with pytest.raises(ValueError, match="計畫第 1 個通道：channel"):
+    with pytest.raises(ValueError, match="plan channel 1: channel"):
         load_json(write(tmp_path, raw))
 
 
@@ -234,7 +234,7 @@ def test_invalid_channel_has_list_location(tmp_path, bad):
 def test_invalid_channel_field_has_channel_location(tmp_path, key, bad):
     raw = raw_plan()
     raw["channels"][0][key] = bad
-    with pytest.raises(ValueError, match=f"CH2：{key}"):
+    with pytest.raises(ValueError, match=f"CH2: {key}"):
         load_json(write(tmp_path, raw))
 
 
@@ -242,22 +242,34 @@ def test_invalid_channel_field_has_channel_location(tmp_path, key, bad):
 def test_invalid_plan_field_has_plan_location(tmp_path, key, bad):
     raw = raw_plan()
     raw[key] = bad
-    with pytest.raises(ValueError, match=f"計畫：{key}"):
+    with pytest.raises(ValueError, match=f"plan: {key}"):
         load_json(write(tmp_path, raw))
 
 
 def test_invalid_json_has_plan_location(tmp_path):
     path = tmp_path / "broken.json"
     path.write_text('{"channels":', encoding="utf-8")
-    with pytest.raises(ValueError, match="計畫：無法讀取 JSON"):
+    with pytest.raises(ValueError, match="plan: cannot read JSON"):
         load_json(path)
 
 
 def test_unreadable_file_is_value_error(tmp_path):
-    with pytest.raises(ValueError, match="計畫：無法讀取 JSON"):
+    with pytest.raises(ValueError, match="plan: cannot read JSON"):
         load_json(tmp_path / "missing.json")
 
 
 def test_unwritable_file_is_value_error(tmp_path):
-    with pytest.raises(ValueError, match="計畫：無法寫入 JSON"):
+    with pytest.raises(ValueError, match="plan: cannot write JSON"):
         write_json(ListPlan([]), tmp_path)
+
+
+def test_missing_and_extra_fields_report_english_details(tmp_path):
+    raw = raw_plan()
+    params = raw["channels"][0]["segments"][2]["params"]
+    del params["ramp_time"]
+    params["rise_time"] = 0.01
+    with pytest.raises(ValueError) as error:
+        load_json(write(tmp_path, raw))
+    assert str(error.value) == (
+        "CH2 segment 3: params fields do not match; missing: ramp_time; extra: rise_time"
+    )

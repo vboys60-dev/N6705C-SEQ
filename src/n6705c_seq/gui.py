@@ -96,7 +96,7 @@ class App:
         self.canvas.pack(fill="both", expand=True, padx=10, pady=(4, 10))
         self.canvas.bind("<Configure>", lambda _e: self.schedule())
         self.list_tab = ListTab(self.notebook, self)
-        self.notebook.add(self.list_tab, text="List 模式")
+        self.notebook.add(self.list_tab, text="List Mode")
         root.after(100, self._poll)
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.schedule()

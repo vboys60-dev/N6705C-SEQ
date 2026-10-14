@@ -66,7 +66,7 @@ def _list_test_app(monkeypatch):
                                delay_points={ch.channel: 0 for ch in live},
                                pad_points={ch.channel: 0 for ch in live},
                                segments={ch.channel: [info for _ in ch.segments] for ch in live},
-                               warnings=[], errors=[] if live else ["沒有啟用且有段落的通道"])
+                               warnings=[], errors=[] if live else ["no enabled channel with segments"])
 
     monkeypatch.setattr(list_gui.synth, "compile_plan", compile_plan)
     monkeypatch.setattr(list_gui.synth, "base_duration", lambda seg: 0.02)
@@ -124,7 +124,7 @@ def test_list_format_number_uses_shortest_repr(value, expected):
 def test_notebook_contains_csv_and_list_tabs(monkeypatch):
     root, app = _list_test_app(monkeypatch)
     try:
-        assert [app.notebook.tab(tab, "text") for tab in app.notebook.tabs()] == ["上電時序", "List 模式"]
+        assert [app.notebook.tab(tab, "text") for tab in app.notebook.tabs()] == ["上電時序", "List Mode"]
         for tab in app.notebook.tabs():
             app.notebook.select(tab)
             root.update_idletasks()
@@ -195,7 +195,7 @@ def test_list_json_round_trip_without_dialogs(tmp_path, monkeypatch, empty):
         tab.refresh()
         if not empty:
             assert tab.channel_choice.get() == "CH2"
-            assert "要求" in tab.statistics.get()
+            assert "requested" in tab.statistics.get()
             tab.select_channel(8)
             tab.enabled.set(True)
             tab.add_segment()
@@ -247,7 +247,7 @@ def test_list_preview_has_200_points_and_no_arrows(monkeypatch):
         assert len(calls) == 200
         assert calls[0] == 0
         assert calls[-1] == 0.02
-        item, = tab.preview.find_all()
+        item, = [i for i in tab.preview.find_all() if "annotation" not in tab.preview.gettags(i)]
         assert len(tab.preview.coords(item)) == 400
         assert tab.preview.itemcget(item, "arrow") == "none"
     finally:
@@ -337,9 +337,9 @@ def test_list_worker_uses_functions_and_reports_errors(monkeypatch, failure):
         result = tab.queue.get_nowait()
         assert result[0] == ("error" if failure else "done")
         if failure == "unconfirmed":
-            assert "輸出已強制關閉" not in result[1]
+            assert "Outputs were forced off" not in result[1]
         elif failure == "convert":
-            assert "開輸出前被拒絕" in result[1]
+            assert "rejected before outputs were enabled" in result[1]
         elif not failure:
             assert result[2] == {1: (0.01, [0, 1])}
             assert "擷取失敗" in result[1]
@@ -426,7 +426,7 @@ def test_list_tab_runs_demo_plan_end_to_end(monkeypatch):
         list_tab._work(plan, compiled, frames, resources, True, False)
         kind, message, capture = list_tab.queue.get_nowait()
         assert kind == "done", message
-        assert "輸出已關閉" in message
+        assert "outputs are off" in message
         assert capture is None
         assert len(groups) == 1
         for inst in groups[0].instruments:
@@ -435,3 +435,129 @@ def test_list_tab_runs_demo_plan_end_to_end(monkeypatch):
             assert not any(states.values())
     finally:
         root.destroy()
+
+
+def _preview_test_tab():
+    import tkinter as tk
+    from types import SimpleNamespace
+    from n6705c_seq.list_gui import ListTab
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+    root.withdraw()
+    app = SimpleNamespace(resources=[tk.StringVar(root)], busy=False)
+    tab = ListTab(root, app)
+    return root, tab
+
+
+def _annotation_texts(canvas, tag="annotation"):
+    return [canvas.itemcget(item, "text") for item in canvas.find_withtag(tag)
+            if canvas.type(item) == "text"]
+
+
+def test_list_ramp_preview_annotations_follow_live_form():
+    root, tab = _preview_test_tab()
+    try:
+        tab.shape.set("Ramp")
+        tab.refresh()
+        texts = _annotation_texts(tab.preview)
+        assert {"Start 0 V", "End 1 V", "Delay 10 ms", "Ramp Time 10 ms", "End Time 10 ms"} <= set(texts)
+        tab.params["ramp_time"].set("2")
+        tab.refresh()
+        assert "Ramp Time 2 s" in _annotation_texts(tab.preview)
+        tab.params["ramp_time"].set("nan")
+        tab.refresh()
+        assert not tab.preview.find_all()
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("shape,amplitude", [("Sine", "1"), ("Triangle", "-1")])
+def test_list_periodic_preview_annotations(shape, amplitude):
+    root, tab = _preview_test_tab()
+    try:
+        tab.shape.set(shape)
+        tab.params["offset"].set("2")
+        tab.params["amplitude"].set(amplitude)
+        tab.segment_repeat.set("5")
+        tab.refresh()
+        texts = _annotation_texts(tab.preview)
+        assert {"Offset 2 V", f"Amplitude {amplitude} V", "Period 10 ms"} <= set(texts)
+        assert "Frequency 100 Hz   Phase 0°   ×5" in texts
+        dimension = [item for item in tab.preview.find_withtag("annotation")
+                     if tab.preview.type(item) == "line" and len(tab.preview.coords(item)) == 4
+                     and tab.preview.coords(item)[0] == tab.preview.coords(item)[2]
+                     and abs(tab.preview.coords(item)[1] - tab.preview.coords(item)[3]) > 14]
+        assert len(dimension) == 1
+        _, base, _, peak = tab.preview.coords(dimension[0])
+        assert (peak < base) == (float(amplitude) > 0)
+    finally:
+        root.destroy()
+
+
+def test_list_tiny_time_span_labels_do_not_overlap():
+    root, tab = _preview_test_tab()
+    try:
+        tab.shape.set("Ramp")
+        tab.params["delay"].set("0.0001")
+        tab._draw_curve(tab.preview, tab.read_segment(), 0, 0, 330, 185)
+        labels = tab.preview.find_withtag("time_label")
+        assert set(_annotation_texts(tab.preview, "time_label")) == {"Delay 0.1 ms", "Ramp Time 10 ms", "End Time 10 ms"}
+        boxes = [tab.preview.bbox(item) for item in labels]
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                assert a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1]
+        delay = next(item for item in labels if tab.preview.itemcget(item, "text").startswith("Delay"))
+        assert tab.preview.coords(delay)[1] > min(tab.preview.coords(item)[1] for item in labels)
+    finally:
+        root.destroy()
+
+
+def test_list_equal_levels_have_one_combined_annotation():
+    root, tab = _preview_test_tab()
+    try:
+        tab.shape.set("Ramp")
+        tab.params["start"].set("1")
+        tab.refresh()
+        assert _annotation_texts(tab.preview, "level_label") == ["Start = End 1 V"]
+        tab.add_segment()
+        tab.refresh()
+        assert not tab.segment_canvas.find_withtag("annotation")
+        assert not tab.canvas.find_withtag("annotation")
+        assert "1 Ramp ×1" in _annotation_texts(tab.segment_canvas, "all")
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("shape,expected", [
+    ("Step", {"Start 0 V", "End 1 V", "Delay 10 ms", "End Time 10 ms"}),
+    ("Trapezoid", {"Offset 0 V", "Offset+Amp -1 V", "Start Time 10 ms", "Up Time 10 ms",
+                   "High Time 10 ms", "Down Time 10 ms", "End Time 10 ms"}),
+    ("Staircase", {"Start 0 V", "End 1 V", "Stair Time 10 ms", "Steps 5"}),
+    ("Exponential", {"Start 0 V", "End 1 V", "Exp Time 10 ms", "Tau 10 ms"}),
+])
+def test_list_other_shape_annotations(shape, expected):
+    root, tab = _preview_test_tab()
+    try:
+        tab.shape.set(shape)
+        if shape == "Trapezoid":
+            tab.params["amplitude"].set("-1")
+        tab._draw_curve(tab.preview, tab.read_segment(), 0, 0, 330, 185)
+        assert expected <= set(_annotation_texts(tab.preview))
+        boxes = [tab.preview.bbox(item) for item in tab.preview.find_withtag("time_label")]
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                assert a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1]
+    finally:
+        root.destroy()
+
+
+def test_list_sources_have_no_cjk_text():
+    import re
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "src" / "n6705c_seq"
+    for name in ("list_gui.py", "synth.py", "listplan.py"):
+        assert not re.search(r"[一-鿿　-〿＀-￯]", (source / name).read_text(encoding="utf-8"))

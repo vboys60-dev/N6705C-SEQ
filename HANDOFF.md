@@ -3,7 +3,7 @@
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），
 在多台主機上依表上電。第一版只做時序，不做量測。目前設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-14　狀態：模擬器全過（213 tests）。**ARB List 模式開發中，Track A 已驗收、D 修正到一半（暫停），見 §9.2.1**。**單台實機（4× N6752A）單通道已跑通**（見 §4.8），跨台同步仍未量。Codex 審查第 2 輪已核准（見 §8）。
+最後更新：2026-10-14　狀態：模擬器全過（255 tests）。**ARB List 模式：P0、C、A、D、H 前半、I 前半、D-EN（英文化＋預覽標註）都已 commit，下一步是有設備時跑 H 實機量測，見 §9.2.3**。**單台實機（4× N6752A）單通道已跑通**（見 §4.8），跨台同步仍未量。Codex 審查第 2 輪已核准（見 §8）。
 
 ## 0. 先讀這幾件事
 
@@ -16,7 +16,7 @@
 ```bash
 cd N6705C-SEQ
 pip install -e ".[dev]"           # 依賴：pyvisa、pyvisa-py、pyusb、libusb-package、numpy（不需要舊專案）
-python3 -m pytest -q              # 145 passed
+python3 -m pytest -q              # 255 passed
 
 n6705c-seq check examples/powerup.csv                       # 只驗證、印時間軸，不碰儀器
 n6705c-seq check plan.csv --suggest-out fixed.csv           # 有跨台打平時，另存建議的通道分配
@@ -45,11 +45,12 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | `src/n6705c_seq/plan.py` | `SeqRow`、`load_csv`／`write_csv`、`to_functions`、打平偵測 `order_warnings`、`suggest_assignment`、`timeline` |
 | `src/n6705c_seq/execute.py` | `run_plan`（CSV）→ `run_functions`（CSV 與 List 模式共用）：驗證 → 設定電壓／電流並開輸出 → load → 每台一道 `INIT:TRAN` 同時啟動（`start_together`）→ 等待 → 關輸出（`keep_on` 時不關）。另有 `connect_group` |
 | `src/n6705c_seq/listplan.py` | List 模式：`Segment`／`ChannelList`／`ListPlan`、各波形欄位表 `FIELDS`、`load_json`／`write_json`（§9） |
-| `src/n6705c_seq/synth.py` | List 模式：段落 → CDW 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`（§9，未 commit） |
-| `src/n6705c_seq/list_gui.py` | List 模式分頁 `ListTab`（§9，未 commit） |
+| `src/n6705c_seq/synth.py` | List 模式：段落 → CDW 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`（§9） |
+| `src/n6705c_seq/list_gui.py` | List 模式分頁 `ListTab`（§9） |
+| `scripts/hw_list_check.py` | List 模式實機量測：`transfer`／`seam`／`align`／`sinebw`／`all`，`--resource X` 或 `--demo`，結果印出並存 CSV 到 `hw_list_results/`（§9.2.2） |
 | `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
 | `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（測試連線；掃描鈕已在 `d99bda8` 移除）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
-| `tests/` | `test_plan.py`（16）、`test_execute.py`（15）、`test_cli.py`（10）、`test_gui.py`（26：波形轉折點、刻度、設定檔、List 分頁；其中 18 個是 Track D 新加、未 commit）、`test_listplan.py`（96）、`test_synth.py`（50，未 commit） |
+| `tests/` | `test_plan.py`（16）、`test_execute.py`（15）、`test_cli.py`（10）、`test_gui.py`（42：波形轉折點、刻度、設定檔、List 分頁、List 端到端 demo、預覽標註）、`test_listplan.py`（97）、`test_synth.py`（51）、`test_hw_list_check.py`（24） |
 | `docs/plan.md` | 實作計畫，已更新到打平建議（Task 5）；測試程式碼以 `tests/` 為準 |
 
 本專案只用標準函式庫；核心用 pyvisa、pyvisa-py、pyusb、libusb-package、numpy。沒有 YAML。Python 3.13、pytest 8.4.2。
@@ -175,7 +176,7 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 2. 兩台各一通道，量跨台起點差，把實測值填回 `TRIGGER_SKEW_SECONDS`（`src/n6705c/core/group.py`，本專案的副本）。
 3. 若實測差遠大於 2 ms 或有需求精準同步，再做硬體接線（M11.3）。
 4. ~~Codex 審查第 2 輪~~：已完成（§8）。
-5. ARB List 模式的各 Track，見 §9.2。
+5. ARB List 模式：有設備時跑 H 實機量測，再開工 I 後半，見 §9.2.3。
 
 ## 8. Codex 審查進度（`/codex-review:code`）
 
@@ -206,14 +207,14 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 |---|---|---|
 | P0 | `listplan.py`、`examples/list_demo.json`、`tests/test_listplan.py` | ✅ `3032c1a` |
 | C | `execute.run_functions`（`run_plan` 改成呼叫它，行為不變） | ✅ `3032c1a` |
-| A | `synth.py`：段落 → 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`。第一版不做頻寬警告、Triangle 沿用 Sine 門檻（規劃 §2.2，2026-10-14 定案） | ✅ 已驗收，**未 commit**（見 §9.2.1） |
-| D | `list_gui.py` + `gui.py` 分頁、「■ 全部關閉」移到連線列 | ✅ 已驗收（2026-10-14），**未 commit**（見 §9.2.1） |
-| H | `scripts/hw_list_check.py` 實機量測（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | ✅ 前半（寫腳本＋demo 測試）已驗收，**未 commit**（見 §9.2.2）；實機執行等有設備 |
-| I | 整合、回填實測常數、端到端測試、版本 0.2.0 | 🔄 前半（`DEMO_SLOTS`→N6752A、GUI 端到端 demo 測試）已驗收，**未 commit**；後半等 H 實測 |
+| A | `synth.py`：段落 → 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`。第一版不做頻寬警告、Triangle 沿用 Sine 門檻（規劃 §2.2，2026-10-14 定案） | ✅ `c051338` |
+| D | `list_gui.py` + `gui.py` 分頁、「■ 全部關閉」移到連線列 | ✅ `c051338` |
+| H | `scripts/hw_list_check.py` 實機量測（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | 🔄 前半（寫腳本＋demo 測試）✅ `82bb688`；實機執行等有設備（§9.2.3） |
+| I | 整合、回填實測常數、端到端測試、版本 0.2.0 | 🔄 前半（`DEMO_SLOTS`→N6752A、GUI 端到端 demo 測試）✅ `82bb688`；後半等 H 實測（§9.2.3） |
 
-### 9.2.1 暫停時的狀態（2026-10-14 15:56，使用者要求暫停）
+### 9.2.1 A、D 驗收紀錄（2026-10-14，已 commit `c051338`）
 
-工作目錄裡**全部未 commit**（`git status`）：
+當時的檔案：
 
 | 檔案 | Track | 狀態 |
 |---|---|---|
@@ -238,10 +239,8 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 | 2 | 數字欄位用 `.17g` 顯示浮點雜訊（限流 0.1 → 「0.1000000000000」）。改最短表示 | ✅ `_format_number`＋`test_list_numbers_use_shortest_repr`、`test_list_format_number_uses_shortest_repr` |
 | 3 | 時間軸標籤「0.022999 s」、最右一個被切 | ✅ 已改（P < 1 s 用 ms、`.4g`、最右 `anchor="e"`），1180x860 截圖複驗通過 |
 
-**接手要做**
-1. A、D 都已驗收（2026-10-14，D 第二輪由 Codex 補測試）。使用者說 commit 才 commit（A、D 與規劃修改一起提交）。
-2. 之後：H（實機量測，需要人在 Windows 實機旁）、I（整合）都還要使用者另外說開工。
-3. 小事（不擋 commit）：測試／腳本裡直接 `root.destroy()` 時，stderr 會印 `invalid command name "...draw"`／`"..._poll"`（Tk 還有排程中的 after），不影響結果。
+**遺留**
+- 小事（不擋 commit）：測試／腳本裡直接 `root.destroy()` 時，stderr 會印 `invalid command name "...draw"`／`"..._poll"`（Tk 還有排程中的 after），不影響結果。
 
 ### 9.2.2 H 前半、I 前半（2026-10-14，使用者沒有設備）
 
@@ -249,7 +248,22 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 - I 前半 ✅：`execute.DEMO_SLOTS` 改 N6752A（測試行為不變）；`tests/test_gui.py` 加 `test_list_tab_runs_demo_plan_end_to_end`（真合成、demo 執行、輸出關閉）。I 清單第 1、3 項其實 D、A 時已完成。
 - H 前半：`scripts/hw_list_check.py`（`{transfer,seam,align,sinebw,all} --resource X | --demo [--out] [--yes]`）＋`tests/test_hw_list_check.py`。實機開輸出前要輸入 y；例外時輸出會關。模擬器數位化器回傳平線，demo 只驗流程。
 - align 改法（使用者 2026-10-14 同意）：規劃 §4.5 已改寫成「兩次執行、各錄一小段」。第 1 次 `OFFS:POIN 0`、第 2 次 `OFFS:POIN 124567`，取樣 20.48 µs、390 點；驗收用各通道相對 CH1 的漂移（兩次觸發延遲差會抵消）。腳本用 context manager 暫時替換 `execute._arm_capture`，不改 `execute.py`。探測：兩次觸發差 3 ms → rel 0、PASS；CH4 多漂 1.5 dwell → FAIL。✅ 驗收通過，`pytest` **243 passed**。
-- 小事：預設輸出目錄 `hw_list_results/` 未加 `.gitignore`。
+- 已 commit `82bb688`（2026-10-14），同時把 `dist_python/`（打包產物）、`hw_list_results/` 加進 `.gitignore`。
+
+### 9.2.2.1 D-EN：List 模式英文化＋預覽標註（2026-10-14）
+
+- 使用者：「預覽波形部分可以將時間電壓參數帶入預覽區域」「開工 交給codex做 你驗收，list mode 都用英文」。
+- 英文化：`list_gui.py` 全部介面文字、分頁標題 `List Mode`（`gui.py` 只改這個）、`synth.py`／`listplan.py` 的錯誤與警告訊息（例：`CH2 segment 3: frequency must be > 0`）。波形名 Step/Ramp/Trapezoid/Sine/Triangle/Staircase/Exponential，參數名見 `list_gui.TITLES`。**`execute.py` 的訊息與 CSV 分頁維持中文**（兩個分頁共用）。JSON 格式不變。
+- 預覽標註（只有右下大預覽 `self.preview`，縮圖與泳道不標）：左邊電壓標籤＋虛線（Start/End 或 Offset/Offset+Amp；Start＝End 合併成一個）；Sine/Triangle 用 Amplitude 尺寸線＋Period；底下時間分段尺寸線，標籤放不下就換到下一排、不重疊；右上角 Frequency/Phase、Steps、Tau、×repeat。物件帶 canvas tag `annotation`。
+- 偏離規格（接受）：標籤擠到三排以上時，預覽 canvas 會自己長高。
+- 驗收：範圍沒越界、三個檔案沒有 CJK、8 種情況 1180×860 截圖正常、`hw_list_check.py all --demo` 照常，`pytest` **255 passed**。
+
+### 9.2.3 接手要做
+
+1. **有設備時（Windows 實機旁）**：`python scripts/hw_list_check.py all --resource <VISA位址>`。開輸出前會要求輸入 y；結果印出並存 CSV 到 `hw_list_results/`。也可以單跑 `transfer`／`seam`／`align`／`sinebw`。
+2. 對照規劃 §4.5 的驗收門檻：transfer ≤ 10 s（否則 dwell 規則改「符合 N 取最大 dwell」並考慮請 core 改二進位傳輸）；align 的 spread 與 d_k − d_CH1 都 ≤ 1 dwell；seam 看輪間有沒有空隙或突波；sinebw 得到 -3 dB 頻率。
+3. **I 後半**（使用者另外說開工才做）：回填 `SINE_BW_HZ`、`compile_plan(plan, model=None)`、Sine／Triangle 門檻、dwell 規則定案、版本 0.2.0、README、Windows 打包。
+4. 可在 I 後半順便處理：`synth._validate` 與 `listplan.load_json` 重複檢查（§9.2.1）。
 
 ### 9.3 工作方式（使用者要求）
 
@@ -267,4 +281,4 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 ### 9.4 實機模組型號（2026-10-14 已確認）
 
 - 實機是 **4× N6752A**（使用者確認，同 §4.8）。`docs/arb_list_mode.md` 的 Sine 頻寬推論已改正；原本誤用的 N6762A 是舊專案那台（`core/delay.py` 註解：fw E.02.09，四個 N6762A）。
-- **還沒改**：`execute.DEMO_SLOTS` 仍是 N6762A，註解寫「configured like the real frames」是錯的。模擬器對兩者的額定值一樣（`fake._module_ratings` 都回預設 50 V／1 A），改成 N6752A 不影響測試結果。這是程式碼，等使用者指示（可併入 Track I）。
+- `execute.DEMO_SLOTS` 已改成 N6752A（I 前半，`82bb688`）。模擬器對兩者的額定值一樣（`fake._module_ratings` 都回預設 50 V／1 A），測試結果不變。
