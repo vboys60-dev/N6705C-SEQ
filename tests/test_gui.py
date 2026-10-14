@@ -390,3 +390,48 @@ def test_list_segment_operations_without_a_display(monkeypatch):
     tab.delete_segment()
     assert not tab.channel.segments
     assert tab.segment_index is None
+
+
+def test_list_tab_runs_demo_plan_end_to_end(monkeypatch):
+    import tkinter as tk
+    from pathlib import Path
+    from n6705c.core.group import InstrumentGroup
+    from n6705c_seq import gui
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+    root.withdraw()
+    monkeypatch.setattr(gui, "_load_config", lambda: {"resources": [], "demo": True})
+    groups = []
+    original_demo = InstrumentGroup.demo
+
+    def demo(cls, *, frames, slots):
+        group = original_demo(frames=frames, slots=slots)
+        groups.append(group)
+        return group
+
+    monkeypatch.setattr(InstrumentGroup, "demo", classmethod(demo))
+    try:
+        app = gui.App(root)
+        list_tab = app.list_tab
+        list_tab.open_json(path=Path(__file__).resolve().parents[1] / "examples" / "list_demo.json")
+        list_tab.refresh()
+        plan, compiled = list_tab.plan, list_tab.compiled
+        assert compiled is not None
+        assert not compiled.errors
+        frames = -(-max(compiled.levels) // 4)
+        resources = [v.get().strip() for v in app.resources[:frames]]
+        list_tab._work(plan, compiled, frames, resources, True, False)
+        kind, message, capture = list_tab.queue.get_nowait()
+        assert kind == "done", message
+        assert "輸出已關閉" in message
+        assert capture is None
+        assert len(groups) == 1
+        for inst in groups[0].instruments:
+            states = inst.output_state(inst.populated_channels)
+            assert set(states) == set(inst.populated_channels)
+            assert not any(states.values())
+    finally:
+        root.destroy()

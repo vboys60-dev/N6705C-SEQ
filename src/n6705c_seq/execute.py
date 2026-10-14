@@ -23,8 +23,8 @@ from .plan import SeqRow, to_functions
 
 __all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "start_together", "run_plan", "run_functions", "outputs_off"]
 
-#: The simulator configured like the real frames (four N6762A modules).
-DEMO_SLOTS = ("N6762A",) * 4
+#: The simulator configured like the real frames (four N6752A modules).
+DEMO_SLOTS = ("N6752A",) * 4
 
 #: How long past the programmed end a channel may still report running.
 GRACE_SECONDS = 2.0

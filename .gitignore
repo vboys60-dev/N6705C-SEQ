@@ -5,3 +5,5 @@ __pycache__/
 build/
 dist/
 .venv/
+dist_python/
+hw_list_results/

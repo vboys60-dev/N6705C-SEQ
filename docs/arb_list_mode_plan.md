@@ -265,8 +265,15 @@ def to_functions(plan, c):
 ```
 transfer：CH1 載入 65,535 點 CDW，計時 runner.load()；另外印出 ASCII 字串長度
 seam    ：CH1 0→1 V 斜坡 CDW，COUNT=3，擷取，看輪與輪交界有沒有空隙或突波
-align   ：CH1..CH4 同一 dwell，週期 10 ms，每輪開頭放一個 1 V 脈衝，COUNT=256；
-          擷取，比較第 1 輪與第 256 輪各通道脈衝的時間差
+align   ：CH1..CH4 同一 dwell，週期 P≈10 ms，每輪在 5 ms 處放一個 1 V、1 ms 寬的脈衝，COUNT=256；
+          執行兩次，各錄一小段（2026-10-14 改：一次錄完 2.56 s 取樣只有 ~52 dwell，驗收不了）：
+            第 1 次：OFFS:POIN 0，錄 [0, P)            → 第 1 輪的上升緣
+            第 2 次：OFFS:POIN = round(255P/tint)，錄 [255P, 256P) → 第 256 輪的上升緣
+          取樣 tint = CAPTURE_STEP（20.48 µs），點數 = floor((P − 2 ms)/tint)，讓記錄在 ARB 結束前約 2 ms 錄完（容許 *TRG 晚於 INIT 的延遲）。
+          上升緣用 0.5 V 交越線性內插（可分辨到比取樣更細）。
+          量：各次內的通道間差（spread）；各通道漂移 d_k = t256_k − t1_k − 255P，
+              驗收用 d_k − d_CH1（同一台的 *TRG 共用，兩次觸發延遲差會抵消）；
+              d_CH1 本身含兩次觸發延遲差，只印出供參考，不列入驗收。
 sinebw  ：CH1 實際負載，Sine offset 2 V、振幅 1 V，f = 10/30/100/300/1k/3k Hz；擬合振幅，印出 -3 dB 頻率
 輸出：一律印數字＋存 CSV（不加 matplotlib 依賴）
 ```
@@ -274,7 +281,7 @@ sinebw  ：CH1 實際負載，Sine offset 2 V、振幅 1 V，f = 10/30/100/300/1
 驗收門檻（2026-10-13 定案）：
 
 - transfer ≤ 10 s：維持「最小 dwell」規則。超過就改成「符合 N 的前提下取最大 dwell」，並回報要不要請 core 改二進位傳輸。
-- 對齊誤差 ≤ 1 dwell。
+- 對齊誤差 ≤ 1 dwell：兩次的 spread 與 d_k − d_CH1 都 ≤ 1 dwell（dwell＝10.24 µs）。
 
 ## 5. 並行計畫
 

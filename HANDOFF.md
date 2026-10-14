@@ -208,8 +208,8 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 | C | `execute.run_functions`（`run_plan` 改成呼叫它，行為不變） | ✅ `3032c1a` |
 | A | `synth.py`：段落 → 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`。第一版不做頻寬警告、Triangle 沿用 Sine 門檻（規劃 §2.2，2026-10-14 定案） | ✅ 已驗收，**未 commit**（見 §9.2.1） |
 | D | `list_gui.py` + `gui.py` 分頁、「■ 全部關閉」移到連線列 | ✅ 已驗收（2026-10-14），**未 commit**（見 §9.2.1） |
-| H | `scripts/hw_list_check.py` 實機量測（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | ⏳ 待開工，需要人在 Windows 實機旁 |
-| I | 整合、回填實測常數、端到端測試、版本 0.2.0 | ⏳ A、C、D、H 完成後 |
+| H | `scripts/hw_list_check.py` 實機量測（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | ✅ 前半（寫腳本＋demo 測試）已驗收，**未 commit**（見 §9.2.2）；實機執行等有設備 |
+| I | 整合、回填實測常數、端到端測試、版本 0.2.0 | 🔄 前半（`DEMO_SLOTS`→N6752A、GUI 端到端 demo 測試）已驗收，**未 commit**；後半等 H 實測 |
 
 ### 9.2.1 暫停時的狀態（2026-10-14 15:56，使用者要求暫停）
 
@@ -242,6 +242,14 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 1. A、D 都已驗收（2026-10-14，D 第二輪由 Codex 補測試）。使用者說 commit 才 commit（A、D 與規劃修改一起提交）。
 2. 之後：H（實機量測，需要人在 Windows 實機旁）、I（整合）都還要使用者另外說開工。
 3. 小事（不擋 commit）：測試／腳本裡直接 `root.destroy()` 時，stderr 會印 `invalid command name "...draw"`／`"..._poll"`（Tk 還有排程中的 after），不影響結果。
+
+### 9.2.2 H 前半、I 前半（2026-10-14，使用者沒有設備）
+
+- 使用者：「開工 H 前半、I 前半，交給codex做 你驗收」。Codex 兩條同時跑，範圍都沒越界；本機 `pytest` **228 passed**。
+- I 前半 ✅：`execute.DEMO_SLOTS` 改 N6752A（測試行為不變）；`tests/test_gui.py` 加 `test_list_tab_runs_demo_plan_end_to_end`（真合成、demo 執行、輸出關閉）。I 清單第 1、3 項其實 D、A 時已完成。
+- H 前半：`scripts/hw_list_check.py`（`{transfer,seam,align,sinebw,all} --resource X | --demo [--out] [--yes]`）＋`tests/test_hw_list_check.py`。實機開輸出前要輸入 y；例外時輸出會關。模擬器數位化器回傳平線，demo 只驗流程。
+- align 改法（使用者 2026-10-14 同意）：規劃 §4.5 已改寫成「兩次執行、各錄一小段」。第 1 次 `OFFS:POIN 0`、第 2 次 `OFFS:POIN 124567`，取樣 20.48 µs、390 點；驗收用各通道相對 CH1 的漂移（兩次觸發延遲差會抵消）。腳本用 context manager 暫時替換 `execute._arm_capture`，不改 `execute.py`。探測：兩次觸發差 3 ms → rel 0、PASS；CH4 多漂 1.5 dwell → FAIL。✅ 驗收通過，`pytest` **243 passed**。
+- 小事：預設輸出目錄 `hw_list_results/` 未加 `.gitignore`。
 
 ### 9.3 工作方式（使用者要求）
 
