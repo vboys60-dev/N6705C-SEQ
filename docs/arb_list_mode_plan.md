@@ -3,7 +3,7 @@
 > 設計決定見 `docs/arb_list_mode.md`（以下簡稱「設計文件」）。本文件只講**怎麼做、誰做哪塊、哪些可以並行**。
 > ⛔ 使用者說「開工」之前不准動程式碼。開工後，每個 Track 只准改「檔案」欄列出的檔案。
 
-更新：2026-10-13　狀態：規劃完成並定案，未開工
+更新：2026-10-14　狀態：規劃定案；P0、C 已完成（`3032c1a`），A、D、H 待開工
 
 使用者 2026-10-13 定案：R1 右端取樣；`ARB:TERM:LAST` 一律開（勾選框只決定結束後關不關輸出）；§4.5 驗收門檻（傳輸 ≤ 10 s、對齊 ≤ 1 dwell）；Staircase／Exponential 欄位照 §2.1（Exponential 有 `end_time`）。
 
@@ -101,7 +101,9 @@ WARN_PTS_PER_PERIOD = 20      # Sine/Triangle 每週期少於 → 警告
 BLOCK_PTS_PER_PERIOD = 10     # 少於 → 擋下
 WARN_PTS_PER_EDGE = 10        # 最快的 rise/fall 少於 → 警告
 DISCONTINUITY_V = 1e-3        # 段落接縫跳動超過 → 警告
-SINE_BW_HZ: dict[str, float] = {}   # ponytail: 模組型號 → 實測 -3 dB 頻寬，Track H 量完回填；查不到就不警告
+# 第一版不做頻寬警告（2026-10-14 定案）：compile_plan 簽名不加 model，也不定義 SINE_BW_HZ。
+# Track I 回填 H 的實測頻寬時，再加 SINE_BW_HZ 與 compile_plan(plan, model=None)。
+# Triangle 第一版沿用 Sine 的 20／10 點門檻，實測後再調低。
 
 def base_duration(seg: Segment) -> float           # 一次（不含 repeat）的時間；Sine/Triangle＝1/frequency
 def value(seg: Segment, u: float) -> float         # 段內時間 u ∈ [0, base_duration] 的理想電壓
@@ -196,7 +198,7 @@ def compile_plan(plan):
             pts += [value(seg, fold((k + 1) * dwell, T)) for k in range(n)]  # R1, R4
             cum_pts += n
             info[ch].append(SegmentInfo(n, want, n * dwell))
-            check_segment(seg, dwell, ch, i, warnings, errors)               # 點數／頻寬／邊緣
+            check_segment(seg, dwell, ch, i, warnings, errors)               # 點數／邊緣
         check_seams(ch, warnings)                                            # 接縫跳動
         levels[ch.channel] = pts
 
@@ -215,7 +217,7 @@ def check_segment(seg, dwell, ...):
         ppp = 1 / (seg.params["frequency"] * dwell)
         if ppp < BLOCK_PTS_PER_PERIOD: errors.append(...)
         elif ppp < WARN_PTS_PER_PERIOD: warnings.append(...)
-        bw = SINE_BW_HZ.get(model)        # model 由 GUI 傳入或略過；查不到不警告
+        # 頻寬警告第一版不做（見 §2.2），Track I 再加
     for edge in 該段的 ramp_time / up_time / down_time / tau（> 0 者）:
         if edge / dwell < WARN_PTS_PER_EDGE: warnings.append(...)
 ```
@@ -298,7 +300,7 @@ sinebw  ：CH1 實際負載，Sine offset 2 V、振幅 1 V，f = 10/30/100/300/1
 **I 整合清單**
 
 1. GUI「執行」接上 `compile_plan → to_functions → run_functions`，用 demo 跑通 `examples/list_demo.json`。
-2. 把 H 的數字回填：`SINE_BW_HZ`、dwell 規則定案，更新設計文件 §2.3、§3。
+2. 把 H 的數字回填：加 `SINE_BW_HZ` 與 `compile_plan(plan, model=None)` 的頻寬警告、Triangle 門檻、dwell 規則定案，更新設計文件 §2.3、§3。
 3. 加一個端到端測試：讀 `list_demo.json` → 在 demo 上執行 → 輸出有關閉。
 4. 版本號 `pyproject.toml` 改成 0.2.0；README 加 List 模式一節；Windows 打包測一次。
 

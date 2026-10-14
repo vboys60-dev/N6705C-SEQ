@@ -46,8 +46,8 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | `src/n6705c_seq/execute.py` | `run_plan`（CSV）→ `run_functions`（CSV 與 List 模式共用）：驗證 → 設定電壓／電流並開輸出 → load → 每台一道 `INIT:TRAN` 同時啟動（`start_together`）→ 等待 → 關輸出（`keep_on` 時不關）。另有 `connect_group` |
 | `src/n6705c_seq/listplan.py` | List 模式：`Segment`／`ChannelList`／`ListPlan`、各波形欄位表 `FIELDS`、`load_json`／`write_json`（§9） |
 | `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
-| `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（掃描／測試連線）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
-| `tests/` | `test_plan.py`（17）、`test_execute.py`（11）、`test_cli.py`（9）、`test_gui.py`（6：波形轉折點、刻度、設定檔） |
+| `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（測試連線；掃描鈕已在 `d99bda8` 移除）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
+| `tests/` | `test_plan.py`（16）、`test_execute.py`（15）、`test_cli.py`（10）、`test_gui.py`（8：波形轉折點、刻度、設定檔）、`test_listplan.py`（96） |
 | `docs/plan.md` | 實作計畫，已更新到打平建議（Task 5）；測試程式碼以 `tests/` 為準 |
 
 本專案只用標準函式庫；核心用 pyvisa、pyvisa-py、pyusb、libusb-package、numpy。沒有 YAML。Python 3.13、pytest 8.4.2。
@@ -109,6 +109,14 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
   - `FETC:ARR:CURR?` 預設無效（+303 no valid acquisition），要先啟用電流擷取；沒做。
 - **`DISP:VIEW SCOPe` 在韌體 F.1.1.0 不支援**（-224），只有 `METER1`／`METER4`；前面板 Scope View 只能手動切。`HCOP:SDUM:DATA?` 可回 320×240 PNG 螢幕截圖。
 
+### 4.9 GUI 擷取實測波形（先做過、取消，後來重新加回）
+`run_plan(capture={})` 與 GUI 勾選「擷取實測波形（數位化器）」：實測電壓以黑線疊在預期波形上。實作在 `execute._arm_capture`／`_fetch`。
+- 擷取在 `start_together` 的每台執行緒裡，於 `INIT:TRAN` 後立刻送 `*TRG`（ARB 在 INIT 起跑，擷取等 `*TRG`），所以擷取時間軸比 ARB 起點晚一個 INIT→`*TRG` 間隔（同台實測 < 0.15 ms）。
+- `INIT:ACQ` 要在 ARB 啟動**之前**；要等整段記錄完成**再** `OUTP OFF`（否則擷取作廢），所以擷取時會多等到記錄結束。
+- 取回用 `FORM REAL`＋`FORM:BORD SWAP` 二進位（模擬器只回二進位）；每通道 6000 點、`SENS:SWE:TINT` 取 20.48 µs 的整數倍。
+- 取回失敗只記錄在 `capture["error"]`，不影響輸出開關。模擬器擷取到平的 0 V，只能在實機驗證。
+- 實機（3 通道）：50% 上升／下降點與設定相差 < 0.15 ms；`hold_dc` 時末端維持高點。
+
 ### 4.10 實測發現：ARB 在 INIT 當下就開跑（已修）
 - 示波器量到 CH1→CH2 起點差 23.9 ms（設定 20 ms）。數位化器重現：用舊作法（逐通道 `arm`＝逐通道 `INIT:TRAN`，再一個 `*TRG`）時，CH1/CH2/CH3 相對 `*TRG` 偏移 −36／−14／−1 ms，剛好是各通道 INIT 間隔。
 - 驗證：arm 好、**不送 `*TRG`**，輸出自己升到 1.8 V；觸發源改成 PIN1／EXT 也一樣。這台的 `TRIG:TRAN:SOUR` 對 ARB 沒有作用。
@@ -119,15 +127,7 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 - 忽略 hold／fall：改用 `RampArb`（delay → rise → 高點，`end_time=0`），`terminate_last` 把高點留成 DC；`run_plan(hold_dc=True)` 結束後**不關輸出**（出錯仍強制關）。
 - 實機：CH1 升到 1 V 後 3 s 仍 1.0004 V，斷線重連後輸出仍開著。GUI 有「■ 全部關閉」按鈕（連到已填的位址，`outputs_off` 關閉並讀回確認；Demo 模式不可用，執行中停用）；CLI 沒有對應指令。
 
-### 4.9 GUI 擷取實測波形（先做過、取消，後來重新加回）
-`run_plan(capture={})` 與 GUI 勾選「擷取實測波形（數位化器）」：實測電壓以黑線疊在預期波形上。實作在 `execute._arm_capture`／`_fetch`。
-- 擷取在 `start_together` 的每台執行緒裡，於 `INIT:TRAN` 後立刻送 `*TRG`（ARB 在 INIT 起跑，擷取等 `*TRG`），所以擷取時間軸比 ARB 起點晚一個 INIT→`*TRG` 間隔（同台實測 < 0.15 ms）。
-- `INIT:ACQ` 要在 ARB 啟動**之前**；要等整段記錄完成**再** `OUTP OFF`（否則擷取作廢），所以擷取時會多等到記錄結束。
-- 取回用 `FORM REAL`＋`FORM:BORD SWAP` 二進位（模擬器只回二進位）；每通道 6000 點、`SENS:SWE:TINT` 取 20.48 µs 的整數倍。
-- 取回失敗只記錄在 `capture["error"]`，不影響輸出開關。模擬器擷取到平的 0 V，只能在實機驗證。
-- 實機（3 通道）：50% 上升／下降點與設定相差 < 0.15 ms；`hold_dc` 時末端維持高點。
-
-## 4.12 發佈與打包（Windows 11）
+### 4.12 發佈與打包（Windows 11）
 
 - 使用者下載 GitHub Release 的 `N6705C-SEQ-<版本>-windows-x64.zip`，解壓後執行 `N6705C-SEQ.exe`（GUI）或 `n6705c-seq-cli.exe`。
 - **USB 儀器要先在該電腦裝 Keysight IO Libraries 或 NI-VISA**，執行檔不含 VISA 驅動。LAN（`TCPIP...`）由內含的 `pyvisa-py` 處理。
@@ -140,7 +140,7 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
   - 修了兩個打包問題：① `n6705c_seq.spec` 的 `collect_submodules("pyvisa_py")` 會連 `pyvisa_py.testsuite` 一起收進來，分析期間 import 到 `pyvisa.testsuite` 會讓 PyInstaller 的 isolated subprocess 當掉（`STATUS_STACK_BUFFER_OVERRUN`）；改成過濾掉 `pyvisa_py.testsuite` 並加進 `excludes`。② `build.ps1` 用 `& "$app\n6705c-seq-cli.exe" ...` 相對路徑呼叫，在 UNC 工作目錄（`\\server\share\...`）下 PowerShell 5.1 會誤判成要載入模組（`The module 'dist' could not be loaded`）；改成先 `Resolve-Path` 成絕對路徑再呼叫。
 
 ### 4.13 Windows 上「開 IVI 後端就讓整個程式當機」（2026-10-12 修）
-- **症狀**：使用者回報 GUI 點「掃描」會直接當機、視窗關閉；執行完 exe 本身偶爾也會當機。
+- **症狀**（掃描鈕之後已在 `d99bda8` 移除）：使用者回報 GUI 點「掃描」會直接當機、視窗關閉；執行完 exe 本身偶爾也會當機。
 - **根因**：`pyvisa.ResourceManager("")`（走系統原生 VISA）在這台機器上**不是丟 Python 例外，而是直接讓整個行程當掉**（`exit code -1073740791` = `STATUS_STACK_BUFFER_OVERRUN`）。確認過：`C:\WINDOWS\system32\visa32.dll`／`visa64.dll` 存在（IVI Foundation 的轉發／路由 DLL，`8.0.7331.0`），但背後沒有真正掛上任何廠商 VISA（Keysight IO Libraries／NI-VISA）實作——只裝了共用元件、沒裝完整驅動時常見的半殘狀態。`try/except Exception` 包不住這種行程層級的當機，`VisaTransport.__init__`、`list_resources()`、`native_visa_available()` 三個地方原本都直接在主行程呼叫 `pyvisa.ResourceManager("")`，踩到就整支程式消失。
 - **修法**（`src/n6705c/core/transport.py`）：新增 `_native_backend_safe()`，用 `multiprocessing.Process` 把 `pyvisa.ResourceManager("")` 丟到一個用過就丟的子行程裡探測；子行程崩掉或在逾時（預設 8 s，一個 deadline 預算，不是兩段相加）內沒回應都當作「原生後端不安全」。結果快取整個程式生命週期內只探測一次。三個呼叫點都改走新的 `_candidates(backend)`，`backend="auto"` 時原生後端不安全就直接跳過、只留 `"@py"`。`packaging/gui_entry.py`、`cli_entry.py` 加了 `multiprocessing.freeze_support()`（Windows 上凍結執行檔用 `multiprocessing.Process` 的必要條件）。
 - **驗證**：源碼直接呼叫 `native_visa_available()` 不再讓 Python 行程消失（回傳 `False`，約 8 s 內有結果，不是等到真正當機的 ~29 s）；打包後的 `n6705c-seq-cli.exe run ... --resource "USB0::..."`（真的走 `VisaTransport`）不再當機，乾淨印出 `connection failed: ... Please install PyUSB` 並以 exit code 1 結束。GUI 本身因為 tkinter 元件不會註冊進 Windows UI Automation 樹，没能自動化點擊「掃描」驗證，但掃描跟連線走的是同一個 `_candidates()`／`_native_backend_safe()`，CLI 路徑驗證過即視為等價覆蓋。
@@ -169,22 +169,23 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 
 ## 7. 建議的下一步（依序）
 
-1. 假負載或空接，單台、單通道跑一次，示波器確認波形與 `TRAP:END:TIM 0` 行為。
-2. 兩台各一通道，量跨台起點差，把實測值填回 `TRIGGER_SKEW_SECONDS`（在舊專案 `core/group.py`）。
+1. ~~單台、單通道跑一次~~：已完成（§4.8、§4.10）。
+2. 兩台各一通道，量跨台起點差，把實測值填回 `TRIGGER_SKEW_SECONDS`（`src/n6705c/core/group.py`，本專案的副本）。
 3. 若實測差遠大於 2 ms 或有需求精準同步，再做硬體接線（M11.3）。
-4. 做完上面再回頭跑 Codex 審查第 2 輪（§8）。
+4. ~~Codex 審查第 2 輪~~：已完成（§8）。
+5. ARB List 模式的各 Track，見 §9.2。
 
 ## 8. Codex 審查進度（`/codex-review:code`）
 
 - **第 1 輪（整個專案）**：3 CRITICAL、6 WARNING。已修 8 項（關閉視窗中途、0 A 電流限制、關輸出未確認、nan/inf、barrier、長序列刻度、設定檔壞掉、`--suggest-out`），commit `e93c66a`，並各補測試。**未修**：§5 第 7 點。
-- **第 2 輪**（複查 `e93c66a`）：2 CRITICAL、2 WARNING，全部已修並補測試（未 commit）：
+- **第 2 輪**（複查 `e93c66a`）：2 CRITICAL、2 WARNING，全部已修並補測試，commit `8789f7d`：
   - `_outputs_off` 讀回不完整（`{}`、少通道）會被當成已關閉 → 現在要求回傳的通道 = `populated_channels`，否則 `OutputsNotConfirmedOff`。
   - 驗證失敗（空表、台數不足、模組範圍）卻印「輸出已強制關閉」→ 新增 `PlanRejected(ValueError)`，CLI／GUI 改說「開輸出前被拒絕」。
   - §5 第 7 點 → 查詢失敗現在讓整個執行失敗（見上）。
   - GUI 設定檔加型別檢查（`resources` 為字串清單、`demo` 為 bool）。
   - 另採納 SUGGESTION：逾時訊息的通道改為全域編號。
   - 結果：`VERDICT: APPROVED`。
-- 第 2 輪沙箱為唯讀，Codex 只跑得了 26 個測試；完整 42 個我這邊全過。
+- 第 2 輪沙箱為唯讀，Codex 只跑得了 26 個測試；完整 42 個（當時的數量）我這邊全過。
 
 ## 9. ARB List 模式（2026-10-13 起，開發中）
 
@@ -203,7 +204,7 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 |---|---|---|
 | P0 | `listplan.py`、`examples/list_demo.json`、`tests/test_listplan.py` | ✅ `3032c1a` |
 | C | `execute.run_functions`（`run_plan` 改成呼叫它，行為不變） | ✅ `3032c1a` |
-| A | `synth.py`：段落 → 點陣列、自動 dwell、補齊、警告／擋下、`to_functions` | ⏳ 待使用者說開工 |
+| A | `synth.py`：段落 → 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`。第一版不做頻寬警告、Triangle 沿用 Sine 門檻（規劃 §2.2，2026-10-14 定案） | ⏳ 待使用者說開工 |
 | D | `list_gui.py` + `gui.py` 分頁、「■ 全部關閉」移到連線列 | ⏳ 待開工（A 未完成可先 monkeypatch `compile_plan`） |
 | H | `scripts/hw_list_check.py` 實機量測（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | ⏳ 待開工，需要人在 Windows 實機旁 |
 | I | 整合、回填實測常數、端到端測試、版本 0.2.0 | ⏳ A、C、D、H 完成後 |
