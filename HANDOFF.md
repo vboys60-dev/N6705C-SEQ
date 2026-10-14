@@ -51,7 +51,6 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
 | `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（測試連線；掃描鈕已在 `d99bda8` 移除）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
 | `tests/` | `test_plan.py`（16）、`test_execute.py`（15）、`test_cli.py`（10）、`test_gui.py`（42：波形轉折點、刻度、設定檔、List 分頁、List 端到端 demo、預覽標註）、`test_listplan.py`（97）、`test_synth.py`（51）、`test_hw_list_check.py`（24） |
-| `docs/plan.md` | 實作計畫，已更新到打平建議（Task 5）；測試程式碼以 `tests/` 為準 |
 
 本專案只用標準函式庫；核心用 pyvisa、pyvisa-py、pyusb、libusb-package、numpy。沒有 YAML。Python 3.13、pytest 8.4.2。
 

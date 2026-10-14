@@ -7,7 +7,7 @@
 | 形式 | 位置 | 使用者需要 | 用法 |
 |---|---|---|---|
 | exe（onedir zip） | GitHub Release `N6705C-SEQ-<版本>-windows-x64.zip` | 什麼都不用裝 | 解壓 → `N6705C-SEQ.exe`（GUI）／`n6705c-seq-cli.exe` |
-| Python 資料夾 | `dist_python/N6705C-SEQ/`（本機產物，未進 git；已同步到 0.1.3，另有 `dist_python/N6705C-SEQ-0.1.3-python.zip`） | Python 3.11+（含 tkinter） | `pip install -r requirements.txt` → `python run.py`（無參數＝GUI，有參數＝CLI） |
+| Python 資料夾 | `dist_python/N6705C-SEQ/`（本機產物，未進 git；2026-10-14 已刪除，因為 0.1.3 版沒有 List mode，要發時重新產生） | Python 3.11+（含 tkinter） | `pip install -r requirements.txt` → `python run.py`（無參數＝GUI，有參數＝CLI） |
 | bat 安裝版 | 2026-10-12 做過，**目前資料夾已不存在**（`dist_windows/`） | 無（會自動下載裝 Python 3.12.8） | `install.bat` → `start.bat` |
 
 `run.py` 必須保留 `if __name__ == "__main__"` 與 `multiprocessing.freeze_support()`：VISA 探測用 multiprocessing，Windows 會重新匯入主程式，少了保護會再開一個 GUI。
@@ -15,7 +15,7 @@
 ## 2. 打包與發版（exe）
 - 本機：`pip install -e ".[build]"` → `.\packaging\build.ps1`（建置 → `--demo` 自我測試 → 產 zip）。只能在 Windows 打。
 - CI：`.github/workflows/ci.yml`，推 `v*` tag 才建 Release。發版：改 `pyproject.toml` version → `git tag vX.Y.Z && git push origin vX.Y.Z`。
-- ⚠️ zip 檔名取自 `pyproject.toml` 的 version（目前已改 0.1.2，發版前記得與 tag 一致。
+- ⚠️ zip 檔名取自 `pyproject.toml` 的 version（目前 0.1.3），發版前記得與 tag 一致。
 - 沒有程式碼簽章，SmartScreen 會警告。
 
 ## 3. 已知問題與處理
@@ -36,7 +36,6 @@
 - **USB 實機連線**（見 §3.4）：v0.1.3 的診斷訊息尚未在 Windows 上看過。
 - v0.1.3 的 exe 由 CI 在 tag 推送後建置，尚未確認 Release 產物。
 
-## 5. 目前 git 狀態（交接當下）
-- 已推送：`713b47f`（診斷訊息，0.1.3）、tag `v0.1.0`～`v0.1.3`。`dist_python/` 不進 git。
-- 工作樹乾淨（除 `dist_python/`）。
-- 下一步：在有 Windows＋儀器的環境按「測試連線」，把錯誤視窗內容回報 → 依 §3.4 判讀；確認 CI Release 產物；乾淨 Windows 驗證 exe 的 GUI。
+## 5. 目前狀態
+- Windows 部分最後一次改動是 `713b47f`（診斷訊息，0.1.3），tags 有 `v0.1.0`～`v0.1.3`。目前 git 狀態和下一步見 `HANDOFF.md`。
+- Windows 待辦：在有 Windows＋儀器的環境按「測試連線」，把錯誤視窗內容回報 → 依 §3.4 判讀；確認 CI Release 產物；在乾淨的 Windows 上驗證 exe 的 GUI。
