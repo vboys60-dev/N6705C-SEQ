@@ -302,6 +302,8 @@ class App:
         t_end = max((r.delay + r.rise if hold_dc else r.duration) for r, _ in live) * 1.18 * 1000 or 1.0  # ms
         x = lambda ms: left + (width - left - right) * ms / t_end  # noqa: E731
         lane = (height - top - bottom) / len(live)
+        # The hold label sits below the mid line; in thin lanes it would cross the next lane, so drop both time labels.
+        times = lane >= 30 + int(c.tk.call("font", "metrics", "SunValleyCaptionFont", "-linespace"))
 
         step = _tick_step(t_end)
         for tick in range(0, int(t_end) + 1, step):
@@ -331,11 +333,13 @@ class App:
             ym = (y_hi + y_lo) / 2  # delay and hold never overlap in time, so they share a line
             if r.delay > 0:
                 c.create_line(x(0), ym, x(r.delay * 1000), ym, **arrow)
-                c.create_text(x(0) + 2, ym - 8, anchor="w", fill=color, text=tr("delay_annotation", value=r.delay * 1000), font="SunValleyCaptionFont")
+                if times:
+                    c.create_text(x(0) + 2, ym - 8, anchor="w", fill=color, text=tr("delay_annotation", value=r.delay * 1000), font="SunValleyCaptionFont")
             t_top0, t_top1 = (r.delay + r.rise) * 1000, (r.delay + r.rise + (0 if hold_dc else r.hold)) * 1000
             if not hold_dc:
                 c.create_line(x(t_top0), ym, x(t_top1), ym, **arrow)
-                c.create_text(x((t_top0 + t_top1) / 2), ym + 9, fill=color, text=tr("hold_annotation", value=r.hold * 1000), font="SunValleyCaptionFont")
+                if times:
+                    c.create_text(x((t_top0 + t_top1) / 2), ym + 9, fill=color, text=tr("hold_annotation", value=r.hold * 1000), font="SunValleyCaptionFont")
             c.create_text(
                 x(t_top1) + 4, y_hi - 8, anchor="w", fill=color, font="SunValleyCaptionFont",
                 text=tr("levels_annotation", high=r.high_v, low=r.low_v),

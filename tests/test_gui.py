@@ -662,3 +662,19 @@ def test_config_language_keeps_other_fields(tmp_path, monkeypatch, saved, expect
     path.write_text(json.dumps({"resources": ["A"], "demo": False, "lang": saved}))
     monkeypatch.setattr(gui, "CONFIG", path)
     assert gui._load_config() == {"resources": ["A"], "demo": False, "lang": expected}
+
+
+def test_thin_lanes_drop_delay_and_hold_labels(monkeypatch):
+    root, app = _list_test_app(monkeypatch, lang="zh")
+    try:
+        def labels():
+            app.draw()
+            return [t for i in app.canvas.find_all() if app.canvas.type(i) == "text"
+                    for t in [app.canvas.itemcget(i, "text")] if t.startswith(("延遲", "維持"))]
+
+        assert labels() == []  # withdrawn root: 200 px canvas, 8 lanes of 18 px
+        for form in app.forms[1:]:
+            form["enabled"].set(False)
+        assert any(t.startswith("維持") for t in labels())
+    finally:
+        root.destroy()
