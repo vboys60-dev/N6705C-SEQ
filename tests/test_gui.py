@@ -1,6 +1,40 @@
+import gc
+import subprocess
+import sys
+from functools import lru_cache
+
 import pytest
 from n6705c_seq.gui import _tick_step, waveform
 from n6705c_seq.plan import SeqRow
+from n6705c_seq import i18n
+
+
+@pytest.fixture(autouse=True)
+def reset_language():
+    i18n.set_lang("zh")
+    yield
+    i18n.set_lang("zh")
+    gc.collect()  # drop dead Tk variables here, not later in some worker thread
+
+
+@pytest.fixture
+def english():
+    i18n.set_lang("en")
+
+
+@lru_cache(maxsize=1)
+def _tk_display_available():
+    probe = subprocess.run([sys.executable, "-c", "import tkinter as tk; r = tk.Tk(); r.destroy()"],
+                           capture_output=True)
+    return probe.returncode == 0
+
+
+def _tk_root():
+    import tkinter as tk
+
+    if not _tk_display_available():
+        pytest.skip("Tk display unavailable")
+    return tk.Tk()
 
 
 def test_waveform_corners_follow_delay_rise_hold_fall():
@@ -18,14 +52,14 @@ def test_tick_step_covers_long_sequences(span, step):
 def test_config_with_the_wrong_shape_falls_back_to_defaults(tmp_path, monkeypatch):
     from n6705c_seq import gui
 
-    default = {"resources": [], "demo": True}
+    default = {"resources": [], "demo": True, "lang": "zh"}
     for text in ('{"resources":"TCPIP::h","demo":false}', '{"resources":[],"demo":"false"}', "[]"):
         f = tmp_path / "c.json"
         f.write_text(text)
         monkeypatch.setattr(gui, "CONFIG", f)
         assert gui._load_config() == default
     f.write_text('{"resources":["A"],"demo":false}')
-    assert gui._load_config() == {"resources": ["A"], "demo": False}
+    assert gui._load_config() == {"resources": ["A"], "demo": False, "lang": "zh"}
 
 
 def test_hold_dc_waveform_stays_at_the_high_level():
@@ -47,16 +81,18 @@ def test_all_off_worker_reports_success_and_closes(monkeypatch):
     assert app.queue.get_nowait()[0] == "done"
 
 
-def _list_test_app(monkeypatch):
+def _list_test_app(monkeypatch, lang="en", themed=False):
     import tkinter as tk
     from types import SimpleNamespace
     from n6705c_seq import gui, list_gui
 
     try:
-        root = tk.Tk()
+        root = _tk_root()
     except tk.TclError as exc:
         pytest.skip(f"Tk display unavailable: {exc}")
     root.withdraw()
+    if themed:
+        gui.setup_theme(root)
 
     def compile_plan(plan):
         live = [ch for ch in plan.channels if ch.enabled and ch.segments]
@@ -71,7 +107,7 @@ def _list_test_app(monkeypatch):
     monkeypatch.setattr(list_gui.synth, "compile_plan", compile_plan)
     monkeypatch.setattr(list_gui.synth, "base_duration", lambda seg: 0.02)
     monkeypatch.setattr(list_gui.synth, "value", lambda seg, u: u * 50)
-    monkeypatch.setattr(gui, "_load_config", lambda: {"resources": [], "demo": True})
+    monkeypatch.setattr(gui, "_load_config", lambda: {"resources": [], "demo": True, "lang": lang})
     try:
         app = gui.App(root)
     except BaseException:
@@ -80,17 +116,21 @@ def _list_test_app(monkeypatch):
     return root, app
 
 
-def test_list_tab_controls_fit_in_short_window(monkeypatch):
-    root, app = _list_test_app(monkeypatch)
+@pytest.mark.parametrize("themed", [False, True])
+def test_list_tab_controls_fit_in_short_window(monkeypatch, themed):
+    root, app = _list_test_app(monkeypatch, themed=themed)
     tab = app.list_tab
     try:
         root.deiconify()
         root.geometry("1180x860")
         app.notebook.select(tab)
         root.update()
-        bottom = tab.winfo_rooty() + tab.winfo_height()
-        assert tab.run_button.winfo_rooty() + tab.run_button.winfo_height() <= bottom
-        assert tab.warning_text.winfo_rooty() + tab.warning_text.winfo_height() <= bottom
+        for shape in ("Step", "Trapezoid"):
+            tab.shape.set(shape)
+            root.update()
+            bottom = tab.winfo_rooty() + tab.winfo_height()
+            assert tab.run_button.winfo_rooty() + tab.run_button.winfo_height() <= bottom
+            assert tab.warning_text.winfo_rooty() + tab.warning_text.winfo_height() <= bottom
     finally:
         root.destroy()
 
@@ -122,9 +162,9 @@ def test_list_format_number_uses_shortest_repr(value, expected):
 
 
 def test_notebook_contains_csv_and_list_tabs(monkeypatch):
-    root, app = _list_test_app(monkeypatch)
+    root, app = _list_test_app(monkeypatch, lang="zh")
     try:
-        assert [app.notebook.tab(tab, "text") for tab in app.notebook.tabs()] == ["上電時序", "List Mode"]
+        assert [app.notebook.tab(tab, "text") for tab in app.notebook.tabs()] == ["上電時序", "List 模式"]
         for tab in app.notebook.tabs():
             app.notebook.select(tab)
             root.update_idletasks()
@@ -291,7 +331,7 @@ def test_list_run_snapshots_plan_and_disables_shared_buttons(monkeypatch):
 
 
 @pytest.mark.parametrize("failure", [None, "connect", "run", "unconfirmed", "convert"])
-def test_list_worker_uses_functions_and_reports_errors(monkeypatch, failure):
+def test_list_worker_uses_functions_and_reports_errors(monkeypatch, failure, english):
     import queue
     from n6705c.core.group import InstrumentGroup
     from n6705c_seq import list_gui
@@ -399,11 +439,11 @@ def test_list_tab_runs_demo_plan_end_to_end(monkeypatch):
     from n6705c_seq import gui
 
     try:
-        root = tk.Tk()
+        root = _tk_root()
     except tk.TclError as exc:
         pytest.skip(f"Tk display unavailable: {exc}")
     root.withdraw()
-    monkeypatch.setattr(gui, "_load_config", lambda: {"resources": [], "demo": True})
+    monkeypatch.setattr(gui, "_load_config", lambda: {"resources": [], "demo": True, "lang": "en"})
     groups = []
     original_demo = InstrumentGroup.demo
 
@@ -443,10 +483,11 @@ def _preview_test_tab():
     from n6705c_seq.list_gui import ListTab
 
     try:
-        root = tk.Tk()
+        root = _tk_root()
     except tk.TclError as exc:
         pytest.skip(f"Tk display unavailable: {exc}")
     root.withdraw()
+    i18n.set_lang("en")
     app = SimpleNamespace(resources=[tk.StringVar(root)], busy=False)
     tab = ListTab(root, app)
     return root, tab
@@ -561,3 +602,63 @@ def test_list_sources_have_no_cjk_text():
     source = Path(__file__).resolve().parents[1] / "src" / "n6705c_seq"
     for name in ("list_gui.py", "synth.py", "listplan.py"):
         assert not re.search(r"[一-鿿　-〿＀-￯]", (source / name).read_text(encoding="utf-8"))
+
+
+def test_gui_translation_keys():
+    import re
+    from pathlib import Path
+    from n6705c_seq import gui, list_gui
+
+    assert all(isinstance(pair, tuple) and len(pair) == 2 and
+               all(isinstance(text, str) and text for text in pair) for pair in i18n.STRINGS.values())
+    for module in (gui, list_gui):
+        keys = re.findall(r'tr\("([^"\n]+)"', Path(module.__file__).read_text())
+        assert set(keys) <= i18n.STRINGS.keys()
+    from n6705c_seq.listplan import FIELDS
+    assert set(gui.TITLES.values()) | {key for keys in FIELDS.values() for key in keys} <= i18n.STRINGS.keys()
+
+
+def test_language_switch_preserves_live_entries(tmp_path, monkeypatch):
+    from n6705c_seq import gui
+
+    load_config = gui._load_config
+    root, app = _list_test_app(monkeypatch, lang="zh")
+    monkeypatch.setattr(gui, "_load_config", load_config)
+    monkeypatch.setattr(gui, "CONFIG", tmp_path / "config.json")
+    tab = app.list_tab
+    try:
+        app.forms[0]["name"].set("typed sequence")
+        tab.add_segment()
+        tab.params["end"].set("3.14159")
+        parameter = tab.params["end"]
+        header = next(widget for widget, key, _ in app.texts if key == "column_name")
+        label = next(widget for widget, key, _ in tab.parameter_texts if key == "end")
+        count = len(tab.parameter_texts)
+        for lang in ("en", "zh"):
+            app.toggle_language()
+            assert i18n.lang == lang
+            assert app.run_button.cget("text") == i18n.tr("run_sequence")
+            assert tab.run_button.cget("text") == i18n.tr("run_list")
+            assert header.cget("text") == i18n.tr("column_name")
+            assert label.cget("text") == i18n.tr("end") + " (V)"
+            assert [app.notebook.tab(t, "text") for t in app.notebook.tabs()] == [i18n.tr("sequence_tab"), i18n.tr("list_tab")]
+            assert app.forms[0]["name"].get() == "typed sequence"
+            assert tab.params["end"] is parameter and parameter.get() == "3.14159"
+            assert tab.segment_index == 0 and tab.channel_index == 0
+            assert len(tab.parameter_texts) == count
+            assert gui._load_config()["lang"] == lang
+        tab.shape.set("Ramp")
+        assert all(widget.winfo_exists() for widget, *_ in tab.parameter_texts)
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("saved, expected", [("en", "en"), ("zh", "zh"), ("invalid", "zh"), (None, "zh")])
+def test_config_language_keeps_other_fields(tmp_path, monkeypatch, saved, expected):
+    import json
+    from n6705c_seq import gui
+
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"resources": ["A"], "demo": False, "lang": saved}))
+    monkeypatch.setattr(gui, "CONFIG", path)
+    assert gui._load_config() == {"resources": ["A"], "demo": False, "lang": expected}

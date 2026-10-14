@@ -13,7 +13,7 @@ instrument's USB driver must then be WinUSB, e.g. via Zadig).
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).parent
 # pyvisa loads its backends by name, so nothing imports pyvisa_py statically.
@@ -29,7 +29,7 @@ excludes = ["matplotlib", "IPython", "pytest", "PyQt5", "PyQt6", "pyqtgraph", "p
 
 def analysis(script):
     return Analysis([str(ROOT / "packaging" / script)], pathex=[str(ROOT / "src")],
-                    binaries=usb_binaries, hiddenimports=hidden, excludes=excludes)
+                    binaries=usb_binaries, datas=collect_data_files("sv_ttk"), hiddenimports=hidden, excludes=excludes)
 
 
 gui, cli = analysis("gui_entry.py"), analysis("cli_entry.py")

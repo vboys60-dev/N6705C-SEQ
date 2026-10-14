@@ -13,6 +13,7 @@ dependencies = [
     "pyusb>=1.2",       # USBTMC transport for pyvisa-py
     "libusb-package>=1.0",  # bundled libusb DLL so pyusb works without a system install
     "numpy>=1.26",
+    "sv-ttk>=2.6",
 ]
 
 [project.optional-dependencies]

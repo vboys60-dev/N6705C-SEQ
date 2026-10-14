@@ -12,16 +12,10 @@ from tkinter import filedialog, messagebox, ttk
 from n6705c.core.group import CHANNELS_PER_FRAME, InstrumentGroup
 
 from . import execute, synth
+from .i18n import tr
 from .listplan import FIELDS, SHAPES, TIMES, ChannelList, ListPlan, Segment, load_json, write_json
 
 SHAPE_NAMES = ("Step", "Ramp", "Trapezoid", "Sine", "Triangle", "Staircase", "Exponential")
-TITLES = {
-    "start": "Start Level", "end": "End Level", "offset": "Offset", "amplitude": "Amplitude",
-    "delay": "Delay", "end_time": "End Time", "ramp_time": "Ramp Time", "start_time": "Start Time",
-    "up_time": "Up Time", "high_time": "High Time", "down_time": "Down Time",
-    "frequency": "Frequency", "phase": "Phase", "n_steps": "Steps", "stair_time": "Stair Time",
-    "tau": "Tau", "exp_time": "Exp Time",
-}
 
 
 def _format_number(value):
@@ -34,6 +28,8 @@ class ListTab(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
+        self.texts = []
+        self.parameter_texts = []
         self.plan = ListPlan([ChannelList(i, enabled=i == 1) for i in range(1, len(app.resources) * CHANNELS_PER_FRAME + 1)])
         self.channel_index = 0
         self.segment_index = None
@@ -69,26 +65,36 @@ class ListTab(ttk.Frame):
         self._poll_id = self.after(100, self._poll)
         self.bind("<Destroy>", self._destroyed)
 
+    def _text(self, widget, key, *, parameter=False, unit=""):
+        (self.parameter_texts if parameter else self.texts).append((widget, key, unit))
+        widget.configure(text=tr(key) + (f" ({unit})" if unit else ""))
+        return widget
+
+    def relabel(self):
+        for widget, key, unit in self.texts + self.parameter_texts:
+            widget.configure(text=tr(key) + (f" ({unit})" if unit else ""))
+        self.schedule()
+
     def _layout(self):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        self.canvas = tk.Canvas(self, height=180, bg="white", highlightthickness=0)
-        self.canvas.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
+        self.canvas = tk.Canvas(self, height=150, bg="white", highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew", padx=10, pady=3)
         self.canvas.bind("<Configure>", lambda _e: self.schedule())
         self.canvas.bind("<Button-1>", self._lane_click)
         channel_bar = ttk.Frame(self)
         channel_bar.grid(row=1, column=0, sticky="ew", padx=10)
-        ttk.Label(channel_bar, text="Channel").pack(side="left")
+        self._text(ttk.Label(channel_bar), "channel").pack(side="left")
         self.channel_box = ttk.Combobox(channel_bar, textvariable=self.channel_choice, state="readonly", width=7)
         self.channel_box.pack(side="left", padx=5)
         self.channel_box.bind("<<ComboboxSelected>>", self._choose_channel)
-        ttk.Checkbutton(channel_bar, text="Enabled", variable=self.enabled).pack(side="left")
-        for title, var, width in (("Name", self.label, 12), ("Delay (s)", self.delay, 10), ("Current Limit (A, blank = none)", self.limit, 10)):
-            ttk.Label(channel_bar, text=title).pack(side="left", padx=5)
+        self._text(ttk.Checkbutton(channel_bar, variable=self.enabled), "enabled").pack(side="left")
+        for title, var, width in (("name", self.label, 12), ("channel_delay_s", self.delay, 10), ("current_limit_optional", self.limit, 10)):
+            self._text(ttk.Label(channel_bar), title).pack(side="left", padx=5)
             ttk.Entry(channel_bar, textvariable=var, width=width).pack(side="left")
 
         strip = ttk.Frame(self)
-        strip.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        strip.grid(row=2, column=0, sticky="ew", padx=10, pady=3)
         for title, move in (("◀◀", "first"), ("◀", -1)):
             ttk.Button(strip, text=title, width=3, command=lambda m=move: self.navigate(m)).pack(side="left")
         self.segment_canvas = tk.Canvas(strip, height=65, bg="white", highlightthickness=0)
@@ -100,27 +106,27 @@ class ListTab(ttk.Frame):
         scroll.grid(row=3, column=0, sticky="ew", padx=10)
         self.segment_canvas.configure(xscrollcommand=scroll.set)
         actions = ttk.Frame(self)
-        actions.grid(row=4, column=0, sticky="ew", padx=10, pady=4)
-        for title, command in (("Move Left", lambda: self.move_segment(-1)), ("Add", self.add_segment),
-                               ("Update", self.modify_segment), ("Delete", self.delete_segment),
-                               ("Move Right", lambda: self.move_segment(1))):
-            ttk.Button(actions, text=title, command=command).pack(side="left", padx=3)
+        actions.grid(row=4, column=0, sticky="ew", padx=10, pady=3)
+        for title, command in (("move_left", lambda: self.move_segment(-1)), ("add", self.add_segment),
+                               ("update", self.modify_segment), ("delete", self.delete_segment),
+                               ("move_right", lambda: self.move_segment(1))):
+            self._text(ttk.Button(actions, command=command), title).pack(side="left", padx=3)
         ttk.Label(self, textvariable=self.statistics, justify="left").grid(row=5, column=0, sticky="w", padx=10)
         self.budget = tk.Canvas(self, height=20, bg="#f1f5f9", highlightthickness=0)
         self.budget.grid(row=6, column=0, sticky="ew", padx=10, pady=3)
         settings = ttk.Frame(self)
         settings.grid(row=7, column=0, sticky="ew", padx=10)
-        ttk.Label(settings, text="Sequence Repeat (1–256)").pack(side="left")
+        self._text(ttk.Label(settings), "sequence_repeat_range").pack(side="left")
         ttk.Spinbox(settings, from_=1, to=256, textvariable=self.repeat, width=5).pack(side="left", padx=5)
-        ttk.Checkbutton(settings, text="Hold Last Level", variable=self.hold_last).pack(side="left", padx=8)
-        ttk.Label(settings, text="dwell").pack(side="left")
-        for title, mode in (("Auto", "auto"), ("Manual", "manual")):
-            ttk.Radiobutton(settings, text=title, variable=self.dwell_mode, value=mode).pack(side="left")
+        self._text(ttk.Checkbutton(settings, variable=self.hold_last), "hold_last").pack(side="left", padx=8)
+        self._text(ttk.Label(settings), "dwell").pack(side="left")
+        for title, mode in (("auto", "auto"), ("manual", "manual")):
+            self._text(ttk.Radiobutton(settings, variable=self.dwell_mode, value=mode), title).pack(side="left")
         ttk.Entry(settings, textvariable=self.dwell, width=12).pack(side="left")
         ttk.Label(settings, text="s").pack(side="left")
 
         editor = ttk.Frame(self)
-        editor.grid(row=8, column=0, sticky="ew", padx=10, pady=6)
+        editor.grid(row=8, column=0, sticky="ew", padx=10, pady=4)
         ttk.Combobox(editor, textvariable=self.shape, values=SHAPE_NAMES, state="readonly", width=12).pack(side="left", anchor="n")
         self.parameter_frame = ttk.Frame(editor)
         self.parameter_frame.pack(side="left", padx=12)
@@ -129,25 +135,26 @@ class ListTab(ttk.Frame):
         self.preview.bind("<Configure>", lambda _e: self.schedule())
         warnings = ttk.Frame(self)
         warnings.grid(row=9, column=0, sticky="ew", padx=10)
-        self.warning_text = tk.Text(warnings, height=3, wrap="word", foreground="#b45309", state="disabled")
+        self.warning_text = tk.Text(warnings, height=2, wrap="word", font="TkTextFont", foreground="#b45309", state="disabled")
         self.warning_text.pack(side="left", fill="x", expand=True)
         scrollbar = ttk.Scrollbar(warnings, command=self.warning_text.yview)
         scrollbar.pack(side="right", fill="y")
         self.warning_text.configure(yscrollcommand=scrollbar.set)
         self.message.trace_add("write", lambda *_: self._show_warnings())
         bar = ttk.Frame(self)
-        bar.grid(row=10, column=0, sticky="ew", padx=10, pady=6)
-        ttk.Button(bar, text="Open JSON", command=self.open_json).pack(side="left")
-        ttk.Button(bar, text="Save JSON", command=self.save_json).pack(side="left", padx=6)
-        self.run_button = ttk.Button(bar, text="▶ Run List", command=self.run)
+        bar.grid(row=10, column=0, sticky="ew", padx=10, pady=4)
+        self._text(ttk.Button(bar, command=self.open_json), "open_json").pack(side="left")
+        self._text(ttk.Button(bar, command=self.save_json), "save_json").pack(side="left", padx=6)
+        self.run_button = self._text(ttk.Button(bar, command=self.run, style="Accent.TButton"), "run_list")
         self.run_button.pack(side="right")
-        ttk.Checkbutton(bar, text="Capture Measured (Digitizer)", variable=self.capture).pack(side="right", padx=12)
+        self._text(ttk.Checkbutton(bar, variable=self.capture), "capture").pack(side="right", padx=12)
 
     @property
     def channel(self):
         return self._empty_channel if self.channel_index is None else self.plan.channels[self.channel_index]
 
     def _parameter_form(self, segment=None):
+        self.parameter_texts = []
         for widget in self.parameter_frame.winfo_children():
             widget.destroy()
         shape = SHAPES[SHAPE_NAMES.index(self.shape.get())]
@@ -159,9 +166,9 @@ class ListTab(ttk.Frame):
             var = tk.StringVar(self, value=_format_number(value))
             self.params[key] = var
             var.trace_add("write", lambda *_: self.schedule())
-            ttk.Label(self.parameter_frame, text=f"{TITLES[key]} ({unit})" if unit else TITLES[key]).grid(row=i, column=0, sticky="w")
+            self._text(ttk.Label(self.parameter_frame), key, parameter=True, unit=unit).grid(row=i, column=0, sticky="w")
             ttk.Entry(self.parameter_frame, textvariable=var, width=12).grid(row=i, column=1, padx=5)
-        ttk.Label(self.parameter_frame, text="Segment Repeat").grid(row=len(self.params), column=0, sticky="w")
+        self._text(ttk.Label(self.parameter_frame), "segment_repeat", parameter=True).grid(row=len(self.params), column=0, sticky="w")
         ttk.Entry(self.parameter_frame, textvariable=self.segment_repeat, width=12).grid(row=len(self.params), column=1, padx=5)
         self.schedule()
 
@@ -174,25 +181,25 @@ class ListTab(ttk.Frame):
             if integer and not value.is_integer():
                 raise ValueError
         except ValueError:
-            requirement = "a positive integer" if integer and positive else "a number > 0" if positive else "a non-negative number" if minimum == 0 else "a finite number"
-            raise ValueError(f"{title} must be {requirement}") from None
+            requirement = tr("positive_integer") if integer and positive else tr("positive_number") if positive else tr("nonnegative_number") if minimum == 0 else tr("finite_number")
+            raise ValueError(tr("number_error", title=title, requirement=requirement)) from None
         return int(value) if integer else value
 
     def read_segment(self):
         shape = SHAPES[SHAPE_NAMES.index(self.shape.get())]
-        params = {key: self._number(var.get(), TITLES[key], minimum=0 if key in TIMES else None,
+        params = {key: self._number(var.get(), tr(key), minimum=0 if key in TIMES else None,
                                    positive=key in ("frequency", "tau", "n_steps"), integer=key == "n_steps")
                   for key, var in self.params.items()}
-        repeat = self._number(self.segment_repeat.get(), "Segment Repeat", positive=True, integer=True)
+        repeat = self._number(self.segment_repeat.get(), tr("segment_repeat"), positive=True, integer=True)
         return Segment(shape, params, repeat)
 
     def _read_settings(self):
-        delay = self._number(self.delay.get(), "Channel Delay", minimum=0)
-        limit = self._number(self.limit.get(), "Current Limit", positive=True) if self.limit.get().strip() else None
-        repeat = self._number(self.repeat.get(), "Sequence Repeat", positive=True, integer=True)
+        delay = self._number(self.delay.get(), tr("channel_delay"), minimum=0)
+        limit = self._number(self.limit.get(), tr("current_limit"), positive=True) if self.limit.get().strip() else None
+        repeat = self._number(self.repeat.get(), tr("sequence_repeat"), positive=True, integer=True)
         if repeat > 256:
-            raise ValueError("Sequence Repeat must be in 1..256")
-        dwell = self._number(self.dwell.get(), "dwell", positive=True) if self.dwell_mode.get() == "manual" else None
+            raise ValueError(tr("repeat_range"))
+        dwell = self._number(self.dwell.get(), tr("dwell"), positive=True) if self.dwell_mode.get() == "manual" else None
         ch = self.channel
         ch.enabled, ch.label, ch.delay, ch.current_limit = self.enabled.get(), self.label.get(), delay, limit
         if self.channel_index is None and ch != ChannelList(1, enabled=False):
@@ -218,7 +225,7 @@ class ListTab(ttk.Frame):
             self._read_settings()
         except ValueError as exc:
             self.channel_choice.set(f"CH{self.channel.channel}")
-            return messagebox.showerror("Invalid Field", str(exc), parent=self)
+            return messagebox.showerror(tr("invalid_field"), str(exc), parent=self)
         index = next((i for i, ch in enumerate(self.plan.channels) if ch.channel == channel_number), None)
         if index is None:
             self.plan.channels.append(ChannelList(channel_number, enabled=False))
@@ -255,7 +262,7 @@ class ListTab(ttk.Frame):
         try:
             segment = self.read_segment()
         except ValueError as exc:
-            return messagebox.showerror("Invalid Field", str(exc), parent=self)
+            return messagebox.showerror(tr("invalid_field"), str(exc), parent=self)
         index = len(self.channel.segments) if self.segment_index is None else self.segment_index + 1
         self.channel.segments.insert(index, segment)
         self.select_segment(index)
@@ -266,7 +273,7 @@ class ListTab(ttk.Frame):
         try:
             segment = self.read_segment()
         except ValueError as exc:
-            return messagebox.showerror("Invalid Field", str(exc), parent=self)
+            return messagebox.showerror(tr("invalid_field"), str(exc), parent=self)
         self.channel.segments[self.segment_index] = segment
         self.schedule()
 
@@ -285,16 +292,16 @@ class ListTab(ttk.Frame):
             self.select_segment(target)
 
     def open_json(self, path=None):
-        path = path or filedialog.askopenfilename(parent=self, title="Open JSON", filetypes=[("JSON", "*.json"), ("All Files", "*")])
+        path = path or filedialog.askopenfilename(parent=self, title=tr("open_json"), filetypes=[("JSON", "*.json"), (tr("all_files"), "*")])
         if not path:
             return
         try:
             plan = load_json(path)
             capacity = len(self.app.resources) * CHANNELS_PER_FRAME
             if any(ch.channel > capacity for ch in plan.channels):
-                raise ValueError(f"This interface supports up to {capacity} channels")
+                raise ValueError(tr("capacity", capacity=capacity))
         except ValueError as exc:
-            return messagebox.showerror("JSON Error", str(exc), parent=self)
+            return messagebox.showerror(tr("json_error"), str(exc), parent=self)
         self.plan = plan
         self._empty_channel = ChannelList(1, enabled=False)
         self.channel_index = 0 if plan.channels else None
@@ -310,11 +317,11 @@ class ListTab(ttk.Frame):
     def save_json(self, path=None):
         try:
             plan = self._read_settings()
-            path = path or filedialog.asksaveasfilename(parent=self, title="Save JSON", defaultextension=".json", filetypes=[("JSON", "*.json")])
+            path = path or filedialog.asksaveasfilename(parent=self, title=tr("save_json"), defaultextension=".json", filetypes=[("JSON", "*.json")])
             if path:
                 write_json(plan, path)
         except ValueError as exc:
-            messagebox.showerror("Save Failed", str(exc), parent=self)
+            messagebox.showerror(tr("save_failed"), str(exc), parent=self)
 
     def schedule(self):
         if self._loading:
@@ -342,10 +349,12 @@ class ListTab(ttk.Frame):
             infos = c.segments.get(self.channel.channel, [])
             if self.segment_index is not None and self.segment_index < len(infos):
                 info = infos[self.segment_index]
-                details = f"Segment {self.segment_index + 1}: {info.points:,} pts; requested {info.requested:.6g} s / actual {info.actual:.6g} s / error {info.actual - info.requested:+.6g} s\n"
-            self.statistics.set(details + f"Period P = {c.n_points * c.dwell:.6g} s   dwell = {c.dwell:.6g} s   "
-                                f"This channel: {len(self.channel.segments)} segments   Points {c.n_points:,} / 65,535\n"
-                                f"Channel delay {c.delay_points.get(self.channel.channel, 0):,} pts (gray) / padding {c.pad_points.get(self.channel.channel, 0):,} pts (orange)")
+                details = tr("segment_statistics", index=self.segment_index + 1, points=info.points,
+                             requested=info.requested, actual=info.actual, error=info.actual - info.requested)
+            self.statistics.set(details + tr("statistics", period=c.n_points * c.dwell, dwell=c.dwell,
+                                segments=len(self.channel.segments), points=c.n_points,
+                                delay=c.delay_points.get(self.channel.channel, 0),
+                                padding=c.pad_points.get(self.channel.channel, 0)))
             self._draw_lanes()
             self._draw_budget()
         self._draw_segments()
@@ -373,15 +382,15 @@ class ListTab(ttk.Frame):
         p, shape = segment.params, segment.shape
         periodic = shape in ("sine", "triangle")
         if periodic or shape == "trapezoid":
-            levels = [("Offset", p["offset"]), ("Offset+Amp", p["offset"] + p["amplitude"])]
+            levels = [(tr("offset"), p["offset"]), (tr("offset_amp"), p["offset"] + p["amplitude"])]
         else:
-            levels = [("Start", p["start"]), ("End", p["end"])]
+            levels = [(tr("start_label"), p["start"]), (tr("end_label"), p["end"])]
         bounds = values + [v for _, v in levels]
         if periodic:
             bounds.append(p["offset"] - p["amplitude"])
         lo, hi = min(bounds), max(bounds)
         span = hi - lo or 1
-        font = ("TkDefaultFont", 9)
+        font = "SunValleyCaptionFont"
 
         def text(x, y, label, tag, **options):
             return canvas.create_text(x, y, text=label, font=font,
@@ -414,8 +423,8 @@ class ListTab(ttk.Frame):
 
         # Time spans use the same x mapping as the curve. Wide labels go below
         # the first row; measured bounds keep adjacent labels apart.
-        times = [("Period", duration)] if periodic else [
-            (TITLES[key], p[key]) for key in FIELDS[shape]
+        times = [(tr("period"), duration)] if periodic else [
+            (tr(key), p[key]) for key in FIELDS[shape]
             if key in TIMES and key != "tau" and p[key] > 0]
         elapsed, row_ends = 0.0, {}
         for title, seconds in times:
@@ -459,14 +468,14 @@ class ListTab(ttk.Frame):
             for tick in (base, peak):
                 line(dimension_x - 4, tick, dimension_x + 4, tick)
             text(dimension_x - 6, (base + peak) / 2,
-                 f"Amplitude {p['amplitude']:.4g} V", "amplitude_label", anchor="e")
+                 tr("amplitude_annotation", value=p["amplitude"]), "amplitude_label", anchor="e")
         extras = []
         if periodic:
-            extras.append(f"Frequency {p['frequency']:.4g} Hz   Phase {p['phase']:.4g}°")
+            extras.append(tr("frequency_phase", frequency=p["frequency"], phase=p["phase"]))
         elif shape == "staircase":
-            extras.append(f"Steps {p['n_steps']:.4g}")
+            extras.append(tr("steps_annotation", value=p["n_steps"]))
         elif shape == "exponential":
-            extras.append(f"Tau {time_label(p['tau'])}")
+            extras.append(tr("tau_annotation", value=time_label(p["tau"])))
         if segment.repeat > 1:
             extras.append(f"×{segment.repeat}")
         if extras:
@@ -482,7 +491,7 @@ class ListTab(ttk.Frame):
             canvas.create_rectangle(i * 110 + 2, 1, (i + 1) * 110 - 2, 64,
                                     outline="#dc2626" if i == self.segment_index else "#cbd5e1", width=2)
             self._draw_curve(canvas, segment, i * 110 + 4, 3, 102, 38)
-            canvas.create_text(i * 110 + 55, 53, text=f"{i + 1} {SHAPE_NAMES[SHAPES.index(segment.shape)]} ×{segment.repeat}")
+            canvas.create_text(i * 110 + 55, 53, text=f"{i + 1} {SHAPE_NAMES[SHAPES.index(segment.shape)]} ×{segment.repeat}", font="SunValleyBodyFont")
         canvas.configure(scrollregion=(0, 0, max(1, len(self.channel.segments) * 110), 65))
 
     def _draw_budget(self):
@@ -507,7 +516,7 @@ class ListTab(ttk.Frame):
             top = i * lane
             canvas.create_rectangle(1, top + 1, width - 2, top + lane - 1,
                                     outline="#dc2626" if ch is self.channel else "#e2e8f0", width=2)
-            canvas.create_text(6, top + lane / 2, text=ch.label or f"CH{ch.channel}", anchor="w")
+            canvas.create_text(6, top + lane / 2, text=ch.label or f"CH{ch.channel}", anchor="w", font="SunValleyBodyFont")
             values = c.levels.get(ch.channel, [])
             if not values:
                 continue
@@ -528,12 +537,12 @@ class ListTab(ttk.Frame):
                 pts = [p for j, v in enumerate(volts) if j * dt <= c.n_points * c.dwell for p in (x(j * dt / c.dwell), y(v))]
                 if len(pts) >= 4:
                     canvas.create_line(*pts, fill="#111827")
-        canvas.create_text(width - 10, 12, text=f"× {self.plan.repeat}", anchor="e")
+        canvas.create_text(width - 10, 12, text=f"× {self.plan.repeat}", anchor="e", font="SunValleyBodyFont")
         period = c.n_points * c.dwell
         scale, unit = (1000, "ms") if period < 1 else (1, "s")
         for j in range(5):
             canvas.create_text(100 + (width - 110) * j / 4, height - 16,
-                               text=f"{period * scale * j / 4:.4g} {unit}", anchor="e" if j == 4 else "center")
+                               text=f"{period * scale * j / 4:.4g} {unit}", anchor="e" if j == 4 else "center", font="SunValleyBodyFont")
 
     def _lane_click(self, event):
         live = getattr(self, "_lanes", [])
@@ -564,11 +573,11 @@ class ListTab(ttk.Frame):
         resources = [v.get().strip() for v in self.app.resources[:frames]]
         demo = self.app.demo.get()
         if not demo and not all(resources):
-            return messagebox.showerror("Missing Address", f"VISA addresses are required for {frames} instruments", parent=self)
-        text = ("[Demo] " if demo else "[Hardware] ") + "Outputs will turn on and run the List"
+            return messagebox.showerror(tr("missing_address"), tr("address_required", frames=frames), parent=self)
+        text = (tr("demo_prefix") if demo else tr("hardware_prefix")) + tr("list_start")
         if plan.hold_last:
-            text += "; outputs will stay on at the last level after completion"
-        if not messagebox.askyesno("Confirm", text + ". Continue?", icon="warning", parent=self):
+            text += tr("list_keep")
+        if not messagebox.askyesno(tr("confirm"), text + tr("continue"), icon="warning", parent=self):
             return
         self.app._save_config()
         self.app.busy = True
@@ -582,7 +591,7 @@ class ListTab(ttk.Frame):
         try:
             group = InstrumentGroup.demo(frames=frames, slots=execute.DEMO_SLOTS) if demo else execute.connect_group(resources)
         except Exception as exc:  # noqa: BLE001 - backend errors vary
-            self.queue.put(("error", f"Connection failed: {exc}"))
+            self.queue.put(("error", tr("connection_error", error=exc)))
             return
         try:
             try:
@@ -591,14 +600,14 @@ class ListTab(ttk.Frame):
                 raise execute.PlanRejected(str(exc)) from exc
             cap = {} if capture else None
             execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap)
-            text = "List complete; outputs remain on at the last level." if plan.hold_last else "List complete; outputs are off."
+            text = tr("list_hold_done") if plan.hold_last else tr("list_done")
             if cap and "error" in cap:
-                text += f"\nMeasured waveform capture failed: {cap.pop('error')}"
+                text += tr("capture_error", error=cap.pop("error"))
             self.queue.put(("done", text, cap))
         except Exception as exc:  # noqa: BLE001 - execution handles output shutdown
             note = ("" if isinstance(exc, execute.OutputsNotConfirmedOff)
-                    else "\n(Sequence rejected before outputs were enabled)" if isinstance(exc, execute.PlanRejected)
-                    else "\n(Outputs were forced off)")
+                    else tr("rejected") if isinstance(exc, execute.PlanRejected)
+                    else tr("forced_off"))
             self.queue.put(("error", f"{exc}{note}"))
         finally:
             for inst in group.instruments:
@@ -613,7 +622,7 @@ class ListTab(ttk.Frame):
             if rest and rest[0]:
                 self.measured = rest[0]
             self.schedule()
-            (messagebox.showinfo if kind == "done" else messagebox.showerror)("Run Result", text, parent=self)
+            (messagebox.showinfo if kind == "done" else messagebox.showerror)(tr("run_result"), text, parent=self)
         self._button_state()
         self._poll_id = self.after(100, self._poll)
 
