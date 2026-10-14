@@ -3,7 +3,7 @@
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），
 在多台主機上依表上電。第一版只做時序，不做量測。目前設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-14　狀態：模擬器全過（145 tests）。**ARB List 模式開發中，見 §9**。**單台實機（4× N6752A）單通道已跑通**（見 §4.8），跨台同步仍未量。Codex 審查第 2 輪已核准（見 §8）。
+最後更新：2026-10-14　狀態：模擬器全過（213 tests）。**ARB List 模式開發中，Track A 已驗收、D 修正到一半（暫停），見 §9.2.1**。**單台實機（4× N6752A）單通道已跑通**（見 §4.8），跨台同步仍未量。Codex 審查第 2 輪已核准（見 §8）。
 
 ## 0. 先讀這幾件事
 
@@ -45,9 +45,11 @@ n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依�
 | `src/n6705c_seq/plan.py` | `SeqRow`、`load_csv`／`write_csv`、`to_functions`、打平偵測 `order_warnings`、`suggest_assignment`、`timeline` |
 | `src/n6705c_seq/execute.py` | `run_plan`（CSV）→ `run_functions`（CSV 與 List 模式共用）：驗證 → 設定電壓／電流並開輸出 → load → 每台一道 `INIT:TRAN` 同時啟動（`start_together`）→ 等待 → 關輸出（`keep_on` 時不關）。另有 `connect_group` |
 | `src/n6705c_seq/listplan.py` | List 模式：`Segment`／`ChannelList`／`ListPlan`、各波形欄位表 `FIELDS`、`load_json`／`write_json`（§9） |
+| `src/n6705c_seq/synth.py` | List 模式：段落 → CDW 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`（§9，未 commit） |
+| `src/n6705c_seq/list_gui.py` | List 模式分頁 `ListTab`（§9，未 commit） |
 | `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
 | `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（測試連線；掃描鈕已在 `d99bda8` 移除）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
-| `tests/` | `test_plan.py`（16）、`test_execute.py`（15）、`test_cli.py`（10）、`test_gui.py`（8：波形轉折點、刻度、設定檔）、`test_listplan.py`（96） |
+| `tests/` | `test_plan.py`（16）、`test_execute.py`（15）、`test_cli.py`（10）、`test_gui.py`（26：波形轉折點、刻度、設定檔、List 分頁；其中 18 個是 Track D 新加、未 commit）、`test_listplan.py`（96）、`test_synth.py`（50，未 commit） |
 | `docs/plan.md` | 實作計畫，已更新到打平建議（Task 5）；測試程式碼以 `tests/` 為準 |
 
 本專案只用標準函式庫；核心用 pyvisa、pyvisa-py、pyusb、libusb-package、numpy。沒有 YAML。Python 3.13、pytest 8.4.2。
@@ -204,10 +206,42 @@ ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、
 |---|---|---|
 | P0 | `listplan.py`、`examples/list_demo.json`、`tests/test_listplan.py` | ✅ `3032c1a` |
 | C | `execute.run_functions`（`run_plan` 改成呼叫它，行為不變） | ✅ `3032c1a` |
-| A | `synth.py`：段落 → 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`。第一版不做頻寬警告、Triangle 沿用 Sine 門檻（規劃 §2.2，2026-10-14 定案） | ⏳ 待使用者說開工 |
-| D | `list_gui.py` + `gui.py` 分頁、「■ 全部關閉」移到連線列 | ⏳ 待開工（A 未完成可先 monkeypatch `compile_plan`） |
+| A | `synth.py`：段落 → 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`。第一版不做頻寬警告、Triangle 沿用 Sine 門檻（規劃 §2.2，2026-10-14 定案） | ✅ 已驗收，**未 commit**（見 §9.2.1） |
+| D | `list_gui.py` + `gui.py` 分頁、「■ 全部關閉」移到連線列 | ✅ 已驗收（2026-10-14），**未 commit**（見 §9.2.1） |
 | H | `scripts/hw_list_check.py` 實機量測（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | ⏳ 待開工，需要人在 Windows 實機旁 |
 | I | 整合、回填實測常數、端到端測試、版本 0.2.0 | ⏳ A、C、D、H 完成後 |
+
+### 9.2.1 暫停時的狀態（2026-10-14 15:56，使用者要求暫停）
+
+工作目錄裡**全部未 commit**（`git status`）：
+
+| 檔案 | Track | 狀態 |
+|---|---|---|
+| `src/n6705c_seq/synth.py`、`tests/test_synth.py`（新，50 tests） | A | ✅ 驗收通過 |
+| `src/n6705c_seq/list_gui.py`（新）、`src/n6705c_seq/gui.py`（改）、`tests/test_gui.py`（只加測試） | D | ✅ 驗收通過 |
+| `docs/arb_list_mode_plan.md` | 驗收時補規劃 | R1 補「每段最後一點固定取終值」；§4.1 偽代碼同步；§4.2 改成「啟用且有段落的通道」 |
+
+`python3 -m pytest -q` → **218 passed**（本機有顯示，GUI 測試沒有 skip；Codex 沙箱沒有 Tk 顯示，GUI 測試會 skip 或 abort）。
+
+**Track A 驗收紀錄**
+- 第一輪：規劃 §6 各項都有測試、端到端（`list_demo.json` → demo `run_functions` → 輸出關閉）通過；邊界探測：4 通道 48,828 點合成 0.07 s、dwell 0／負／inf／nan 都進 `errors`、啟用但無段落的通道被略過。
+- 問題：段落取整後點數不足（ramp_time＝10.4 dwell）最後一點只到 0.9615 V，違反 R1 → 補規劃 R1 後交回 Codex，已修並加測試。
+- 保留未決（不擋 commit）：`synth._validate` 對記憶體中的 `ListPlan` 再檢查一次欄位，與 `listplan.load_json` 的檢查部分重複（理由：GUI 直接組計畫不經過 `load_json`）。可在 Track I 視情況合併。
+
+**Track D 驗收紀錄**
+- 第一輪：程式碼照 CSV 分頁的模式（背景執行緒＋queue、`PlanRejected`／`OutputsNotConfirmedOff` 訊息、共用 `app.busy`）；CSV 分頁截圖與原本相同；4 通道 58,643 點重新合成＋重畫 0.33 s。
+- 實際開視窗（`gui.main` 預設 1180x900，macOS 實際可用約 860 高）截圖找到 3 個問題，交回 Codex 第二輪修，**做到一半暫停**：
+
+| # | 問題 | 狀態 |
+|---|---|---|
+| 1 | **List 分頁最下面「開啟 JSON／儲存 JSON／▶ 執行 List」整列被裁掉看不到**，警告區只剩一半。原因：泳道 canvas 最先 pack 且 expand，空間不夠時 Tk 裁掉最後 pack 的元件。修法：按鈕列（和警告區）用 `side="bottom"` 先 pack，或讓泳道 canvas 成為唯一被壓縮的元件。已改成 grid、泳道 row weight=1；測試 `test_list_tab_controls_fit_in_short_window`（突變驗證：拿掉 weight 會失敗） | ✅ |
+| 2 | 數字欄位用 `.17g` 顯示浮點雜訊（限流 0.1 → 「0.1000000000000」）。改最短表示 | ✅ `_format_number`＋`test_list_numbers_use_shortest_repr`、`test_list_format_number_uses_shortest_repr` |
+| 3 | 時間軸標籤「0.022999 s」、最右一個被切 | ✅ 已改（P < 1 s 用 ms、`.4g`、最右 `anchor="e"`），1180x860 截圖複驗通過 |
+
+**接手要做**
+1. A、D 都已驗收（2026-10-14，D 第二輪由 Codex 補測試）。使用者說 commit 才 commit（A、D 與規劃修改一起提交）。
+2. 之後：H（實機量測，需要人在 Windows 實機旁）、I（整合）都還要使用者另外說開工。
+3. 小事（不擋 commit）：測試／腳本裡直接 `root.destroy()` 時，stderr 會印 `invalid command name "...draw"`／`"..._poll"`（Tk 還有排程中的 after），不影響結果。
 
 ### 9.3 工作方式（使用者要求）
 

@@ -16,6 +16,7 @@ from n6705c.core.instrument import N6705C
 
 from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, outputs_off, run_plan
 from .plan import SeqRow, load_csv, order_warnings, write_csv
+from .list_gui import ListTab
 
 FRAMES = 2
 CONFIG = Path.home() / ".n6705c_seq_gui.json"
@@ -84,12 +85,18 @@ class App:
         self.conn_status = [tk.StringVar() for _ in range(FRAMES)]
         self.message = tk.StringVar()
         self._connection_bar()
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill="both", expand=True)
+        self.sequence_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.sequence_tab, text="上電時序")
         self._table()
         self._buttons()
-        ttk.Label(root, textvariable=self.message, foreground="#b45309", justify="left").pack(anchor="w", padx=10)
-        self.canvas = tk.Canvas(root, bg="white", height=520, highlightthickness=0)
+        ttk.Label(self.sequence_tab, textvariable=self.message, foreground="#b45309", justify="left").pack(anchor="w", padx=10)
+        self.canvas = tk.Canvas(self.sequence_tab, bg="white", height=520, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True, padx=10, pady=(4, 10))
         self.canvas.bind("<Configure>", lambda _e: self.schedule())
+        self.list_tab = ListTab(self.notebook, self)
+        self.notebook.add(self.list_tab, text="List 模式")
         root.after(100, self._poll)
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.schedule()
@@ -116,9 +123,11 @@ class App:
             ttk.Label(bar, textvariable=self.conn_status[i], width=34).grid(row=i, column=2, padx=6, sticky="w")
         ttk.Button(bar, text="測試連線", command=self.test_connection).grid(row=1, column=3, padx=6)
         ttk.Checkbutton(bar, text="Demo（模擬器）", variable=self.demo).grid(row=0, column=4, rowspan=2, padx=8)
+        self.off_button = ttk.Button(bar, text="■ 全部關閉", command=self.all_off)
+        self.off_button.grid(row=0, column=5, rowspan=2, padx=8)
 
     def _table(self) -> None:
-        grid = ttk.Frame(self.root)
+        grid = ttk.Frame(self.sequence_tab)
         grid.pack(fill="x", padx=10)
         ttk.Label(grid, text="機台:通道").grid(row=0, column=0, padx=4)
         ttk.Label(grid, text="啟用").grid(row=0, column=1, padx=4)
@@ -153,15 +162,13 @@ class App:
                 )
 
     def _buttons(self) -> None:
-        bar = ttk.Frame(self.root)
+        bar = ttk.Frame(self.sequence_tab)
         bar.pack(fill="x", padx=10, pady=6)
         ttk.Button(bar, text="開啟 CSV", command=self.open_csv).pack(side="left")
         ttk.Button(bar, text="儲存 CSV", command=self.save_csv).pack(side="left", padx=6)
         self.run_button = ttk.Button(bar, text="▶ 執行上電", command=self.run)
         self.run_button.pack(side="right")
         ttk.Checkbutton(bar, text="擷取實測波形（數位化器）", variable=self.capture).pack(side="right", padx=12)
-        self.off_button = ttk.Button(bar, text="■ 全部關閉", command=self.all_off)
-        self.off_button.pack(side="right", padx=(0, 12))
         ttk.Checkbutton(
             bar, text="維持高點 DC（忽略維持／下降，結束後不關輸出）", variable=self.hold_dc, command=self.schedule
         ).pack(side="right", padx=12)

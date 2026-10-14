@@ -45,3 +45,348 @@ def test_all_off_worker_reports_success_and_closes(monkeypatch):
     app.queue = queue.Queue()
     app._off_work(["x"])
     assert app.queue.get_nowait()[0] == "done"
+
+
+def _list_test_app(monkeypatch):
+    import tkinter as tk
+    from types import SimpleNamespace
+    from n6705c_seq import gui, list_gui
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+    root.withdraw()
+
+    def compile_plan(plan):
+        live = [ch for ch in plan.channels if ch.enabled and ch.segments]
+        info = SimpleNamespace(points=2, requested=0.02, actual=0.02)
+        return SimpleNamespace(dwell=0.01, n_points=2 if live else 0,
+                               levels={ch.channel: [0, 1] for ch in live},
+                               delay_points={ch.channel: 0 for ch in live},
+                               pad_points={ch.channel: 0 for ch in live},
+                               segments={ch.channel: [info for _ in ch.segments] for ch in live},
+                               warnings=[], errors=[] if live else ["沒有啟用且有段落的通道"])
+
+    monkeypatch.setattr(list_gui.synth, "compile_plan", compile_plan)
+    monkeypatch.setattr(list_gui.synth, "base_duration", lambda seg: 0.02)
+    monkeypatch.setattr(list_gui.synth, "value", lambda seg, u: u * 50)
+    monkeypatch.setattr(gui, "_load_config", lambda: {"resources": [], "demo": True})
+    try:
+        app = gui.App(root)
+    except BaseException:
+        root.destroy()
+        raise
+    return root, app
+
+
+def test_list_tab_controls_fit_in_short_window(monkeypatch):
+    root, app = _list_test_app(monkeypatch)
+    tab = app.list_tab
+    try:
+        root.deiconify()
+        root.geometry("1180x860")
+        app.notebook.select(tab)
+        root.update()
+        bottom = tab.winfo_rooty() + tab.winfo_height()
+        assert tab.run_button.winfo_rooty() + tab.run_button.winfo_height() <= bottom
+        assert tab.warning_text.winfo_rooty() + tab.warning_text.winfo_height() <= bottom
+    finally:
+        root.destroy()
+
+
+def test_list_numbers_use_shortest_repr(monkeypatch):
+    from pathlib import Path
+    from n6705c_seq import list_gui
+
+    root, app = _list_test_app(monkeypatch)
+    tab = app.list_tab
+    try:
+        monkeypatch.setattr(list_gui.filedialog, "askopenfilename", lambda **kw: pytest.fail("unexpected open dialog"))
+        tab.open_json(path=Path(__file__).resolve().parents[1] / "examples" / "list_demo.json")
+        assert tab.limit.get() == "0.1"
+        assert "000000" not in tab.delay.get()
+        tab.select_channel(2)
+        assert tab.limit.get() == "0.1"
+        assert tab.delay.get() == "0.002"
+        assert "000000" not in tab.delay.get()
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("value, expected", [(0.1, "0.1"), (1.0, "1"), (0.00001024, "1.024e-05")])
+def test_list_format_number_uses_shortest_repr(value, expected):
+    from n6705c_seq import list_gui
+
+    assert list_gui._format_number(value) == expected
+
+
+def test_notebook_contains_csv_and_list_tabs(monkeypatch):
+    root, app = _list_test_app(monkeypatch)
+    try:
+        assert [app.notebook.tab(tab, "text") for tab in app.notebook.tabs()] == ["上電時序", "List 模式"]
+        for tab in app.notebook.tabs():
+            app.notebook.select(tab)
+            root.update_idletasks()
+        assert app.canvas.master is app.sequence_tab
+        assert app.run_button.master.master is app.sequence_tab
+        assert app.off_button.master.master is root
+        assert len(app.read_rows()) == 8
+        app.list_tab.refresh()
+        assert app.list_tab.run_button.instate(["disabled"])
+    finally:
+        root.destroy()
+
+
+def test_list_segment_add_delete_move_and_modify(monkeypatch):
+    root, app = _list_test_app(monkeypatch)
+    tab = app.list_tab
+    try:
+        tab.add_segment()
+        first = tab.channel.segments[0]
+        tab.params["end"].set("2")
+        tab.add_segment()
+        second = tab.channel.segments[1]
+        assert second.params["end"] == 2
+        tab.move_segment(-1)
+        assert tab.channel.segments == [second, first]
+        assert tab.segment_index == 0
+        tab.move_segment(-1)
+        assert tab.channel.segments == [second, first]
+        tab.move_segment(1)
+        assert tab.channel.segments == [first, second]
+        tab.params["end"].set("3")
+        tab.segment_repeat.set("4")
+        tab.modify_segment()
+        assert tab.channel.segments[1].params["end"] == 3
+        assert tab.channel.segments[1].repeat == 4
+        tab.navigate("first")
+        assert tab.segment_index == 0
+        tab.navigate("last")
+        assert tab.segment_index == 1
+        tab.delete_segment()
+        assert tab.channel.segments == [first]
+        tab.delete_segment()
+        assert tab.channel.segments == []
+        assert tab.segment_index is None
+        tab.delete_segment()
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_list_json_round_trip_without_dialogs(tmp_path, monkeypatch, empty):
+    from n6705c_seq import list_gui
+    from n6705c_seq.listplan import ChannelList, ListPlan, Segment, load_json, write_json
+
+    root, app = _list_test_app(monkeypatch)
+    tab = app.list_tab
+    try:
+        plan = ListPlan([] if empty else [ChannelList(2, True, "電源", 0.123456789012345,
+                        0.987654321098765, [Segment("step", {"start": 0, "end": 2, "delay": 0, "end_time": 0.02}, 3)])],
+                        repeat=4, hold_last=True, dwell=0.00123456789012345)
+        path, output = tmp_path / "source.json", tmp_path / "saved.json"
+        write_json(plan, path)
+        monkeypatch.setattr(list_gui.filedialog, "askopenfilename", lambda **kw: pytest.fail("unexpected open dialog"))
+        monkeypatch.setattr(list_gui.filedialog, "asksaveasfilename", lambda **kw: pytest.fail("unexpected save dialog"))
+        tab.open_json(path)
+        tab.save_json(output)
+        assert load_json(output) == plan
+        tab.refresh()
+        if not empty:
+            assert tab.channel_choice.get() == "CH2"
+            assert "要求" in tab.statistics.get()
+            tab.select_channel(8)
+            tab.enabled.set(True)
+            tab.add_segment()
+            tab.refresh()
+            assert tab.channel.channel == 8
+            assert tab.plan.channels[0] == plan.channels[0]
+    finally:
+        root.destroy()
+
+
+def test_list_compilation_errors_and_shared_busy_block_run(monkeypatch):
+    from n6705c_seq import list_gui
+
+    root, app = _list_test_app(monkeypatch)
+    tab = app.list_tab
+    try:
+        tab.add_segment()
+        tab.refresh()
+        assert tab.run_button.instate(["!disabled"])
+        monkeypatch.setattr(list_gui.messagebox, "askyesno", lambda *a, **kw: pytest.fail("unexpected confirmation"))
+        app.busy = True
+        tab.run()
+        tab._button_state()
+        assert tab.run_button.instate(["disabled"])
+        app.busy = False
+        compiled = tab.compiled
+        compiled.errors = ["點數超過預算"]
+        monkeypatch.setattr(list_gui.synth, "compile_plan", lambda plan: compiled)
+        tab.run()
+        assert tab.run_button.instate(["disabled"])
+        assert "點數超過預算" in tab.message.get()
+        tab.delay.set("nan")
+        tab.refresh()
+        assert tab.compiled is None
+        assert tab.run_button.instate(["disabled"])
+    finally:
+        root.destroy()
+
+
+def test_list_preview_has_200_points_and_no_arrows(monkeypatch):
+    from n6705c_seq import list_gui
+
+    root, app = _list_test_app(monkeypatch)
+    tab = app.list_tab
+    calls = []
+    try:
+        monkeypatch.setattr(list_gui.synth, "value", lambda seg, u: calls.append(u) or u)
+        tab._draw_curve(tab.preview, tab.read_segment(), 0, 0, 300, 180)
+        assert len(calls) == 200
+        assert calls[0] == 0
+        assert calls[-1] == 0.02
+        item, = tab.preview.find_all()
+        assert len(tab.preview.coords(item)) == 400
+        assert tab.preview.itemcget(item, "arrow") == "none"
+    finally:
+        root.destroy()
+
+
+def test_list_run_snapshots_plan_and_disables_shared_buttons(monkeypatch):
+    from n6705c_seq import list_gui
+
+    root, app = _list_test_app(monkeypatch)
+    tab = app.list_tab
+    jobs = []
+    try:
+        tab.add_segment()
+        tab.hold_last.set(True)
+        monkeypatch.setattr(list_gui.messagebox, "askyesno", lambda *a, **kw: True)
+        monkeypatch.setattr(app, "_save_config", lambda: None)
+
+        class Thread:
+            def __init__(self, *, target, args, daemon):
+                jobs.append((target, args))
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr(list_gui.threading, "Thread", Thread)
+        tab.run()
+        assert app.busy
+        assert app.run_button.instate(["disabled"])
+        assert app.off_button.instate(["disabled"])
+        assert tab.run_button.instate(["disabled"])
+        _, args = jobs[0]
+        assert args[0].hold_last
+        tab.channel.segments.clear()
+        assert len(args[0].channels[0].segments) == 1
+        app.run()
+        assert len(jobs) == 1
+    finally:
+        app.busy = False
+        root.destroy()
+
+
+@pytest.mark.parametrize("failure", [None, "connect", "run", "unconfirmed", "convert"])
+def test_list_worker_uses_functions_and_reports_errors(monkeypatch, failure):
+    import queue
+    from n6705c.core.group import InstrumentGroup
+    from n6705c_seq import list_gui
+    from n6705c_seq.listplan import ChannelList, ListPlan
+
+    tab = object.__new__(list_gui.ListTab)
+    tab.queue = queue.Queue()
+    plan = ListPlan([ChannelList(1)], hold_last=True)
+    compiled = object()
+    group = InstrumentGroup.demo(frames=1, slots=list_gui.execute.DEMO_SLOTS)
+    closed = []
+    inst = group.instruments[0]
+    original_close = inst.close
+    monkeypatch.setattr(inst, "close", lambda: (closed.append(True), original_close()))
+    functions = [object()]
+
+    def connect(resources):
+        assert resources == ["test"]
+        if failure == "connect":
+            raise RuntimeError("連線中斷")
+        return group
+
+    def convert(got_plan, got_compiled):
+        assert got_plan is plan and got_compiled is compiled
+        if failure == "convert":
+            raise ValueError("轉換失敗")
+        return functions
+
+    def run(got_group, got_functions, *, keep_on, capture):
+        assert got_group is group and got_functions is functions
+        assert keep_on and capture == {}
+        if failure == "run":
+            raise RuntimeError("執行失敗")
+        if failure == "unconfirmed":
+            raise list_gui.execute.OutputsNotConfirmedOff("無法確認關閉")
+        capture.update({1: (0.01, [0, 1]), "error": "擷取失敗"})
+
+    monkeypatch.setattr(list_gui.execute, "connect_group", connect)
+    monkeypatch.setattr(list_gui.synth, "to_functions", convert)
+    monkeypatch.setattr(list_gui.execute, "run_functions", run)
+    try:
+        tab._work(plan, compiled, 1, ["test"], False, True)
+        result = tab.queue.get_nowait()
+        assert result[0] == ("error" if failure else "done")
+        if failure == "unconfirmed":
+            assert "輸出已強制關閉" not in result[1]
+        elif failure == "convert":
+            assert "開輸出前被拒絕" in result[1]
+        elif not failure:
+            assert result[2] == {1: (0.01, [0, 1])}
+            assert "擷取失敗" in result[1]
+        assert closed == ([] if failure == "connect" else [True])
+    finally:
+        original_close()
+
+
+@pytest.mark.parametrize("text, options", [("nan", {}), ("inf", {}), ("-1", {"minimum": 0}),
+                                           ("0", {"positive": True}), ("1.5", {"positive": True, "integer": True})])
+def test_list_form_rejects_invalid_numbers(text, options):
+    from n6705c_seq.list_gui import ListTab
+
+    with pytest.raises(ValueError):
+        ListTab._number(text, "測試欄位", **options)
+
+
+def test_list_segment_operations_without_a_display(monkeypatch):
+    import tkinter as tk
+    from n6705c_seq.list_gui import ListTab, SHAPE_NAMES
+    from n6705c_seq.listplan import ChannelList, ListPlan
+
+    master = tk.Tcl()
+    tab = object.__new__(ListTab)
+    tab.plan = ListPlan([ChannelList(1)])
+    tab.channel_index = 0
+    tab.segment_index = None
+    tab.shape = tk.StringVar(master, value=SHAPE_NAMES[0])
+    tab.segment_repeat = tk.StringVar(master, value="1")
+    tab.params = {key: tk.StringVar(master, value=value) for key, value in
+                  {"start": "0", "end": "1", "delay": "0", "end_time": "0.01"}.items()}
+    monkeypatch.setattr(tab, "schedule", lambda: None)
+    monkeypatch.setattr(tab, "select_segment", lambda index: setattr(tab, "segment_index", index))
+    tab.add_segment()
+    first = tab.channel.segments[0]
+    tab.params["end"].set("2")
+    tab.add_segment()
+    second = tab.channel.segments[1]
+    tab.move_segment(-1)
+    assert tab.channel.segments == [second, first]
+    tab.move_segment(1)
+    assert tab.channel.segments == [first, second]
+    tab.params["end"].set("3")
+    tab.modify_segment()
+    assert tab.channel.segments[1].params["end"] == 3
+    tab.delete_segment()
+    assert tab.channel.segments == [first]
+    tab.delete_segment()
+    assert not tab.channel.segments
+    assert tab.segment_index is None

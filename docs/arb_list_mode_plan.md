@@ -151,7 +151,7 @@ class ListTab(ttk.Frame):
 
 | # | 規則 | 理由 |
 |---|---|---|
-| R1 | **右端取樣**：第 k 點（k 從 0 起）的值＝段內時間 `(k+1)·dwell` 的理想值 | 每段最後一點剛好是該段的終值；Ramp 一定到達目標，「維持最後電壓」維持的就是設定值 |
+| R1 | **右端取樣**：第 k 點（k 從 0 起）的值＝段內時間 `(k+1)·dwell` 的理想值；**每段最後一點固定取終值 `value(seg, T)`**（R2 取整後點數不足、`n·dwell < 要求時間` 時也一樣，2026-10-14 補） | 每段最後一點剛好是該段的終值；Ramp 一定到達目標，「維持最後電壓」維持的就是設定值 |
 | R2 | **累計取整**：段落邊界＝`round(累計理想時間 / dwell)`，每段點數＝相鄰邊界相減 | 誤差不會一段一段累積，總誤差 ≤ dwell/2 |
 | R3 | 每段點數至少 1；若算出 0，該段放 1 點並警告 | 不默默丟掉使用者設定的段落 |
 | R4 | 段內 repeat：`u = τ − T·(⌈τ/T⌉ − 1)`，把 τ 對應回 (0, T] | 一條公式處理所有波形；Sine 整段一次算，頻率不會因每週期取整而偏 |
@@ -195,7 +195,7 @@ def compile_plan(plan):
             T = base_duration(seg); want = T * seg.repeat
             cum_ideal += want
             n = max(1, round(cum_ideal / dwell) - cum_pts)                   # R2, R3
-            pts += [value(seg, fold((k + 1) * dwell, T)) for k in range(n)]  # R1, R4
+            pts += [value(seg, fold((k + 1) * dwell, T)) for k in range(n - 1)] + [value(seg, T)]  # R1（末點取終值）, R4
             cum_pts += n
             info[ch].append(SegmentInfo(n, want, n * dwell))
             check_segment(seg, dwell, ch, i, warnings, errors)               # 點數／邊緣
@@ -232,7 +232,7 @@ def to_functions(plan, c):
                             spec=ArbSpec(channel=ch.channel,
                                          waveform=ConstantDwellArb(levels=c.levels[ch.channel], dwell=c.dwell),
                                          count=plan.repeat, terminate_last=True))
-            for ch in 啟用通道]
+            for ch in 啟用且有段落的通道]   # 同 §4.1 的 live
 ```
 
 位準是否在模組範圍內，交給 `GroupArbRunner.from_plan` 檢查（會變成 `PlanRejected`），synth 不重複檢查。
