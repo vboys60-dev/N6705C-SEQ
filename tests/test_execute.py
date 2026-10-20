@@ -171,18 +171,17 @@ def test_run_functions_rejects_empty_input_before_instrument_commands():
     assert sent(inst) == before
 
 
-def test_mixed_group_is_rejected_before_setting_commands(monkeypatch):
+@pytest.mark.parametrize("which", [[1], [0, 1]])  # a mix, then all E36441A
+def test_e36441a_group_is_rejected_before_setting_commands(which):
     from n6705c_seq.execute import PlanRejected
 
     group = demo(2)
-    session = group.instruments[1].session
-    query = session.query
-    monkeypatch.setattr(session, "query", lambda cmd: "Keysight,E36441A,MY2,1.0" if cmd == "*IDN?" else query(cmd))
+    for i in which:
+        object.__setattr__(group.instruments[i].identity, "model", "E36441A")  # frozen
     before = [sent(inst) for inst in group.instruments]
-    with pytest.raises(PlanRejected, match="mixed instrument models"):
+    with pytest.raises(PlanRejected, match="E36441A"):
         run_plan(group, [row(1), row(5)])
-    for inst, previous in zip(group.instruments, before):
-        assert all("?" in cmd for cmd in sent(inst)[len(previous):])
+    assert [sent(inst) for inst in group.instruments] == before
 
 
 def test_outputs_off_queries_all_channels_together():
