@@ -77,3 +77,15 @@ def test_suggest_out_still_writes_a_file_when_there_is_nothing_to_fix(tmp_path, 
 def test_run_hold_dc_says_the_outputs_stay_on(capsys):
     assert main(["run", str(EXAMPLE), "--demo", "--yes", "--hold-dc"]) == 0
     assert "left on" in capsys.readouterr().out.lower()
+
+
+def test_run_rejects_mixed_models_before_opening_runners(monkeypatch, capsys):
+    import pytest
+    from n6705c_seq import cli
+
+    models = {"first": "N6705C", "second": "E36441A"}
+    monkeypatch.setattr(cli, "detect_model", lambda resource, **kwargs: models[resource])
+    monkeypatch.setattr(cli, "connect_group", lambda *a, **k: pytest.fail("settings path opened"))
+    monkeypatch.setattr(cli, "run_resources", lambda *a, **k: pytest.fail("settings path opened"))
+    assert main(["run", str(EXAMPLE), "--resource", "first", "--resource", "second", "--yes"]) == 2
+    assert "mixed instrument models" in capsys.readouterr().err

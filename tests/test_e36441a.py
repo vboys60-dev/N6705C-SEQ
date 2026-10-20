@@ -180,6 +180,16 @@ def test_hold_dc_check_still_validates_rise_dwell_limit():
 class _FakeSession:
     def __init__(self):
         self.sent = []
+        self.queries = []
+        self.answers = {"*IDN?": "Keysight,E36441A,MY1,1.0", "OUTP:COUP:CHAN?": "NONE",
+                        "OUTP:PAIR?": "OFF"}
+
+    def query(self, cmd):
+        self.queries.append(cmd)
+        answer = self.answers.get(cmd, "0")
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
     def write(self, cmd):
         self.sent.append(cmd)
@@ -218,3 +228,111 @@ def test_run_rows_rejects_before_output(monkeypatch):
     with pytest.raises(Exception):
         e36441a.run_rows([s], [SeqRow(5, True, "A", 0.0, 0.0, 3.3, 0.1, 0.1, 0.1)])
     assert s.sent == []
+
+
+@pytest.mark.parametrize("field", ["low_v", "high_v", "current_limit", "delay", "rise", "hold", "fall"])
+@pytest.mark.parametrize("hold_dc", [False, True])
+def test_negative_values_in_direct_rows_are_rejected(field, hold_dc):
+    row = replace(ROW, channel=1, **{field: -0.1})
+    assert any(field in error for error in check(row, hold_dc)[0])
+    session = _FakeSession()
+    with pytest.raises(e36441a.PlanRejected, match=field):
+        e36441a.run_rows([session], [row], hold_dc=hold_dc)
+    assert session.sent == []
+
+
+@pytest.mark.parametrize("command, answer", [
+    ("INIT:CONT? (@2)", "1"),
+    ("OUTP:COUP:CHAN?", "1,2"),
+    ("OUTP:TRAC?", "ON"),
+    ("OUTP:PAIR?", "SER"),
+    ("OUTP:PAIR?", "PAR"),
+])
+def test_pre_run_settings_reject_before_any_frame_is_configured(command, answer):
+    first, second = _FakeSession(), _FakeSession()
+    second.answers[command] = answer
+    with pytest.raises(e36441a.PlanRejected) as exc:
+        e36441a.run_rows([first, second], [replace(ROW, channel=1), replace(ROW, channel=6)])
+    assert command in str(exc.value)
+    assert first.sent == second.sent == []
+
+
+@pytest.mark.parametrize("off", ["0", "OFF", " off\n", ' "off"\n'])
+def test_check_settings_accepts_query_callable(off):
+    session = _FakeSession()
+    session.answers.update({"INIT:CONT? (@2)": off, "OUTP:TRAC?": off})
+    session.answers.update({"OUTP:COUP:CHAN?": '"NONE"', "OUTP:PAIR?": '"OFF"'})
+    e36441a.check_settings(session.query, [2])
+    assert session.queries == ["INIT:CONT? (@2)", "OUTP:COUP:CHAN?", "OUTP:TRAC?", "OUTP:PAIR?"]
+    assert session.sent == []
+
+
+def test_run_rows_rejects_mixed_models_before_settings():
+    first, second = _FakeSession(), _FakeSession()
+    second.answers["*IDN?"] = "Keysight,N6705C,MY2,1.0"
+    with pytest.raises(e36441a.PlanRejected, match="mixed instrument models"):
+        e36441a.run_rows([first, second], [replace(ROW, channel=1), replace(ROW, channel=5)])
+    assert first.sent == second.sent == []
+    assert first.queries == second.queries == ["*IDN?"]
+
+
+def test_run_rows_rejects_all_n6705c_before_settings():
+    sessions = [_FakeSession(), _FakeSession()]
+    for session in sessions:
+        session.answers["*IDN?"] = "Keysight,N6705C,MY2,1.0"
+    with pytest.raises(e36441a.PlanRejected, match="requires E36441A"):
+        e36441a.run_rows(sessions, [replace(ROW, channel=1), replace(ROW, channel=5)])
+    for session in sessions:
+        assert session.sent == []
+        assert session.queries == ["*IDN?"]
+
+
+@pytest.mark.parametrize("answer", ["1", "ON", "", TimeoutError("no reply")])
+def test_restore_confirms_every_channel_even_when_one_fails(answer):
+    session = _FakeSession()
+    session.answers["OUTP? (@1)"] = answer
+    with pytest.raises(e36441a.OutputsNotConfirmedOff, match="frame 2 CH1"):
+        e36441a._restore([(session, 1), (session, 2)], [_FakeSession(), session])
+    assert "OUTP OFF,(@2)" in session.sent
+    assert session.queries == ["OUTP? (@1)", "OUTP? (@2)"]
+
+
+def test_run_rows_reports_failed_shutdown(monkeypatch):
+    monkeypatch.setattr(e36441a.time, "sleep", lambda s: None)
+    session = _FakeSession()
+    session.answers["OUTP? (@3)"] = "ON"
+    with pytest.raises(e36441a.OutputsNotConfirmedOff, match="frame 2 CH3"):
+        e36441a.run_rows([_FakeSession(), session], [replace(ROW, channel=7)])
+
+
+@pytest.mark.parametrize("off", ["0", "ON"])
+def test_run_failure_restores_and_reports_readback(monkeypatch, off):
+    def fail():
+        raise RuntimeError("trigger failed")
+
+    monkeypatch.setattr(e36441a.time, "sleep", lambda s: None)
+    session = _FakeSession()
+    session.answers["OUTP? (@1)"] = off
+    monkeypatch.setattr(e36441a, "fire_together", lambda actions: fail())
+    error = RuntimeError if off == "0" else e36441a.OutputsNotConfirmedOff
+    with pytest.raises(error, match="trigger failed"):
+        e36441a.run_rows([session], [replace(ROW, channel=1)], hold_dc=True)
+    assert "OUTP OFF,(@1)" in session.sent
+    assert "OUTP? (@1)" in session.queries
+
+
+@pytest.mark.parametrize("answer", ["OFF", "ON", TimeoutError("no reply")])
+def test_off_resources_checks_all_channels_and_closes(monkeypatch, answer):
+    session = _FakeSession()
+    session.answers["OUTP? (@2)"] = answer
+    closed = []
+    monkeypatch.setattr(session, "close", lambda: closed.append(True), raising=False)
+    monkeypatch.setattr(e36441a, "_sessions", lambda *args: [session])
+    monkeypatch.setattr(e36441a, "Session", lambda transport: transport)
+    if answer == "OFF":
+        e36441a.off_resources(["fake"])
+    else:
+        with pytest.raises(e36441a.OutputsNotConfirmedOff, match="frame 1 CH2"):
+            e36441a.off_resources(["fake"])
+    assert session.queries == [f"OUTP? (@{ch})" for ch in range(1, 5)]
+    assert closed == [True]

@@ -234,6 +234,12 @@ def run_plan(
     functions = to_functions(rows, hold_dc)
     if not functions:
         raise PlanRejected("no enabled channels in the table")
+    from .e36441a import kind_of, model_of
+
+    try:
+        kind_of([model_of(inst.session.query("*IDN?")) for inst in group.instruments])
+    except ValueError as exc:
+        raise PlanRejected(str(exc)) from exc
     return run_functions(group, functions, wait=wait, keep_on=hold_dc, capture=capture)
 
 

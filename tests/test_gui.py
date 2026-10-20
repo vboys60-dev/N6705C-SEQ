@@ -723,3 +723,18 @@ def test_e36441a_locks_list_tab_and_capture():
         assert str(app.notebook.tab(app.list_tab, "state")) == "normal"
     finally:
         root.destroy()
+
+
+def test_sequence_worker_rejects_mixed_models_before_opening_runners(monkeypatch):
+    import queue
+    from n6705c_seq import gui
+
+    models = {"first": "N6705C", "second": "E36441A"}
+    monkeypatch.setattr(gui, "detect_model", lambda resource: models[resource])
+    monkeypatch.setattr(gui, "connect_group", lambda *a, **k: pytest.fail("settings path opened"))
+    monkeypatch.setattr(gui, "run_resources", lambda *a, **k: pytest.fail("settings path opened"))
+    app = object.__new__(gui.App)
+    app.queue = queue.Queue()
+    app._work([], 2, list(models), False, False, False)
+    kind, message = app.queue.get_nowait()
+    assert kind == "error" and "mixed instrument models" in message

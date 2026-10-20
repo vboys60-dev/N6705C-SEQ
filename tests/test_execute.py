@@ -169,3 +169,29 @@ def test_run_functions_rejects_empty_input_before_instrument_commands():
     with pytest.raises(PlanRejected, match="no enabled channels in the table"):
         run_functions(group, [])
     assert sent(inst) == before
+
+
+def test_mixed_group_is_rejected_before_setting_commands(monkeypatch):
+    from n6705c_seq.execute import PlanRejected
+
+    group = demo(2)
+    session = group.instruments[1].session
+    query = session.query
+    monkeypatch.setattr(session, "query", lambda cmd: "Keysight,E36441A,MY2,1.0" if cmd == "*IDN?" else query(cmd))
+    before = [sent(inst) for inst in group.instruments]
+    with pytest.raises(PlanRejected, match="mixed instrument models"):
+        run_plan(group, [row(1), row(5)])
+    for inst, previous in zip(group.instruments, before):
+        assert all("?" in cmd for cmd in sent(inst)[len(previous):])
+
+
+def test_outputs_off_queries_all_channels_together():
+    from n6705c_seq.execute import outputs_off
+
+    group = demo(1)
+    inst = group.instruments[0]
+    before = len(sent(inst))
+    outputs_off(group)
+    assert [cmd for cmd in sent(inst)[before:] if cmd.startswith("OUTP?")] == [
+        "OUTP? (@1,2,3,4)"
+    ]

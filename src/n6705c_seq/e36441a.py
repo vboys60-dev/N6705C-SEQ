@@ -18,7 +18,7 @@ from n6705c.core.scpi import format_channel_list
 from n6705c.core.session import Session
 from n6705c.core.transport import VisaTransport
 
-from .execute import PlanRejected, fire_together
+from .execute import OutputsNotConfirmedOff, PlanRejected, fire_together
 from .plan import SeqRow
 
 #: Wait for the output to reach the low level before the list is armed.
@@ -100,6 +100,9 @@ def check(row: SeqRow, hold_dc: bool = False) -> tuple[list[str], list[str]]:
     """Return errors and timing warnings for the edges and dwells in use."""
     errors: list[str] = []
     warnings: list[str] = []
+    for name in ("delay", "rise", "hold", "fall"):
+        if getattr(row, name) < 0:
+            errors.append(f"{name} must be nonnegative")
     for name, voltage in (("low_v", row.low_v), ("high_v", row.high_v)):
         if not 0 <= voltage <= 32:
             errors.append(f"{name} must be in 0..32 V")
@@ -154,6 +157,20 @@ def detect_model(resource: str, *, backend: str = "auto", timeout_ms: int = 10_0
         transport.close()
 
 
+def check_settings(query, channels: list[int]) -> None:
+    """Refuse continuous triggering, coupling, tracking or pairing before writes."""
+    checks = [(f"INIT:CONT? {format_channel_list(ch)}", ("0", "OFF")) for ch in channels]
+    checks += [
+        ("OUTP:COUP:CHAN?", ("NONE",)),
+        ("OUTP:TRAC?", ("0", "OFF")),
+        ("OUTP:PAIR?", ("OFF",)),
+    ]
+    for command, allowed in checks:
+        answer = query(command).strip().strip('"').upper()
+        if answer not in allowed:
+            raise PlanRejected(f"{command} returned {answer!r}; must be {'/'.join(allowed)}")
+
+
 def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = False) -> None:
     """Run the table on E36441A frames (4 channels each, in frame order).
 
@@ -172,6 +189,19 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
     def where(r: SeqRow) -> tuple[Session, int]:
         return sessions[(r.channel - 1) // 4], (r.channel - 1) % 4 + 1
 
+    try:
+        kind = kind_of([model_of(s.query("*IDN?")) for s in sessions])
+    except ValueError as exc:
+        raise PlanRejected(str(exc)) from exc
+    if kind != "E36441A":
+        raise PlanRejected("run_rows requires E36441A instruments")
+    frames: dict[int, tuple[Session, list[int]]] = {}
+    for r in active:
+        session, ch = where(r)
+        frames.setdefault(id(session), (session, []))[1].append(ch)
+    for session, chans in frames.values():
+        check_settings(session.query, chans)
+
     touched: list[tuple[Session, int]] = []
     try:
         for r in active:
@@ -184,9 +214,6 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
             session, ch = where(r)
             for cmd in configure_commands(r, ch, hold_dc):
                 session.write_checked(cmd)
-        frames: dict[int, tuple[Session, list[int]]] = {}
-        for session, ch in touched:
-            frames.setdefault(id(session), (session, []))[1].append(ch)
         for session, chans in frames.values():
             for cmd in arm_commands(chans):
                 session.write_checked(cmd)
@@ -196,20 +223,35 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
         time.sleep(end + 0.5)
         for session, _ in frames.values():
             session.check_errors("E36441A run")
-    except BaseException:
-        _restore(touched)
+    except BaseException as exc:
+        try:
+            _restore(touched, sessions)
+        except OutputsNotConfirmedOff as off:
+            raise OutputsNotConfirmedOff(f"{exc}; also {off}") from exc
         raise
     if not hold_dc:
-        _restore(touched)
+        _restore(touched, sessions)
 
 
-def _restore(touched: list[tuple[Session, int]]) -> None:
+def _restore(touched: list[tuple[Session, int]], sessions: list[Session]) -> None:
+    indices = {id(session): i for i, session in enumerate(sessions, 1)}
     for session, ch in touched:
         for cmd in restore_commands(ch):
             try:
                 session.write(cmd)
             except Exception:  # noqa: BLE001 - keep switching the rest off
                 pass
+    problems = []
+    for session, ch in touched:
+        label = f"frame {indices[id(session)]} CH{ch}"
+        try:
+            answer = session.query(f"OUTP? {format_channel_list(ch)}").strip().upper()
+            if answer not in ("0", "OFF"):
+                problems.append(f"{label} still reports {answer!r}")
+        except Exception as exc:  # noqa: BLE001 - an unreadable output is not confirmed off
+            problems.append(f"{label} unreadable ({exc})")
+    if problems:
+        raise OutputsNotConfirmedOff("could not confirm outputs off: " + "; ".join(problems))
 
 
 def kind_of(models: list[str]) -> str:
@@ -250,11 +292,7 @@ def off_resources(resources: list[str], *, backend: str = "auto", timeout_ms: in
     transports = _sessions(resources, backend, timeout_ms)
     try:
         sessions = [Session(t) for t in transports]
-        _restore([(s, ch) for s in sessions for ch in range(1, 5)])
-        on = [f"frame {i} CH{ch}" for i, s in enumerate(sessions, 1) for ch in range(1, 5)
-              if s.query(f"OUTP? {format_channel_list(ch)}").strip() not in ("0", "OFF")]
-        if on:
-            raise RuntimeError("could not confirm outputs off: " + ", ".join(on))
+        _restore([(s, ch) for s in sessions for ch in range(1, 5)], sessions)
     finally:
         for t in transports:
             t.close()
