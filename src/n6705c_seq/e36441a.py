@@ -12,10 +12,17 @@ The caller sends *TRG once per instrument.
 from __future__ import annotations
 
 import math
+import time
 
 from n6705c.core.scpi import format_channel_list
+from n6705c.core.session import Session
+from n6705c.core.transport import VisaTransport
 
+from .execute import PlanRejected, fire_together
 from .plan import SeqRow
+
+#: Wait for the output to reach the low level before the list is armed.
+SETTLE_SECONDS = 1.0  # ponytail: fixed wait, poll MEAS:VOLT? if a slow load needs it
 
 def _slew(dv: float, seconds: float) -> str:
     return "INF" if dv == 0 or seconds == 0 else f"{abs(dv) / seconds:.6G}"
@@ -129,3 +136,125 @@ def check(row: SeqRow, hold_dc: bool = False) -> tuple[list[str], list[str]]:
         if seconds < 0.01:
             warnings.append(f"{name} dwell will be raised to 10 ms")
     return errors, warnings
+
+
+def model_of(idn: str) -> str:
+    """Model field of an ``*IDN?`` reply, upper-cased ('' if malformed)."""
+    parts = idn.split(",")
+    return parts[1].strip().upper() if len(parts) > 1 else ""
+
+
+def detect_model(resource: str, *, backend: str = "auto", timeout_ms: int = 10_000) -> str:
+    """Open the resource just long enough to read its model."""
+    transport = VisaTransport(resource, backend=backend, timeout_ms=timeout_ms)
+    transport._inst.encoding = "latin-1"  # noqa: SLF001 - same workaround as connect_group
+    try:
+        return model_of(transport.query("*IDN?"))
+    finally:
+        transport.close()
+
+
+def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = False) -> None:
+    """Run the table on E36441A frames (4 channels each, in frame order).
+
+    Outputs are restored (off) at the end unless ``hold_dc``; any failure restores
+    every channel touched.
+    """
+    active = [r for r in rows if r.enabled]
+    if not active:
+        raise PlanRejected("no enabled channels in the table")
+    if (max(r.channel for r in active) + 3) // 4 > len(sessions):
+        raise PlanRejected(f"the table needs more than {len(sessions)} mainframe(s)")
+    problems = [f"{r.name}: {e}" for r in active for e in check(r, hold_dc)[0]]
+    if problems:
+        raise PlanRejected("; ".join(problems))
+
+    def where(r: SeqRow) -> tuple[Session, int]:
+        return sessions[(r.channel - 1) // 4], (r.channel - 1) % 4 + 1
+
+    touched: list[tuple[Session, int]] = []
+    try:
+        for r in active:
+            session, ch = where(r)
+            touched.append((session, ch))
+            for cmd in prepare_commands(r, ch):
+                session.write_checked(cmd)
+        time.sleep(SETTLE_SECONDS)
+        for r in active:
+            session, ch = where(r)
+            for cmd in configure_commands(r, ch, hold_dc):
+                session.write_checked(cmd)
+        frames: dict[int, tuple[Session, list[int]]] = {}
+        for session, ch in touched:
+            frames.setdefault(id(session), (session, []))[1].append(ch)
+        for session, chans in frames.values():
+            for cmd in arm_commands(chans):
+                session.write_checked(cmd)
+        fire_together([(lambda s=s: s.write("*TRG")) for s, _ in frames.values()])
+        # last edge ends at delay + rise + hold (+ fall); hold_dc stops after the rise
+        end = max(r.delay + r.rise + (0 if hold_dc else r.hold + r.fall) for r in active)
+        time.sleep(end + 0.5)
+        for session, _ in frames.values():
+            session.check_errors("E36441A run")
+    except BaseException:
+        _restore(touched)
+        raise
+    if not hold_dc:
+        _restore(touched)
+
+
+def _restore(touched: list[tuple[Session, int]]) -> None:
+    for session, ch in touched:
+        for cmd in restore_commands(ch):
+            try:
+                session.write(cmd)
+            except Exception:  # noqa: BLE001 - keep switching the rest off
+                pass
+
+
+def kind_of(models: list[str]) -> str:
+    """'E36441A' or 'N6705C' for a set of models; mixed instruments are refused."""
+    kinds = {"E36441A" if m == "E36441A" else "N6705C" for m in models}
+    if len(kinds) > 1:
+        raise ValueError(f"mixed instrument models are not supported: {models}")
+    return kinds.pop() if kinds else "N6705C"
+
+
+def _sessions(resources: list[str], backend: str, timeout_ms: int):
+    transports = []
+    try:
+        for resource in resources:
+            t = VisaTransport(resource, backend=backend, timeout_ms=timeout_ms)
+            t._inst.encoding = "latin-1"  # noqa: SLF001
+            transports.append(t)
+    except BaseException:
+        for t in transports:
+            t.close()
+        raise
+    return transports
+
+
+def run_resources(resources: list[str], rows: list[SeqRow], *, hold_dc: bool = False,
+                  backend: str = "auto", timeout_ms: int = 10_000) -> None:
+    """Open each resource as an E36441A frame, run the table, close."""
+    transports = _sessions(resources, backend, timeout_ms)
+    try:
+        run_rows([Session(t) for t in transports], rows, hold_dc=hold_dc)
+    finally:
+        for t in transports:
+            t.close()
+
+
+def off_resources(resources: list[str], *, backend: str = "auto", timeout_ms: int = 10_000) -> None:
+    """All four outputs of every frame off, then read ``OUTP?`` back."""
+    transports = _sessions(resources, backend, timeout_ms)
+    try:
+        sessions = [Session(t) for t in transports]
+        _restore([(s, ch) for s in sessions for ch in range(1, 5)])
+        on = [f"frame {i} CH{ch}" for i, s in enumerate(sessions, 1) for ch in range(1, 5)
+              if s.query(f"OUTP? {format_channel_list(ch)}").strip() not in ("0", "OFF")]
+        if on:
+            raise RuntimeError("could not confirm outputs off: " + ", ".join(on))
+    finally:
+        for t in transports:
+            t.close()

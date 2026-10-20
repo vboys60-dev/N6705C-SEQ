@@ -18,6 +18,7 @@ import sv_ttk
 from n6705c.core.group import CHANNELS_PER_FRAME, TRIGGER_SKEW_SECONDS, InstrumentGroup
 from n6705c.core.instrument import N6705C
 
+from .e36441a import detect_model, kind_of, off_resources, run_resources
 from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, outputs_off, run_plan
 from .plan import SeqRow, load_csv, order_warnings, write_csv
 from .list_gui import ListTab
@@ -111,6 +112,15 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.schedule()
 
+    def set_kind(self, kind: str) -> None:
+        """E36441A has no ARB, digitizer or List-mode page: lock those, keep the sequence."""
+        e36 = kind == "E36441A"
+        self.notebook.tab(self.list_tab, state="disabled" if e36 else "normal")
+        self.capture_check.state(["disabled" if e36 else "!disabled"])
+        if e36:
+            self.capture.set(False)
+            self.notebook.select(self.sequence_tab)
+
     def _text(self, widget, key, **fmt):
         self.texts.append((widget, key, fmt))
         widget.configure(text=tr(key, **fmt))
@@ -197,7 +207,8 @@ class App:
         self._text(ttk.Button(bar, command=self.save_csv), "save_csv").pack(side="left", padx=6)
         self.run_button = self._text(ttk.Button(bar, command=self.run, style="Accent.TButton"), "run_sequence")
         self.run_button.pack(side="right")
-        self._text(ttk.Checkbutton(bar, variable=self.capture), "capture").pack(side="right", padx=12)
+        self.capture_check = self._text(ttk.Checkbutton(bar, variable=self.capture), "capture")
+        self.capture_check.pack(side="right", padx=12)
         self._text(ttk.Checkbutton(
             bar, variable=self.hold_dc, command=self.schedule
         ), "hold_dc").pack(side="right", padx=12)
@@ -356,16 +367,22 @@ class App:
         self._save_config()
         self.busy = True
         targets = [v.get().strip() for v in self.resources]
-        for s in self.conn_status:
-            s.set("")
+        for st in self.conn_status:
+            st.set("")
         threading.Thread(target=self._test, args=(targets, self.demo.get()), daemon=True).start()
 
     def _test(self, targets: list[str], demo: bool) -> None:
+        models = []
         for i, res in enumerate(targets):
             if not res and not demo:
                 self.queue.put(("status", i, tr("not_set")))
                 continue
             try:
+                if not demo:
+                    models.append(detect_model(res))
+                    if models[-1] == "E36441A":
+                        self.queue.put(("status", i, "✔ E36441A"))
+                        continue
                 inst = N6705C.demo(DEMO_SLOTS) if demo else connect_group([res]).instruments[0]
                 try:
                     self.queue.put(("status", i, f"✔ S/N {inst.identity.serial}  " + " ".join(c.model for c in inst.capabilities.values())))
@@ -374,6 +391,10 @@ class App:
             except Exception as exc:  # noqa: BLE001 - backend errors vary
                 self.queue.put(("status", i, f"✘ {str(exc).splitlines()[0][:60]}"))
                 self.queue.put(("connerr", tr("frame_connection_error", number=i + 1, error=exc)))
+        try:
+            self.queue.put(("kind", kind_of(models)))
+        except ValueError as exc:
+            self.queue.put(("connerr", str(exc)))
         self.queue.put(("idle",))
 
     # -- run ------------------------------------------------------------------
@@ -420,6 +441,14 @@ class App:
 
     def _off_work(self, resources: list[str]) -> None:
         try:
+            if kind_of([detect_model(r) for r in resources]) == "E36441A":
+                off_resources(resources)
+                self.queue.put(("done", tr("off_done")))
+                return
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", str(exc)))
+            return
+        try:
             group = connect_group(resources)
         except Exception as exc:  # noqa: BLE001
             self.queue.put(("error", tr("connection_error", error=exc)))
@@ -434,6 +463,18 @@ class App:
                 inst.close()
 
     def _work(self, rows: list[SeqRow], frames: int, resources: list[str], demo: bool, hold_dc: bool, capture: bool) -> None:
+        if not demo:
+            try:
+                e36 = kind_of([detect_model(r) for r in resources]) == "E36441A"
+                if e36:
+                    if capture:
+                        raise ValueError(tr("e36441a_no_capture"))
+                    run_resources(resources, rows, hold_dc=hold_dc)
+                    self.queue.put(("done", tr("sequence_hold_done") if hold_dc else tr("sequence_done")))
+                    return
+            except Exception as exc:  # noqa: BLE001 - run_rows restored what it touched
+                self.queue.put(("error", str(exc)))
+                return
         try:
             group = InstrumentGroup.demo(frames, slots=DEMO_SLOTS) if demo else connect_group(resources)
         except Exception as exc:  # noqa: BLE001
@@ -462,6 +503,8 @@ class App:
             kind, *rest = self.queue.get()
             if kind == "status":
                 self.conn_status[rest[0]].set(rest[1])
+            elif kind == "kind":
+                self.set_kind(rest[0])
             elif kind == "idle":
                 self.busy = False
             elif kind == "connerr":

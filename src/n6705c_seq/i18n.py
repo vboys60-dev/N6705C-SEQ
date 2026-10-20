@@ -35,6 +35,8 @@ STRINGS = {
     "sequence_hold_done": ("時序完成，輸出維持在高點（未關閉）。", "Sequence complete; outputs remain on at the high level."),
     "sequence_done": ("時序完成，輸出已關閉。", "Sequence complete; outputs are off."),
     "rejected": ("\n（時序在開輸出前被拒絕）", "\n(Sequence rejected before outputs were enabled)"),
+    "e36441a_no_capture": ("E36441A 沒有數位化器，無法擷取實測波形。", "The E36441A has no digitizer; capture is unavailable."),
+    "e36441a_no_list": ("E36441A 不支援 List 模式頁面。", "The E36441A does not support the List Mode page."),
     "forced_off": ("\n（輸出已強制關閉）", "\n(Outputs were forced off)"),
     "channel": ("通道", "Channel"),
     "name": ("名稱", "Name"),

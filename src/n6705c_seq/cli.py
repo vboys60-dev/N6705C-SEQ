@@ -12,6 +12,7 @@ from n6705c.core.group import (
     InstrumentGroup,
 )
 
+from .e36441a import detect_model, kind_of, run_resources
 from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, run_plan
 from .plan import load_csv, order_warnings, suggest_assignment, timeline, write_csv
 
@@ -92,6 +93,16 @@ def _group(args, rows) -> InstrumentGroup:
     return connect_group(args.resource, backend=args.backend, timeout_ms=args.timeout)
 
 
+def _run_e36441a(args, rows) -> int:
+    try:
+        run_resources(args.resource, rows, hold_dc=args.hold_dc, backend=args.backend, timeout_ms=args.timeout)
+    except Exception as exc:  # noqa: BLE001 - run_rows already restored what it touched
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print("Sequence done; outputs left ON at the high level." if args.hold_dc else "Sequence done; outputs off.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -110,6 +121,19 @@ def main(argv: list[str] | None = None) -> int:
     if not args.yes and input("Switch outputs ON and run? [y/N] ").strip().lower() not in ("y", "yes"):
         print("aborted; nothing was switched on")
         return 1
+    if not args.demo:
+        try:
+            models = {r: detect_model(r, backend=args.backend, timeout_ms=args.timeout) for r in args.resource}
+        except Exception as exc:  # noqa: BLE001
+            print(f"connection failed: {exc}", file=sys.stderr)
+            return 1
+        try:
+            kind = kind_of(list(models.values()))
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if kind == "E36441A":
+            return _run_e36441a(args, rows)
     try:
         group = _group(args, rows)
     except Exception as exc:  # noqa: BLE001 - connection errors vary by backend

@@ -2,6 +2,7 @@ from dataclasses import replace
 
 import pytest
 
+from n6705c_seq import e36441a
 from n6705c_seq.e36441a import (
     arm_commands, check, configure_commands, prepare_commands, restore_commands,
 )
@@ -174,3 +175,46 @@ def test_hold_dc_check_still_validates_rise_dwell_limit():
     errors, warnings = check(replace(ROW, high_v=ROW.low_v, rise=4000), hold_dc=True)
     assert errors == ["rise dwell exceeds 3600 s"]
     assert warnings == []
+
+
+class _FakeSession:
+    def __init__(self):
+        self.sent = []
+
+    def write(self, cmd):
+        self.sent.append(cmd)
+
+    write_checked = write
+
+    def check_errors(self, context=""):
+        pass
+
+
+def test_model_of():
+    assert e36441a.model_of("Keysight Technologies,E36441A,MY1,1.0") == "E36441A"
+    assert e36441a.model_of("garbage") == ""
+
+
+def test_run_rows_sequence_and_restore(monkeypatch):
+    monkeypatch.setattr(e36441a.time, "sleep", lambda s: None)
+    s = _FakeSession()
+    row = SeqRow(2, True, "A", 0.0, 0.0, 3.3, 0.1, 0.1, 0.1)
+    e36441a.run_rows([s], [row])
+    i = s.sent.index("INIT (@2)")
+    assert s.sent.index("*TRG") > i
+    assert s.sent[-1] == "VOLT:MODE FIX,(@2)" and "OUTP OFF,(@2)" in s.sent
+
+
+def test_run_rows_hold_dc_leaves_on(monkeypatch):
+    monkeypatch.setattr(e36441a.time, "sleep", lambda s: None)
+    s = _FakeSession()
+    e36441a.run_rows([s], [SeqRow(1, True, "A", 0.0, 0.0, 3.3, 0.1, 0.0, 0.0)], hold_dc=True)
+    assert "OUTP OFF,(@1)" not in s.sent
+
+
+def test_run_rows_rejects_before_output(monkeypatch):
+    import pytest
+    s = _FakeSession()
+    with pytest.raises(Exception):
+        e36441a.run_rows([s], [SeqRow(5, True, "A", 0.0, 0.0, 3.3, 0.1, 0.1, 0.1)])
+    assert s.sent == []

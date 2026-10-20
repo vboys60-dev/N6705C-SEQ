@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from n6705c.core.group import CHANNELS_PER_FRAME, InstrumentGroup
 
-from . import execute, synth
+from . import e36441a, execute, synth
 from .i18n import tr
 from .listplan import FIELDS, SHAPES, TIMES, ChannelList, ListPlan, Segment, load_json, write_json
 
@@ -588,6 +588,12 @@ class ListTab(ttk.Frame):
         threading.Thread(target=self._work, args=(plan, c, frames, resources, demo, self.capture.get()), daemon=True).start()
 
     def _work(self, plan, compiled, frames, resources, demo, capture):
+        try:
+            if not demo and e36441a.kind_of([e36441a.detect_model(r) for r in resources]) == "E36441A":
+                raise ValueError(tr("e36441a_no_list"))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", str(exc)))
+            return
         try:
             group = InstrumentGroup.demo(frames=frames, slots=execute.DEMO_SLOTS) if demo else execute.connect_group(resources)
         except Exception as exc:  # noqa: BLE001 - backend errors vary

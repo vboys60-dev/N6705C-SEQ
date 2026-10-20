@@ -17,6 +17,19 @@ def reset_language():
     gc.collect()  # drop dead Tk variables here, not later in some worker thread
 
 
+@pytest.fixture(autouse=True)
+def fake_model(monkeypatch):
+    """Workers probe ``*IDN?`` first; the fake resources here answer N6705C."""
+    from n6705c_seq import e36441a, gui
+
+    def use(model):
+        for module in (e36441a, gui):
+            monkeypatch.setattr(module, "detect_model", lambda *a, **k: model)
+
+    use("N6705C")
+    return use
+
+
 @pytest.fixture
 def english():
     i18n.set_lang("en")
@@ -676,5 +689,37 @@ def test_thin_lanes_drop_delay_and_hold_labels(monkeypatch):
         for form in app.forms[1:]:
             form["enabled"].set(False)
         assert any(t.startswith("維持") for t in labels())
+    finally:
+        root.destroy()
+
+
+def test_e36441a_sequence_worker_uses_its_own_runner(monkeypatch, fake_model):
+    import queue
+    from n6705c_seq import gui
+    fake_model("E36441A")
+    calls = []
+    monkeypatch.setattr(gui, "run_resources", lambda res, rows, hold_dc: calls.append((res, hold_dc)))
+    monkeypatch.setattr(gui, "connect_group", lambda r: pytest.fail("N6705C path used"))
+    app = object.__new__(gui.App)
+    app.queue = queue.Queue()
+    app._work([], 1, ["x"], False, False, False)
+    assert app.queue.get_nowait()[0] == "done" and calls == [(["x"], False)]
+    app._work([], 1, ["x"], False, False, True)  # capture has no digitizer to use
+    assert app.queue.get_nowait()[0] == "error"
+
+
+def test_e36441a_locks_list_tab_and_capture():
+    if not _tk_display_available():
+        pytest.skip("no display")
+    import tkinter as tk
+    from n6705c_seq import gui
+    root = tk.Tk()
+    try:
+        app = gui.App(root)
+        app.set_kind("E36441A")
+        assert str(app.notebook.tab(app.list_tab, "state")) == "disabled"
+        assert app.capture_check.instate(["disabled"])
+        app.set_kind("N6705C")
+        assert str(app.notebook.tab(app.list_tab, "state")) == "normal"
     finally:
         root.destroy()
