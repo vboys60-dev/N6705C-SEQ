@@ -1,291 +1,160 @@
 # N6705C-SEQ　交接文件
 
-多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），
-在多台主機上依表上電。第一版只做時序，不做量測。目前設計兩台（8 通道），程式不限台數。
+多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。只做時序，不做量測。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-14　狀態：模擬器全過（255 tests）。**ARB List 模式：P0、C、A、D、H 前半、I 前半、D-EN（英文化＋預覽標註）都已 commit，下一步是有設備時跑 H 實機量測，見 §9.2.3**。**單台實機（4× N6752A）單通道已跑通**（見 §4.8），跨台同步仍未量。Codex 審查第 2 輪已核准（見 §8）。
+最後更新：2026-10-20　狀態：模擬器全過（309 tests）。細節看 git log；本檔只留接手需要的事實。
+
+| 區塊 | 狀態 |
+|---|---|
+| CSV 上電時序 | 單台（4× N6752A）單通道實機跑通（§4.8）；多通道、帶載、跨台同步未量 |
+| ARB List 模式 | P0、C、A、D、H 前半、I 前半、D-EN、GUI 美化＋中英切換已 commit；等實機跑 H（§9） |
+| E36441A | 指令產生＋驗證＋實機驗證腳本已 commit（`1cfbe76`、`dca33f1`），未接 CLI／GUI，核心假設未實機驗證（§10） |
+| Codex 審查 | 第 2 輪已核准（§8） |
 
 ## 0. 先讀這幾件事
 
-1. 儀器控制核心 `n6705c.core` **已複製進本專案**（`src/n6705c/core`，與舊專案 `../N6705C-APP` 當時內容相同，import 名稱不變）。不再依賴 `n6705c-app`，也**不改**舊專案；之後核心有修正要手動同步。
-   - ⚠️ 同一個 Python 環境**不要同時 editable 安裝 `n6705c-app`**：兩個專案的 import 名稱都是 `n6705c`，`n6705c-app` 會被先找到，測試就會跑到舊專案那份 core（舊專案的 `transport.py` 沒有 `_native_backend_safe()`）。2026-10-14 已在這台 Mac 的 anaconda base 解除安裝 `n6705c-app`；兩個專案都要用的話，各自建一個 venv。確認方式：`python3 -c "import n6705c; print(n6705c.__file__)"` 應指向本專案的 `src/`。
-2. 舊專案的 `HANDOFF.md` 是儀器行為的權威來源，特別是 §3.1（`*TRG`）、§3.9（多機台不同步）、§4.0（實機發現）。
-3. 遠端：私人 repo <https://github.com/vboys60-dev/N6705C-SEQ>（`main`）。換機器只要 `pip install -e .`。
+1. 儀器控制核心 `n6705c.core` **已複製進本專案**（`src/n6705c/core`），不依賴也不改舊專案 `../N6705C-APP`；核心修正要手動同步。
+   - ⚠️ 同一 Python 環境**不要 editable 安裝 `n6705c-app`**：import 名稱同為 `n6705c`，會先找到舊專案那份 core。確認：`python3 -c "import n6705c; print(n6705c.__file__)"` 應指向本專案 `src/`。
+2. 舊專案 `HANDOFF.md` 是儀器行為的權威來源：§3.1（`*TRG`）、§3.9（多機不同步）、§4.0（實機發現）。
+3. 遠端：私人 repo <https://github.com/vboys60-dev/N6705C-SEQ>（`main`）。換機器 `pip install -e .`。
 
 ## 1. 安裝與使用
 
 ```bash
-cd N6705C-SEQ
-pip install -e ".[dev]"           # 依賴：pyvisa、pyvisa-py、pyusb、libusb-package、numpy（不需要舊專案）
-python3 -m pytest -q              # 255 passed
-
-n6705c-seq check examples/powerup.csv                       # 只驗證、印時間軸，不碰儀器
-n6705c-seq check plan.csv --suggest-out fixed.csv           # 有跨台打平時，另存建議的通道分配
+pip install -e ".[dev]"           # pyvisa、pyvisa-py、pyusb、libusb-package、numpy、sv-ttk
+python3 -m pytest -q              # 309 passed
+n6705c-seq check examples/powerup.csv                       # 只驗證、印時間軸
+n6705c-seq check plan.csv --suggest-out fixed.csv           # 跨台打平時另存建議分配
 n6705c-seq run plan.csv --demo --yes                        # 模擬器
-n6705c-seq-gui                                              # 圖形介面（或 python3 -m n6705c_seq.gui）
-# 或在 Finder 雙擊 N6705C-SEQ.command
 n6705c-seq run plan.csv --resource <VISA1> --resource <VISA2>   # 實機，依機台順序
+n6705c-seq-gui                                              # GUI（或雙擊 N6705C-SEQ.command，路徑寫死 /opt/anaconda3）
 ```
 
-結束碼：0 正常；1 中止／錯誤（或 `--suggest-out` 無解）；2 CSV 有誤；130 Ctrl-C。
-`run` 預設會問 `Switch outputs ON and run? [y/N]`，`--yes` 跳過。
+結束碼：0 正常；1 中止／錯誤（或 `--suggest-out` 無解）；2 CSV 有誤；130 Ctrl-C。`run` 預設問 `[y/N]`，`--yes` 跳過。
 
 ## 2. CSV 格式
 
-欄位：`enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a`（最後一欄可省略或留空）。
-
-- **列的順序就是通道編號**：第 1–4 列 = 機台 1 的 CH1–4，第 5–8 列 = 機台 2 的 CH1–4。停用的列也要留著佔位。
-- 時間單位 ms，電壓 V，`current_limit_a` 單位 A；空白表示不設電流限制。
-- 錯誤訊息會指出 `line N, column X`。
-- 範例 `examples/powerup.csv` 是使用者截圖那張表（CH7、CH8 停用）。
+欄位：`enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a`（最後一欄可省略／留空＝不限流）。
+- **列順序就是通道編號**：第 1–4 列＝機台 1 CH1–4，第 5–8 列＝機台 2。停用列要留著佔位。
+- 錯誤訊息指出 `line N, column X`。範例 `examples/powerup.csv`（CH7、CH8 停用）。
 
 ## 3. 架構
 
 | 檔案 | 責任 |
 |---|---|
-| `src/n6705c_seq/plan.py` | `SeqRow`、`load_csv`／`write_csv`、`to_functions`、打平偵測 `order_warnings`、`suggest_assignment`、`timeline` |
-| `src/n6705c_seq/execute.py` | `run_plan`（CSV）→ `run_functions`（CSV 與 List 模式共用）：驗證 → 設定電壓／電流並開輸出 → load → 每台一道 `INIT:TRAN` 同時啟動（`start_together`）→ 等待 → 關輸出（`keep_on` 時不關）。另有 `connect_group` |
-| `src/n6705c_seq/listplan.py` | List 模式：`Segment`／`ChannelList`／`ListPlan`、各波形欄位表 `FIELDS`、`load_json`／`write_json`（§9） |
-| `src/n6705c_seq/synth.py` | List 模式：段落 → CDW 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`（§9） |
-| `src/n6705c_seq/list_gui.py` | List 模式分頁 `ListTab`（§9） |
-| `scripts/hw_list_check.py` | List 模式實機量測：`transfer`／`seam`／`align`／`sinebw`／`all`，`--resource X` 或 `--demo`，結果印出並存 CSV 到 `hw_list_results/`（§9.2.2） |
-| `src/n6705c_seq/cli.py` | `check`／`run` 兩個子指令 |
-| `src/n6705c_seq/gui.py` | tkinter 介面（`n6705c-seq-gui`）：機台 VISA 位址（測試連線；掃描鈕已在 `d99bda8` 移除）、可編輯表格、各通道共用時間軸波形、開／存 CSV、執行。位址存在 `~/.n6705c_seq_gui.json`。顏色只是介面用，不寫進 CSV。執行時才連線、跑完就關（不保留連線，避開 VISA session 非執行緒安全） |
-| `tests/` | `test_plan.py`（16）、`test_execute.py`（15）、`test_cli.py`（10）、`test_gui.py`（42：波形轉折點、刻度、設定檔、List 分頁、List 端到端 demo、預覽標註）、`test_listplan.py`（97）、`test_synth.py`（51）、`test_hw_list_check.py`（24） |
+| `src/n6705c_seq/plan.py` | `SeqRow`、`load_csv`／`write_csv`、`to_functions`、`order_warnings`、`suggest_assignment`、`timeline` |
+| `src/n6705c_seq/execute.py` | `run_plan` → `run_functions`（CSV 與 List 共用）：驗證 → `VOLT`／`CURR` 並開輸出 → load → 每台一道 `INIT:TRAN` 同時啟動（`start_together`）→ 等待 → 關輸出。另有 `connect_group` |
+| `src/n6705c_seq/listplan.py`、`synth.py`、`list_gui.py` | List 模式：JSON 計畫、段落→CDW 合成、GUI 分頁（§9） |
+| `src/n6705c_seq/e36441a.py` | E36441A：`prepare`／`configure`／`arm`／`restore_commands`、`check()` 純函式（§10） |
+| `src/n6705c_seq/cli.py`、`gui.py`、`i18n.py` | `check`／`run`；tkinter GUI（連線測試、可編輯表格、共用時間軸波形、擷取、中英切換）；GUI 字串 `STRINGS={key:(中,英)}` |
+| `scripts/hw_list_check.py`、`scripts/hw_e36441a_check.py` | 實機量測腳本（§9.2.3、§10） |
+| `packaging/`、`.github/workflows/ci.yml` | PyInstaller（Windows）、CI（§4.12） |
 
-本專案只用標準函式庫；核心用 pyvisa、pyvisa-py、pyusb、libusb-package、numpy。沒有 YAML。Python 3.13、pytest 8.4.2。
-
-每個通道 = 一個 `TrapezoidArb`：`start_level=low_v`、`start_time=delay`、`rise_time`、`top_level=high_v`、`top_time=hold`、`fall_time`、`end_time=0`，`terminate_last=True`。
+每個通道 = 一個 `TrapezoidArb`：`start_level=low_v`、`start_time=delay`、`rise_time`、`top_level=high_v`、`top_time=hold`、`fall_time`、`end_time=0`、`terminate_last=True`。
 
 ## 4. 關鍵設計決定
 
-### 4.1 延遲折進 `start_time`，`ChannelFunction.delay` 保持 0
-次數是 1，所以只發生一次。兩個地方都設會延遲兩次。測試 `test_only_enabled_rows_become_trapezoids_with_delay_as_start_time` 守著這點。
+- **4.1 延遲折進 `start_time`，`ChannelFunction.delay` 保持 0**：次數 1，兩處都設會延遲兩次（測試守著）。
+- **4.2 `run_plan` 自己開輸出**：驗證（機台數、模組電壓／時間上限）都在開任何輸出前完成；任何例外或 Ctrl-C 走 `all_outputs_off()`。`_outputs_off` 讀回 `OUTP?` 確認，未關或讀不到丟 `OutputsNotConfirmedOff`，CLI／GUI 不說「已強制關閉」。`OUTP?` 是命令狀態、不是實際軌壓。驗證被拒丟 `PlanRejected`（訊息「開輸出前被拒絕」）。
+- **4.2.2 輸入驗證**：數字須有限且 ≥ 0；`current_limit_a` 填了必須 > 0（0 與「不限制」無法區分）；GUI `read_rows` 與 `load_csv` 規則一致。
+- **4.3 跨台時間差軟體消不掉**：實機（F.1.1.0）ARB 在 `INIT:TRAN` 當下就開跑、不等 `*TRG`（§4.10），所以每台一道 `INIT:TRAN (@全部通道)`。跨台各自 VISA 往返，抖動約 0.2–2 ms（`TRIGGER_SKEW_SECONDS=2e-3`）；`fire_together`（每台一條執行緒＋Barrier）只縮小差距。真解法是接線（舊 HANDOFF M11.3）。
+- **4.4 跨台打平**：不同機台、延遲差 < 2 ms 的通道標警告（同台沒事）。`suggest_assignment` 把互相打平的通道（連鎖也算）視為一組、同組同台，每台最多 4 個，塞不下改 first-fit-decreasing；無解時 `check` 印 `No frame assignment ...`、不寫檔、`--suggest-out` 結束碼 1。第 1 台沒滿時補停用備用列，讓第 2 台仍從第 5 列開始。⚠️ 使用者要自己把 DUT 電源軌換接到新通道。
+- **4.5 浮點陷阱**：`0.031-0.029` 是 `0.00199999…`；`_tied` 先 `round(...,9)`（測試 `test_a_gap_of_exactly_the_skew_is_not_a_tie`）。
+- **4.6 沿用舊專案的坑**：不支援的查詢會 **timeout**（`--timeout` 預設 10000 ms）；`OUTP?` 是命令狀態；fall 延遲讓「全部關閉」變慢。
+- **4.7 GUI**：執行時才連線、跑完就關（VISA session 非執行緒安全）；工作執行緒是 daemon，**執行中拒絕關閉視窗**；位址、Demo、語言存 `~/.n6705c_seq_gui.json`（壞了用預設）；沒有「停止」鈕；「■ 全部關閉」連到已填位址並回讀確認（Demo／執行中停用）。外觀：`gui.setup_theme()` 套 `sv_ttk`、CJK 字型（Windows JhengHei／mac PingFang）、`FONT_SCALE`、Windows 啟動時 DPI aware；通道高度太小時 `draw()` 不畫延遲／維持文字。Windows 實機外觀（DPI、字型、打包後 sv-ttk）未驗。
 
-### 4.2 `run_plan` 自己開輸出
-ARB runner 不會自己把輸出打開。所以順序是：驗證（機台數、每台模組的電壓／時間上限）→ `VOLT`（一律）／`CURR`（只有表上有給）→ 開輸出 → load → 每台一道 `INIT:TRAN (@全部通道)`（觸發源設 IMM）。驗證都在**開任何輸出之前**完成。
-任何例外或 Ctrl-C 都走 `except BaseException` → `group.all_outputs_off()`。
+### 4.8 實機測試紀錄（2026-10-12，單台、CH1、空接）
+- 機台 `USB0::0x2A8D::0x0F02::MY66102013::INSTR`，4× **N6752A**，韌體 `F.1.1.0`。**`*IDN?` 型號欄位是固定亂碼**，ASCII 解碼會丟 `UnicodeDecodeError`；`execute.connect_group()` 把 pyvisa `encoding` 設 latin-1 繞過（連線會印一行「not an N6705 family mainframe」，可忽略）。
+- `MEAS:VOLT?` 取樣（~40 Hz）：0.5 s 延遲、1 s 上升到 1 V、2 s 維持、1 s 下降皆正確，**`TRAP:END:TIM 0` 在 N6752A 可用**，錯誤佇列乾淨。空接 0 V 時讀到約 20 mV（偏移）。
+- **機台內建數位化器可當示波器**（`docs/hw_smoke_capture.png`）：`SENS:SWE:POIN 6000`、`SENS:SWE:TINT 40.96E-6`、`TRIG:ACQ:SOUR BUS`，在 `run_plan` **之前** `INIT:IMM:ACQ`，同一 `*TRG` 同啟動 ARB 與擷取，再 `FETC:ARR:VOLT?`。`examples/hw_smoke.csv` 實測交越差 < 0.6 ms。這只量同台，量不到跨台差。`FETC:ARR:CURR?` 需先啟用電流擷取（沒做）。
+- `DISP:VIEW SCOPe` 在 F.1.1.0 不支援（-224）；`HCOP:SDUM:DATA?` 可回 320×240 PNG。
 
-### 4.2.1 關輸出要「確認」（Codex 審查後加的）
-舊專案的 `all_outputs_off()` 設計成**絕不丟例外**，寫失敗只記 log。所以 `run_plan` 用 `_outputs_off`：呼叫後讀回 `OUTP?`，仍為開或讀不到就丟 `OutputsNotConfirmedOff`（含原本的錯誤訊息）。CLI／GUI 遇到這個例外**不再說「輸出已強制關閉」**，要使用者手動確認。注意 `OUTP?` 是命令狀態、不是實際軌壓（舊 §4.0.1），只證明寫入有送到。
+### 4.9 GUI 擷取實測波形
+`run_plan(capture={})`／GUI 勾選：實測電壓以黑線疊在預期波形上（`execute._arm_capture`／`_fetch`）。擷取在 `start_together` 每台執行緒內於 `INIT:TRAN` 後立刻 `*TRG`（同台差 < 0.15 ms）；`INIT:ACQ` 要在 ARB 啟動**前**，要等記錄完成**再** `OUTP OFF`；`FORM REAL`＋`FORM:BORD SWAP`，每通道 6000 點。取回失敗只記在 `capture["error"]`。模擬器擷取到平的 0 V，只能實機驗證。
 
-### 4.2.2 輸入驗證
-- 所有數字必須是有限值（拒絕 `nan`／`inf`）且 ≥ 0。
-- `current_limit_a` 若有填必須 > 0；填 `0` 會被拒絕（`ChannelFunction.current` 用 0.0 代表「不限制」，兩者無法區分，所以直接擋）。空白 = 不限制。
-- GUI 的 `read_rows` 與 `load_csv` 規則一致。
+### 4.10 實測：ARB 在 INIT 當下就開跑
+逐通道 `INIT:TRAN` 再一個 `*TRG` 時，CH1/2/3 相對 `*TRG` 偏移 −36／−14／−1 ms（就是各通道 INIT 間隔）；不送 `*TRG` 輸出照升，`TRIG:TRAN:SOUR`（PIN1／EXT）對 ARB 無作用。修法 `start_together`：每台一道 `INIT:TRAN (@…)`，不再送 `*TRG`。實測 3 通道 50% 點在設定值 0.15 ms 內。
 
-### 4.3 機台之間的時間差是軟體消不掉的
-**實機（F.1.1.0）的 ARB 在 `INIT:TRAN` 當下就開跑，不等 `*TRG`**（見 §4.10），所以改成每台一道 `INIT:TRAN (@全部通道)`。舊 HANDOFF §3.1 的 `*TRG` 說法對 ARB 不成立（對 `ACQ` 仍成立）。跨台是各自的 VISA 往返，實測抖動約 0.2–2 ms（`TRIGGER_SKEW_SECONDS = 2e-3`）。
-`fire_together` 用每台一條執行緒加 `threading.Barrier`，只能縮小差距，不能消除。真正的解法是接線（舊 HANDOFF M11.3：數位埠／Trigger In BNC）。
-
-### 4.4 跨台打平的處理（最近做完的功能）
-- **偵測**：不同機台上、延遲差 < 2 ms 的通道成對標警告。同一台上打平沒事（同一個 `*TRG`）。
-- **建議**：`suggest_assignment` 把互相打平的通道（連鎖也算：A~B、B~C 三個放一起）視為一組，同組必須同台；依延遲順序塞進各台，每台最多 4 個，塞不下時改用 first-fit-decreasing。
-- **無解**（例如 5 個通道同延遲）：`check` 印 `No frame assignment ...`，不寫檔，加 `--suggest-out` 時結束碼 1。
-- **輸出表**：第 1 台沒滿時補停用的備用列，讓第 2 台仍從第 5 列開始，`run` 的通道對應不變。
-- 範例表的建議結果：CH1–3 留在機台 1，CH4–6 全放機台 2（CH4、CH5 的 29 ms 因此同台）。
-- ⚠️ **使用者必須自己把 DUT 電源軌接到新的通道**，工具無法換線。
-
-### 4.5 浮點陷阱
-`0.031 - 0.029` 是 `0.00199999…`，剛好 2 ms 的差距會被誤判成打平。`_tied` 先 `round(..., 9)` 再比較。測試 `test_a_gap_of_exactly_the_skew_is_not_a_tie`；我確認過換回未取整的寫法這個測試會失敗。
-
-### 4.6 沿用舊專案的坑
-- N6762A 不支援的查詢會 **timeout**，不是報錯（舊 §4.0）。
-- `OUTP?` 回的是命令狀態，不是實際軌壓（舊 §4.0.1）。
-- fall 延遲會讓「全部關閉」變慢（舊 §3.4）。
-- `run` 的 `--timeout` 預設 10000 ms，就是為了這類 timeout。
-
-### 4.7 GUI（`gui.py`，tkinter）
-- 執行時才連線、跑完就關；不保留連線（VISA session 非執行緒安全）。工作執行緒是 daemon，所以**執行中拒絕關閉視窗**（否則會跳過 `run_plan` 的關輸出）。
-- 位址與 Demo 勾選存在 `~/.n6705c_seq_gui.json`；檔案壞掉就用預設值。
-- 刻度 `_tick_step` 是 1/2/5×10^k，長序列（> 40 s）不會當掉。
-- 雙擊 `N6705C-SEQ.command` 啟動；路徑寫死 `/opt/anaconda3`，換環境要改。
-
-### 4.8 實機測試紀錄（2026-10-12，單台、CH1、空接、無示波器）
-- 機台：`USB0::0x2A8D::0x0F02::MY66102013::INSTR`，4 個 **N6752A**（51 V／10.2 A），韌體 `F.1.1.0`，`*IDN?` 開頭是 `Agilent Technologies`。
-- **這台的 `*IDN?` 型號欄位是固定亂碼**（`\xe4\x9b\xcf\xbe\xe1\xc4F`），舊函式庫用 ASCII 解碼會丟 `UnicodeDecodeError`。本專案用 `execute.connect_group()`（把 pyvisa `encoding` 設成 latin-1）繞過，舊專案沒改；連線時會印一行「not an N6705 family mainframe」警告，可忽略。CLI／GUI 都走這個函式。
-- 用 `MEAS:VOLT?` 連續取樣（約 40 Hz，沒有示波器）看 0.5 s 延遲、1 s 上升到 1 V、2 s 維持、1 s 下降：起點在 trigger 後約 0.53 s，斜率線性，維持 1.0003 V，下降後回到起始準位並停住，**`TRAP:END:TIM 0` 在 N6752A 上可用**。錯誤佇列前後皆為 `No error`，最後讀回輸出關閉。
-- 空接時 `MEAS:VOLT?` 在設定值 0 V 時讀到約 **20 mV**（執行前後相同），應是量測偏移或空載，沒用示波器確認。
-- `MEAS:VOLT?` 輪詢只有 ~25 ms 解析度，不能驗證 ms 級精度；`examples/hw_smoke.csv` 是 150 ms 的冒煙測試表。
-- **機台內建數位化器可當示波器用**（`docs/hw_smoke_capture.png`）：`SENS:SWE:POIN 6000`、`SENS:SWE:TINT 40.96E-6`、`SENS:SWE:OFFS:POIN 0`、`TRIG:ACQ:SOUR BUS`（皆 `,(@1)`），在 `run_plan` **之前** `INIT:IMM:ACQ (@1)`，同一個 `*TRG` 就會同時啟動 ARB 與擷取，之後 `FETC:ARR:VOLT? (@1)`。`hw_smoke.csv` 實測：0.5 V 交越在 19.42 ms／139.55 ms（程式值 20／140 ms），差 < 0.6 ms；上升、維持、下降都正確。波形前後基線都是 ~20 mV（偏移，非時序問題），使 0.1 V 交越提早約 0.4 ms。
-  - 這是**同一台**自己的觸發時間基準，量不到**跨台**差。跨台仍需外部儀器或 §7 第 2 點的做法。
-  - `FETC:ARR:CURR?` 預設無效（+303 no valid acquisition），要先啟用電流擷取；沒做。
-- **`DISP:VIEW SCOPe` 在韌體 F.1.1.0 不支援**（-224），只有 `METER1`／`METER4`；前面板 Scope View 只能手動切。`HCOP:SDUM:DATA?` 可回 320×240 PNG 螢幕截圖。
-
-### 4.9 GUI 擷取實測波形（先做過、取消，後來重新加回）
-`run_plan(capture={})` 與 GUI 勾選「擷取實測波形（數位化器）」：實測電壓以黑線疊在預期波形上。實作在 `execute._arm_capture`／`_fetch`。
-- 擷取在 `start_together` 的每台執行緒裡，於 `INIT:TRAN` 後立刻送 `*TRG`（ARB 在 INIT 起跑，擷取等 `*TRG`），所以擷取時間軸比 ARB 起點晚一個 INIT→`*TRG` 間隔（同台實測 < 0.15 ms）。
-- `INIT:ACQ` 要在 ARB 啟動**之前**；要等整段記錄完成**再** `OUTP OFF`（否則擷取作廢），所以擷取時會多等到記錄結束。
-- 取回用 `FORM REAL`＋`FORM:BORD SWAP` 二進位（模擬器只回二進位）；每通道 6000 點、`SENS:SWE:TINT` 取 20.48 µs 的整數倍。
-- 取回失敗只記錄在 `capture["error"]`，不影響輸出開關。模擬器擷取到平的 0 V，只能在實機驗證。
-- 實機（3 通道）：50% 上升／下降點與設定相差 < 0.15 ms；`hold_dc` 時末端維持高點。
-
-### 4.10 實測發現：ARB 在 INIT 當下就開跑（已修）
-- 示波器量到 CH1→CH2 起點差 23.9 ms（設定 20 ms）。數位化器重現：用舊作法（逐通道 `arm`＝逐通道 `INIT:TRAN`，再一個 `*TRG`）時，CH1/CH2/CH3 相對 `*TRG` 偏移 −36／−14／−1 ms，剛好是各通道 INIT 間隔。
-- 驗證：arm 好、**不送 `*TRG`**，輸出自己升到 1.8 V；觸發源改成 PIN1／EXT 也一樣。這台的 `TRIG:TRAN:SOUR` 對 ARB 沒有作用。
-- 修法：`start_together`——每台一道 `INIT:TRAN (@1,2,3)`，不再送 `*TRG`，跨台用 `fire_together` 的 barrier 同時送。實測 3 通道（CH1 1 ms／CH2、CH3 21 ms）50% 上升／下降點都在設定值 0.15 ms 內。
-- 之前單通道 hw_smoke「差 0.58 ms」其實就是 INIT→`*TRG` 的間隔，不是儀器延遲。
-
-### 4.11 維持高點 DC 選項（`--hold-dc`／GUI 勾選）
-- 忽略 hold／fall：改用 `RampArb`（delay → rise → 高點，`end_time=0`），`terminate_last` 把高點留成 DC；`run_plan(hold_dc=True)` 結束後**不關輸出**（出錯仍強制關）。
-- 實機：CH1 升到 1 V 後 3 s 仍 1.0004 V，斷線重連後輸出仍開著。GUI 有「■ 全部關閉」按鈕（連到已填的位址，`outputs_off` 關閉並讀回確認；Demo 模式不可用，執行中停用）；CLI 沒有對應指令。
+### 4.11 維持高點 DC（`--hold-dc`／GUI 勾選）
+忽略 hold／fall，改 `RampArb`，`terminate_last` 留高點；`run_plan(hold_dc=True)` 結束後**不關輸出**（出錯仍強制關）。實機 3 s 後仍 1.0004 V，斷線重連後輸出仍開。
 
 ### 4.12 發佈與打包（Windows 11）
-
-- 使用者下載 GitHub Release 的 `N6705C-SEQ-<版本>-windows-x64.zip`，解壓後執行 `N6705C-SEQ.exe`（GUI）或 `n6705c-seq-cli.exe`。
-- **USB 儀器要先在該電腦裝 Keysight IO Libraries 或 NI-VISA**，執行檔不含 VISA 驅動。LAN（`TCPIP...`）由內含的 `pyvisa-py` 處理。
-- **無 VISA 的 USB 路徑（未實機驗證）**：spec 已把 `usb` 與 libusb DLL 打進去，`transport._register_libusb()` 在開 `@py` 前讓 pyusb 找到該 DLL（做法是包裝 `usb.core.find`，非 pyvisa-py 標準機制；若實機仍列不出 USB 資源，先查這裡）。Windows 需把儀器驅動換成 WinUSB（Zadig），之後 Keysight IO Libraries 認不到該儀器。
-- 沒有程式碼簽章，SmartScreen 會警告。
-- `packaging/`：`n6705c_seq.spec`（PyInstaller onedir，GUI + CLI 兩個 exe）、`build.ps1`（建置 → 用 `--demo` 自我測試 → 打包 zip）、`gui_entry.py`／`cli_entry.py`。
-- `.github/workflows/ci.yml`：push／PR 在 Windows、macOS、Ubuntu × Python 3.11、3.13 跑 pytest；通過後建 Windows zip；推 `v*` tag 才建立 Release。
-- 發版：改 `pyproject.toml` 的 version → `git tag vX.Y.Z && git push origin vX.Y.Z`。
-- 已驗證：CI 全綠、macOS 本機打包的 CLI／GUI 能跑。**2026-10-12 補上**：Windows 11 本機（Python 3.12.8）`pip install -e ".[dev,build]"` → 46 測試全過 → `packaging\build.ps1` 打包成功，`N6705C-SEQ.exe` 開得起來（視窗存活）、`n6705c-seq-cli.exe --demo --yes` 跑完輸出正確。**仍未驗證**：接實機。
-  - 修了兩個打包問題：① `n6705c_seq.spec` 的 `collect_submodules("pyvisa_py")` 會連 `pyvisa_py.testsuite` 一起收進來，分析期間 import 到 `pyvisa.testsuite` 會讓 PyInstaller 的 isolated subprocess 當掉（`STATUS_STACK_BUFFER_OVERRUN`）；改成過濾掉 `pyvisa_py.testsuite` 並加進 `excludes`。② `build.ps1` 用 `& "$app\n6705c-seq-cli.exe" ...` 相對路徑呼叫，在 UNC 工作目錄（`\\server\share\...`）下 PowerShell 5.1 會誤判成要載入模組（`The module 'dist' could not be loaded`）；改成先 `Resolve-Path` 成絕對路徑再呼叫。
-
-### 4.13 Windows 上「開 IVI 後端就讓整個程式當機」（2026-10-12 修）
-- **症狀**（掃描鈕之後已在 `d99bda8` 移除）：使用者回報 GUI 點「掃描」會直接當機、視窗關閉；執行完 exe 本身偶爾也會當機。
-- **根因**：`pyvisa.ResourceManager("")`（走系統原生 VISA）在這台機器上**不是丟 Python 例外，而是直接讓整個行程當掉**（`exit code -1073740791` = `STATUS_STACK_BUFFER_OVERRUN`）。確認過：`C:\WINDOWS\system32\visa32.dll`／`visa64.dll` 存在（IVI Foundation 的轉發／路由 DLL，`8.0.7331.0`），但背後沒有真正掛上任何廠商 VISA（Keysight IO Libraries／NI-VISA）實作——只裝了共用元件、沒裝完整驅動時常見的半殘狀態。`try/except Exception` 包不住這種行程層級的當機，`VisaTransport.__init__`、`list_resources()`、`native_visa_available()` 三個地方原本都直接在主行程呼叫 `pyvisa.ResourceManager("")`，踩到就整支程式消失。
-- **修法**（`src/n6705c/core/transport.py`）：新增 `_native_backend_safe()`，用 `multiprocessing.Process` 把 `pyvisa.ResourceManager("")` 丟到一個用過就丟的子行程裡探測；子行程崩掉或在逾時（預設 8 s，一個 deadline 預算，不是兩段相加）內沒回應都當作「原生後端不安全」。結果快取整個程式生命週期內只探測一次。三個呼叫點都改走新的 `_candidates(backend)`，`backend="auto"` 時原生後端不安全就直接跳過、只留 `"@py"`。`packaging/gui_entry.py`、`cli_entry.py` 加了 `multiprocessing.freeze_support()`（Windows 上凍結執行檔用 `multiprocessing.Process` 的必要條件）。
-- **驗證**：源碼直接呼叫 `native_visa_available()` 不再讓 Python 行程消失（回傳 `False`，約 8 s 內有結果，不是等到真正當機的 ~29 s）；打包後的 `n6705c-seq-cli.exe run ... --resource "USB0::..."`（真的走 `VisaTransport`）不再當機，乾淨印出 `connection failed: ... Please install PyUSB` 並以 exit code 1 結束。GUI 本身因為 tkinter 元件不會註冊進 Windows UI Automation 樹，没能自動化點擊「掃描」驗證，但掃描跟連線走的是同一個 `_candidates()`／`_native_backend_safe()`，CLI 路徑驗證過即視為等價覆蓋。
-- ⚠️ **（以下為修補當時的狀況；之後已加入 `pyusb`／`libusb-package`，見 §4.12「無 VISA 的 USB 路徑」，仍待實機驗證）這修法只讓程式不當機，不能讓 USB 真的動起來**：這台機器仍然沒有可用的原生 VISA，`@py` 後端沒裝 `pyusb` 也碰不到 USB 儀器，所以掃描/連線 USB 資源仍會回空清單／清楚的錯誤（而不是當機）。要接 USB 實機，使用者電腦還是要裝好 Keysight IO Libraries Suite 或 NI-VISA（完整安裝，不是只剩 IVI 共用元件）。LAN（`TCPIP::...`）不受影響，`@py` 原生支援。
-- 這個 bug 在 `n6705c.core`（§0 第 1 點提到的「已複製進本專案」核心），舊專案 `N6705C-APP` 若也有同一份 `transport.py`，建議手動同步這次的修法。
+- Release 的 `N6705C-SEQ-<版本>-windows-x64.zip`：`N6705C-SEQ.exe`（GUI）、`n6705c-seq-cli.exe`。**USB 儀器需另裝 Keysight IO Libraries 或 NI-VISA**；LAN 走內含 `pyvisa-py`。無 VISA 的 USB 路徑（pyusb＋libusb DLL，`transport._register_libusb()`，Windows 需 Zadig 換 WinUSB）**未實機驗證**。無簽章，SmartScreen 會警告。
+- `packaging/build.ps1`：建置 → `--demo` 自測 → 打包。CI：Windows／macOS／Ubuntu × Python 3.11、3.13；推 `v*` tag 才建 Release。發版：改 `pyproject.toml` version → `git tag vX.Y.Z && git push origin vX.Y.Z`。
+- 2026-10-12 Windows 11 本機打包成功、exe 能開、`--demo` 輸出正確；**未接實機**。spec 已排除 `pyvisa_py.testsuite`（否則 PyInstaller 分析當機）；`build.ps1` 用 `Resolve-Path` 絕對路徑（UNC 工作目錄下相對路徑會被誤判成模組）。
+- **原生 VISA 探測**（`transport._native_backend_safe()`）：該機 `pyvisa.ResourceManager("")` 會直接讓行程當掉（`STATUS_STACK_BUFFER_OVERRUN`，系統只有 IVI 轉發 DLL、沒有廠商實作），所以用子行程探測（逾時 8 s、結果快取），`backend="auto"` 在不安全時只留 `@py`；入口檔需 `multiprocessing.freeze_support()`。舊專案若有同一份 `transport.py` 建議手動同步。
 
 ## 5. ⚠️ 尚未驗證
 
-1. ~~整個 `run` 沒接過實機~~：單台單通道空接已驗證（§4.8）。**仍未驗證**：多通道、帶載、兩台、ms 級精度（需示波器）。
-2. ~~`TRAP:END:TIM 0` 真機行為~~：N6752A 上被接受，結束後停在低準位（§4.8）。
-3. **跨台同時發 `INIT:TRAN` 的實際時間差**沒有量過（同台已量：< 0.15 ms）。2 ms 是保守估計，不是量測值。建議用示波器抓兩台的起點差。
-4. **建議的分配只看起點先後**，不處理維持與下降階段的順序。
-5. 建議結果不知道哪條電源軌實際接哪個通道，只是起點。
-6. GUI 版面只在 macOS 用截圖看過；沒有「停止」鈕（時序只有約 100 ms）。
-7. ~~`_wait` 把狀態查詢失敗當成完成~~：第 2 輪已修。`_running()` 直接走 `arb.is_running`，查詢失敗會丟例外 → 中止並確認關輸出。
-8. Windows 11 執行檔只在 CI 建過，沒在實機開過（§4.12）。
-9. `fire_together` 的 barrier 逾時 5 s、各台 `*TRG` 仍沒有整體逾時，實際上限靠 VISA `--timeout`。
+1. 多通道、帶載、兩台、ms 級精度（需示波器）。
+2. **跨台同時 `INIT:TRAN` 的實際時間差**沒量過（同台 < 0.15 ms），2 ms 是保守估計。
+3. 建議分配只看起點先後，不處理維持與下降階段；不知道哪條電源軌接哪個通道。
+4. GUI 版面只在 macOS 看過；Windows 11 執行檔只在 CI 與本機打包驗過。
+5. `fire_together` barrier 逾時 5 s、各台 `*TRG` 無整體逾時，上限靠 VISA `--timeout`。
 
-## 6. 沒做、也沒被要求的事
+## 6. 沒做、也沒被要求
 
-- 打平當錯誤並加 `--allow-skew`（使用者選了建議方案，沒選這個）。
-- 量測主機端兩台 `*TRG` 的實際送出間隔。
-- 硬體同步接線（M11.3）。
-- 量測／記錄（第一版範圍明確排除）。
-- YAML 設定檔（CSV 已夠用）。
+打平當錯誤並加 `--allow-skew`；量測主機端兩台 `*TRG` 實際間隔；硬體同步接線（M11.3）；量測／記錄；YAML 設定檔。
 
-## 7. 建議的下一步（依序）
+## 7. 建議的下一步
 
-1. ~~單台、單通道跑一次~~：已完成（§4.8、§4.10）。
-2. 兩台各一通道，量跨台起點差，把實測值填回 `TRIGGER_SKEW_SECONDS`（`src/n6705c/core/group.py`，本專案的副本）。
-3. 若實測差遠大於 2 ms 或有需求精準同步，再做硬體接線（M11.3）。
-4. ~~Codex 審查第 2 輪~~：已完成（§8）。
-5. ARB List 模式：有設備時跑 H 實機量測，再開工 I 後半，見 §9.2.3。
+1. 兩台各一通道量跨台起點差，填回 `TRIGGER_SKEW_SECONDS`（`src/n6705c/core/group.py`）；差遠大於 2 ms 或需精準同步再做硬體接線。
+2. List 模式：有設備時跑 H 實機量測，再開工 I 後半（§9.2.3）。
+3. E36441A：有設備時跑 `scripts/hw_e36441a_check.py`，依結果定案再接 CLI／GUI（§10.4）。
 
-## 8. Codex 審查進度（`/codex-review:code`）
+## 8. Codex 審查
 
-- **第 1 輪（整個專案）**：3 CRITICAL、6 WARNING。已修 8 項（關閉視窗中途、0 A 電流限制、關輸出未確認、nan/inf、barrier、長序列刻度、設定檔壞掉、`--suggest-out`），commit `e93c66a`，並各補測試。**未修**：§5 第 7 點。
-- **第 2 輪**（複查 `e93c66a`）：2 CRITICAL、2 WARNING，全部已修並補測試，commit `8789f7d`：
-  - `_outputs_off` 讀回不完整（`{}`、少通道）會被當成已關閉 → 現在要求回傳的通道 = `populated_channels`，否則 `OutputsNotConfirmedOff`。
-  - 驗證失敗（空表、台數不足、模組範圍）卻印「輸出已強制關閉」→ 新增 `PlanRejected(ValueError)`，CLI／GUI 改說「開輸出前被拒絕」。
-  - §5 第 7 點 → 查詢失敗現在讓整個執行失敗（見上）。
-  - GUI 設定檔加型別檢查（`resources` 為字串清單、`demo` 為 bool）。
-  - 另採納 SUGGESTION：逾時訊息的通道改為全域編號。
-  - 結果：`VERDICT: APPROVED`。
-- 第 2 輪沙箱為唯讀，Codex 只跑得了 26 個測試；完整 42 個（當時的數量）我這邊全過。
+- 第 1 輪（整個專案）：3 CRITICAL、6 WARNING，已修 8 項（`e93c66a`）。
+- 第 2 輪（`8789f7d`）：`_outputs_off` 要求回傳通道＝`populated_channels`、新增 `PlanRejected`、`_wait` 查詢失敗讓整個執行失敗、GUI 設定檔型別檢查、逾時訊息改全域通道號。`VERDICT: APPROVED`。
 
-## 9. ARB List 模式（2026-10-13 起，開發中）
+## 9. ARB List 模式（2026-10-13 起）
 
-每個通道一串波形段落，在電腦端合成一條 CDW（65,535 點）下載。CSV 上電時序表**不動**，GUI 另開分頁。
-
-### 9.1 文件（先讀）
-
-| 文件 | 內容 |
-|---|---|
-| `docs/arb_list_mode.md` | 設計決定與理由（為什麼 CDW、dwell 規則、全部通道一起重複、14585A 參考） |
-| `docs/arb_list_mode_plan.md` | **實作規劃**：檔案邊界、凍結的合約（§2）、合成規則 R1–R7（§3）、偽代碼（§4）、並行 Track（§5）、`synth` 必測項目（§6） |
-
-### 9.2 進度
+每通道一串波形段落，電腦端合成一條 CDW（65,535 點）下載。CSV 時序表不動，GUI 另開分頁。文件：`docs/arb_list_mode.md`（設計理由）、`docs/arb_list_mode_plan.md`（合約 §2、規則 R1–R7 §3、Track §5、必測 §6）。
 
 | Track | 內容 | 狀態 |
 |---|---|---|
-| P0 | `listplan.py`、`examples/list_demo.json`、`tests/test_listplan.py` | ✅ `3032c1a` |
-| C | `execute.run_functions`（`run_plan` 改成呼叫它，行為不變） | ✅ `3032c1a` |
-| A | `synth.py`：段落 → 點陣列、自動 dwell、補齊、警告／擋下、`to_functions`。第一版不做頻寬警告、Triangle 沿用 Sine 門檻（規劃 §2.2，2026-10-14 定案） | ✅ `c051338` |
-| D | `list_gui.py` + `gui.py` 分頁、「■ 全部關閉」移到連線列 | ✅ `c051338` |
-| H | `scripts/hw_list_check.py` 實機量測（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | 🔄 前半（寫腳本＋demo 測試）✅ `82bb688`；實機執行等有設備（§9.2.3） |
-| I | 整合、回填實測常數、端到端測試、版本 0.2.0 | 🔄 前半（`DEMO_SLOTS`→N6752A、GUI 端到端 demo 測試）✅ `82bb688`；後半等 H 實測（§9.2.3） |
+| P0 / C | `listplan.py`、`execute.run_functions` | ✅ `3032c1a` |
+| A / D | `synth.py`（第一版不做頻寬警告，Triangle 沿用 Sine 門檻）／`list_gui.py`＋分頁 | ✅ `c051338` |
+| H | `scripts/hw_list_check.py`（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | 前半 ✅ `82bb688`；實機等設備 |
+| I | 整合、回填實測常數、版本 0.2.0 | 前半 ✅ `82bb688`；後半等 H |
+| 其他 | List 模式英文化＋預覽標註 `ed7b357`；sv-ttk 主題＋DPI＋中英切換 `ce60f70`；小通道隱藏標註 `47d80ca` | ✅ |
 
-### 9.2.1 A、D 驗收紀錄（2026-10-14，已 commit `c051338`）
-
-當時的檔案：
-
-| 檔案 | Track | 狀態 |
-|---|---|---|
-| `src/n6705c_seq/synth.py`、`tests/test_synth.py`（新，50 tests） | A | ✅ 驗收通過 |
-| `src/n6705c_seq/list_gui.py`（新）、`src/n6705c_seq/gui.py`（改）、`tests/test_gui.py`（只加測試） | D | ✅ 驗收通過 |
-| `docs/arb_list_mode_plan.md` | 驗收時補規劃 | R1 補「每段最後一點固定取終值」；§4.1 偽代碼同步；§4.2 改成「啟用且有段落的通道」 |
-
-`python3 -m pytest -q` → **218 passed**（本機有顯示，GUI 測試沒有 skip；Codex 沙箱沒有 Tk 顯示，GUI 測試會 skip 或 abort）。
-
-**Track A 驗收紀錄**
-- 第一輪：規劃 §6 各項都有測試、端到端（`list_demo.json` → demo `run_functions` → 輸出關閉）通過；邊界探測：4 通道 48,828 點合成 0.07 s、dwell 0／負／inf／nan 都進 `errors`、啟用但無段落的通道被略過。
-- 問題：段落取整後點數不足（ramp_time＝10.4 dwell）最後一點只到 0.9615 V，違反 R1 → 補規劃 R1 後交回 Codex，已修並加測試。
-- 保留未決（不擋 commit）：`synth._validate` 對記憶體中的 `ListPlan` 再檢查一次欄位，與 `listplan.load_json` 的檢查部分重複（理由：GUI 直接組計畫不經過 `load_json`）。可在 Track I 視情況合併。
-
-**Track D 驗收紀錄**
-- 第一輪：程式碼照 CSV 分頁的模式（背景執行緒＋queue、`PlanRejected`／`OutputsNotConfirmedOff` 訊息、共用 `app.busy`）；CSV 分頁截圖與原本相同；4 通道 58,643 點重新合成＋重畫 0.33 s。
-- 實際開視窗（`gui.main` 預設 1180x900，macOS 實際可用約 860 高）截圖找到 3 個問題，交回 Codex 第二輪修，**做到一半暫停**：
-
-| # | 問題 | 狀態 |
-|---|---|---|
-| 1 | **List 分頁最下面「開啟 JSON／儲存 JSON／▶ 執行 List」整列被裁掉看不到**，警告區只剩一半。原因：泳道 canvas 最先 pack 且 expand，空間不夠時 Tk 裁掉最後 pack 的元件。修法：按鈕列（和警告區）用 `side="bottom"` 先 pack，或讓泳道 canvas 成為唯一被壓縮的元件。已改成 grid、泳道 row weight=1；測試 `test_list_tab_controls_fit_in_short_window`（突變驗證：拿掉 weight 會失敗） | ✅ |
-| 2 | 數字欄位用 `.17g` 顯示浮點雜訊（限流 0.1 → 「0.1000000000000」）。改最短表示 | ✅ `_format_number`＋`test_list_numbers_use_shortest_repr`、`test_list_format_number_uses_shortest_repr` |
-| 3 | 時間軸標籤「0.022999 s」、最右一個被切 | ✅ 已改（P < 1 s 用 ms、`.4g`、最右 `anchor="e"`），1180x860 截圖複驗通過 |
-
-**遺留**
-- 小事（不擋 commit）：測試／腳本裡直接 `root.destroy()` 時，stderr 會印 `invalid command name "...draw"`／`"..._poll"`（Tk 還有排程中的 after），不影響結果。
-
-### 9.2.2 H 前半、I 前半（2026-10-14，使用者沒有設備）
-
-- 使用者：「開工 H 前半、I 前半，交給codex做 你驗收」。Codex 兩條同時跑，範圍都沒越界；本機 `pytest` **228 passed**。
-- I 前半 ✅：`execute.DEMO_SLOTS` 改 N6752A（測試行為不變）；`tests/test_gui.py` 加 `test_list_tab_runs_demo_plan_end_to_end`（真合成、demo 執行、輸出關閉）。I 清單第 1、3 項其實 D、A 時已完成。
-- H 前半：`scripts/hw_list_check.py`（`{transfer,seam,align,sinebw,all} --resource X | --demo [--out] [--yes]`）＋`tests/test_hw_list_check.py`。實機開輸出前要輸入 y；例外時輸出會關。模擬器數位化器回傳平線，demo 只驗流程。
-- align 改法（使用者 2026-10-14 同意）：規劃 §4.5 已改寫成「兩次執行、各錄一小段」。第 1 次 `OFFS:POIN 0`、第 2 次 `OFFS:POIN 124567`，取樣 20.48 µs、390 點；驗收用各通道相對 CH1 的漂移（兩次觸發延遲差會抵消）。腳本用 context manager 暫時替換 `execute._arm_capture`，不改 `execute.py`。探測：兩次觸發差 3 ms → rel 0、PASS；CH4 多漂 1.5 dwell → FAIL。✅ 驗收通過，`pytest` **243 passed**。
-- 已 commit `82bb688`（2026-10-14），同時把 `dist_python/`（打包產物）、`hw_list_results/` 加進 `.gitignore`。
-
-### 9.2.2.1 D-EN：List 模式英文化＋預覽標註（2026-10-14）
-
-- 使用者：「預覽波形部分可以將時間電壓參數帶入預覽區域」「開工 交給codex做 你驗收，list mode 都用英文」。
-- 英文化：`list_gui.py` 全部介面文字、分頁標題 `List Mode`（`gui.py` 只改這個）、`synth.py`／`listplan.py` 的錯誤與警告訊息（例：`CH2 segment 3: frequency must be > 0`）。波形名 Step/Ramp/Trapezoid/Sine/Triangle/Staircase/Exponential，參數名見 `list_gui.TITLES`。**`execute.py` 的訊息與 CSV 分頁維持中文**（兩個分頁共用）。JSON 格式不變。
-- 預覽標註（只有右下大預覽 `self.preview`，縮圖與泳道不標）：左邊電壓標籤＋虛線（Start/End 或 Offset/Offset+Amp；Start＝End 合併成一個）；Sine/Triangle 用 Amplitude 尺寸線＋Period；底下時間分段尺寸線，標籤放不下就換到下一排、不重疊；右上角 Frequency/Phase、Steps、Tau、×repeat。物件帶 canvas tag `annotation`。
-- 偏離規格（接受）：標籤擠到三排以上時，預覽 canvas 會自己長高。
-- 驗收：範圍沒越界、三個檔案沒有 CJK、8 種情況 1180×860 截圖正常、`hw_list_check.py all --demo` 照常，`pytest` **255 passed**。
-
-### 9.2.2.2 GUI 美化＋中英切換（2026-10-14，未 commit）
-
-- 使用者：「照建議，並且 D10 做中英切換按鈕，由 codex 寫你檢查」。建議清單：Windows DPI aware、CJK 字型、sv-ttk 主題、主要／危險按鈕分級、語言統一。
-- 外觀：`gui.setup_theme()` 套 `sv_ttk` light；SunValley*／Tk* 具名字型改成 Microsoft JhengHei UI（Windows）／PingFang TC（mac），像素字級轉 pt（Windows ×0.75、mac ×1，因為 mac 上 1 pt＝1 px；第一版一律 ×0.75，使用者反映 mac 字太小）；`gui.FONT_SCALE` 是整體字級旋鈕。波形圖文字也改用這些具名字型（本文用 Body，標註用 Caption）。`main()` 在 Windows 先 `SetProcessDpiAwareness(1)`，視窗 1180×900 依 DPI 放大並夾在螢幕內。▶ 執行按鈕用 `Accent.TButton`，■ 全部關閉用 `Danger.TButton`（紅字粗體）。新相依 `sv-ttk>=2.6`；spec 用 `collect_data_files("sv_ttk")` 收 tcl／圖檔。
-- 語言：GUI 字串全部在 `i18n.py`（`STRINGS = {key: (中文, English)}`、`tr()`），連線列右側按鈕切換，就地改字不重建表單；語言存在 `~/.n6705c_seq_gui.json` 的 `"lang"`（預設 zh）。波形名維持英文。**`plan.py`／`synth.py`／`listplan.py`／`execute.py` 產生的訊息不翻譯**（目前是英文）。上面 D-EN 的「List 分頁全英文」改由此切換取代；`list_gui.py` 仍不得有 CJK（測試照舊）。
-- 英文標題公司名 `PINSYUN Technology`（使用者提供）。驗收：review 後修正 identity `TITLES`、單位後綴重複邏輯、警告框等寬字型；測試 fixture 加 `gc.collect()`（否則死掉的 Tk 變數會在 worker thread 被回收，出現 "main thread is not in main loop" 警告）。mac 截圖中英兩語、兩分頁正常，`pytest` **262 passed**。已知取捨：字放大後表格變高；表格與連線輸入框改用 `Table.TEntry`（上下 padding 0）、勾選框 `Table.TCheckbutton`，在 1180×918 的 Mac 螢幕上波形每通道從約 34 px 回到約 39 px，8 通道全開時「維持」標註仍會壓線，所以通道高度 < 30 px＋Caption 行高時，`draw()` 不畫延遲／維持文字（箭頭與高低點標註保留，數值看表格）。Windows 實機外觀（DPI、JhengHei、打包後 sv-ttk 資源）尚未驗。
+已知小事：`synth._validate` 與 `listplan.load_json` 重複檢查（因 GUI 直接組計畫不經 `load_json`，可在 I 後半合併）；測試直接 `root.destroy()` 時 stderr 會印 `invalid command name`，不影響結果。`execute.py` 訊息與 CSV 分頁維持中文，`list_gui.py` 不得有 CJK（測試守著）。`DEMO_SLOTS` 為 N6752A（實機是 4× N6752A；舊專案那台才是 N6762A）。
 
 ### 9.2.3 接手要做
-
-1. **有設備時（Windows 實機旁）**：`python scripts/hw_list_check.py all --resource <VISA位址>`。開輸出前會要求輸入 y；結果印出並存 CSV 到 `hw_list_results/`。也可以單跑 `transfer`／`seam`／`align`／`sinebw`。
-2. 對照規劃 §4.5 的驗收門檻：transfer ≤ 10 s（否則 dwell 規則改「符合 N 取最大 dwell」並考慮請 core 改二進位傳輸）；align 的 spread 與 d_k − d_CH1 都 ≤ 1 dwell；seam 看輪間有沒有空隙或突波；sinebw 得到 -3 dB 頻率。
-3. **I 後半**（使用者另外說開工才做）：回填 `SINE_BW_HZ`、`compile_plan(plan, model=None)`、Sine／Triangle 門檻、dwell 規則定案、版本 0.2.0、README、Windows 打包。
-4. 可在 I 後半順便處理：`synth._validate` 與 `listplan.load_json` 重複檢查（§9.2.1）。
+1. **有設備時**：`python scripts/hw_list_check.py all --resource <VISA位址>`（開輸出前輸入 y；存 CSV 到 `hw_list_results/`；可單跑 `transfer`／`seam`／`align`／`sinebw`）。
+2. 驗收門檻（規劃 §4.5）：transfer ≤ 10 s（否則 dwell 規則改「符合 N 取最大 dwell」並考慮請 core 改二進位傳輸）；align 的 spread 與 d_k − d_CH1 ≤ 1 dwell；seam 無空隙／突波；sinebw 求 −3 dB 頻率。
+3. **I 後半**（使用者另說開工才做）：回填 `SINE_BW_HZ`、`compile_plan(plan, model=None)`、Sine／Triangle 門檻、dwell 規則定案、版本 0.2.0、README、Windows 打包。
 
 ### 9.3 工作方式（使用者要求）
+- **使用者對每個 Track／功能說「開工」才動程式碼**；沒點名的不碰。
+- 實作交 **Codex**，審查交 **Opus**，Claude 驗收並回報；**使用者說 commit 才 commit**。
+- Codex 做法：`codex exec --skip-git-repo-check -s workspace-write "<任務>" < /dev/null > out.txt 2>&1`（**一定要 `< /dev/null`**，否則卡在 "Reading additional input from stdin"）。任務寫明只准改哪些檔、不准 commit、最後跑 `python3 -m pytest -q`。系統 python3 若缺 pytest，Codex 會改用 Anaconda Python。
+- 驗收清單：`git status` 確認範圍 → 對照合約 → 讀碼 → 探測邊界 → 跑完整測試。規劃有漏的先補規劃再交回修。
 
-- **使用者對每個 Track 說「開工」才動程式碼**；沒點名的 Track 不准碰。
-- 實作交給 **Codex**，Claude 負責驗收。做法：
-  ```bash
-  cat common.txt track.txt | codex exec -s workspace-write -C . -o result.md - > log.txt 2>&1
-  ```
-  `common.txt` 的內容＝規劃 §0 的規則，再加上：同一個工作目錄裡有別的 agent 在改其他檔案、不准 commit、最後跑 `python3 -m pytest -q` 並回報改了哪些檔案和偏離規劃的地方。
-  `track.txt` 寫明：只准改哪些檔案、要對照規劃哪幾節、驗收條件。
-  改的檔案沒有重疊的 Track 可以同時跑。
-- 驗收清單：`git status` 確認沒改到範圍外的檔案 → 對照規劃 §2 合約 → 讀程式碼 → 探測邊界輸入 → 跑完整測試 → 回報使用者，**使用者說 commit 才 commit**。
-- 驗收時發現的問題：規劃有漏的，先補規劃，再交回 Codex 修（P0 的 `current_limit` 必須 > 0 就是這樣補的）。
+## 10. E36441A 支援（2026-10-20 起，使用者目前沒有設備）
 
-### 9.4 實機模組型號（2026-10-14 已確認）
+### 10.1 已 commit
+- `1cfbe76` `scripts/hw_e36441a_check.py`＋`tests/test_hw_e36441a_check.py`：`--resource X [--channel 1] [--only 1|2|3] [--v-low 2 --v-high 5 --rise 0.2 --hold 0.3 --current 0.5] [--csv out.csv] [--yes]`。對**整台**送 `*RST`；IDN 不含 E36441A 拒絕；結束一律 ABOR／OUTP OFF／SLEW INF／還原。取樣間隔受 VISA 限制，太粗回 INCONCLUSIVE，可加大 `--rise`／`--hold`。
+- `dca33f1` `e36441a.py`＋`tests/test_e36441a.py`：`prepare_commands`（SLEW 先 INF 再 VOLT 到 low）→ 呼叫端等穩定 → `configure_commands`（TRIG:SOUR BUS、TRIG:DEL、SLEW、LIST、`VOLT:MODE LIST` 最後）→ `arm_commands`（INIT）→ 每台一次 `*TRG`；`restore_commands`；`check(row, hold_dc)` 回 (errors, warnings)。時間用 `.3f`；`hold_dc` 時 LIST 只有 high 一點、dwell＝rise、不用的方向 SLEW 送 INF、`check` 略過 fall。
 
-- 實機是 **4× N6752A**（使用者確認，同 §4.8）。`docs/arb_list_mode.md` 的 Sine 頻寬推論已改正；原本誤用的 N6762A 是舊專案那台（`core/delay.py` 註解：fw E.02.09，四個 N6762A）。
-- `execute.DEMO_SLOTS` 已改成 N6752A（I 前半，`82bb688`）。模擬器對兩者的額定值一樣（`fake._module_ratings` 都回預設 50 V／1 A），測試結果不變。
+### 10.2 與 N6705C 的差異（Programming Guide，印刷頁碼）
+- 無 ARB，只有 FIX／STEP／LIST（p.111）；LIST ≤ 100 點、dwell 10 ms–3600 s、解析 1 ms（p.66–67）。
+- 沒有上升時間參數，只有 `VOLT:SLEW:RIS/FALL`（V/s，0.002–INF，p.113–114）；以 `|ΔV|/rise` 換算，`high<low` 時 RIS／FALL 對調，0 或 ΔV=0 送 INF。
+- SLEW 也作用於輸出開／關，是通道持久狀態。`OUTP:DEL:RISE` 會讓 delay 期間輸出變 OFF，**不用**；delay 用 `TRIG:DEL`（p.106，解析度手冊未載）。
+- 範圍 0–32 V（SCPI 32.96）、0–10 A（10.3）、每通道 160 W、全機 400 W。
+- 資料表（非 PDF，**未經本地核實**）：上升 settling 約 80 ms；下降滿載 60 ms、**空載 500 ms**；1% settling typical。`check()` 對 rise < 80 ms、fall < 500 ms 給警告。
+- 沒有「list 執行中」狀態位元（只有 WTG，p.32），完成偵測靠計時＋量測。
+
+### 10.3 未驗證的假設（實機優先序）
+1. `*TRG` 前 INIT 不會動（N6705C 就不等，§4.10）。
+2. **LIST 的電壓切換會套用 SLEW**。不成立 → `configure_commands` 改多點階梯（100 點、每步 ≥ 10 ms，100 ms 的 rise 約 11 點）。
+3. dwell 從切換點起算（`rise+hold`）；若 settle 後才起算，改 dwell＝hold。
+4. `TRIG:DEL` 精度；`VOLT:MODE LIST`＋`CURR:MODE FIX` 是否觸發錯誤 801；`restore` 先 OUTP OFF 再還原 SLEW 的順序（OUTP OFF 若受 fall 斜率限制要調）。
+5. 同機／跨機 skew（手冊無保證值）。
+
+### 10.4 接手要做
+1. 有設備：`python scripts/hw_e36441a_check.py --resource <VISA位址>`，貼回輸出（含 `--csv`）。
+2. 依結果定案 `configure_commands`，再接 CLI／GUI：`*IDN?` 分派機型、**混用機型拒絕**、GUI 隱藏擷取（無數位化器）、`outputs_off` 回讀確認；執行前查 `INIT:CONT?`、`OUTP:COUP:CHAN?`、`OUTP:TRAC?`、`OUTP:PAIR?`，不合規拒絕。
+3. 不做 driver 抽象基底、不移植 listplan（CDW）。`order_warnings`／`suggest_assignment` 因每台 4 通道可沿用，但 skew 值要重測。
+4. 負值不在 `check()` 擋，依賴 `plan._number`；GUI 若繞過 CSV 建 `SeqRow` 需補檢查。
