@@ -100,7 +100,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 
 1. 兩台各一通道量跨台起點差，填回 `TRIGGER_SKEW_SECONDS`（`src/n6705c/core/group.py`）；差遠大於 2 ms 或需精準同步再做硬體接線。
 2. List 模式：有設備時跑 H 實機量測，再開工 I 後半（§9.2.3）。
-3. E36441A：有設備時跑 `scripts/hw_e36441a_check.py`，依結果定案再接 CLI／GUI（§10.4）。
+3. E36441A：有設備時跑 `scripts/hw_e36441a_check.py`，依結果定案 configure_commands（§10.4；CLI／GUI 已接）。
 
 ## 8. Codex 審查
 
@@ -154,7 +154,9 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 5. 同機／跨機 skew（手冊無保證值）。
 
 ### 10.4 接手要做
+已完成（`5370b76`、`cbf7dbe`、`8732707`，Codex 寫、Opus 審兩輪）：`*IDN?` 分派機型；混用機型與錯誤機型在送任何設定指令前拒絕（CLI／GUI／`run_rows`／`run_plan`；`run_plan` 讀 `inst.identity.model`，拒絕任何 E36441A）；GUI 隱藏擷取；關輸出後逐通道回讀 `OUTP?`（錯誤訊息含 frame 編號，失敗丟 `OutputsNotConfirmedOff`）；`run_rows` 設定前查 `INIT:CONT?`＝0、`OUTP:COUP:CHAN?`＝NONE、`OUTP:TRAC?`／`OUTP:PAIR?`＝OFF，不合規拒絕（回覆會去引號、轉大寫再比）；`check()` 拒絕負的 delay／rise／hold／fall（電壓與電流上限原本就擋），GUI 繞過 CSV 也涵蓋。
+
+待辦：
 1. 有設備：`python scripts/hw_e36441a_check.py --resource <VISA位址>`，貼回輸出（含 `--csv`）。
-2. 依結果定案 `configure_commands`，再接 CLI／GUI：`*IDN?` 分派機型、**混用機型拒絕**、GUI 隱藏擷取（無數位化器）、`outputs_off` 回讀確認；執行前查 `INIT:CONT?`、`OUTP:COUP:CHAN?`、`OUTP:TRAC?`、`OUTP:PAIR?`，不合規拒絕。
+2. 依結果定案 `configure_commands`（§10.3）。同時實機確認執行前檢查的回覆格式：`OUTP:PAIR?` 目前只認 `OFF`（回 `0` 會被拒）、`INIT:CONT? (@n)` 是否接受通道清單（不接受會逾時，但發生在寫入前）。
 3. 不做 driver 抽象基底、不移植 listplan（CDW）。`order_warnings`／`suggest_assignment` 因每台 4 通道可沿用，但 skew 值要重測。
-4. 負值不在 `check()` 擋，依賴 `plan._number`；GUI 若繞過 CSV 建 `SeqRow` 需補檢查。
