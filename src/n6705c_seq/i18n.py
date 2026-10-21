@@ -3,6 +3,7 @@
 STRINGS = {
     "other_language": ("English", "中文"),
     "title": ("N6705C 上電時序工具-品勛科技股份有限公司 免費提供 ", "N6705C Power Sequence Tool — provided free by PINSYUN Technology"),
+    "webview2_missing": ("找不到 Microsoft WebView2 Runtime。請從 https://developer.microsoft.com/microsoft-edge/webview2/ 下載並安裝；離線環境請使用 Standalone Installer。", "Microsoft WebView2 Runtime is missing. Download and install it from https://developer.microsoft.com/microsoft-edge/webview2/ ; use the Standalone Installer for offline environments."),
     "sequence_tab": ("上電時序", "Power Sequence"),
     "list_tab": ("List 模式", "List Mode"),
     "connection": ("機台連線（直接貼上 VISA 位址，例：TCPIP0::192.168.1.10::inst0::INSTR 或 USB0::...）", "Connection (VISA address: TCPIP0::192.168.1.10::inst0::INSTR or USB0::...)"),

@@ -14,6 +14,7 @@ dependencies = [
     "libusb-package>=1.0",  # bundled libusb DLL so pyusb works without a system install
     "numpy>=1.26",
     "sv-ttk>=2.6",
+    "pywebview==6.2.1",
 ]
 
 [project.optional-dependencies]
@@ -25,9 +26,13 @@ n6705c-seq = "n6705c_seq.cli:main"
 
 [project.gui-scripts]
 n6705c-seq-gui = "n6705c_seq.gui:main"
+n6705c-seq-web = "n6705c_seq.webgui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+n6705c_seq = ["web/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

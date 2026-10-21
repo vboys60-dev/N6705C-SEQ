@@ -1,0 +1,30 @@
+:root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; color: #202020; background: #fafafa; }
+* { box-sizing: border-box; }
+body { margin: 10px; }
+button, input, select, textarea { font: inherit; }
+.btn { border: 1px solid #ccc; border-radius: 4px; padding: 6px 12px; background: #fff; color: inherit; cursor: pointer; }
+.btn:hover { background: #eee; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn-accent { background: #0078d4; border-color: #0078d4; color: white; }
+.btn-danger { color: #b91c1c; }
+.field { min-width: 0; padding: 5px 7px; border: 1px solid #bbb; border-radius: 3px; background: white; color: inherit; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.chart { display: block; width: 100%; background: white; }
+.muted { color: #666; }
+.warn { color: #b45309; white-space: pre-wrap; }
+.connection { margin: 0 0 8px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+.connection-grid { display: grid; grid-template-columns: auto minmax(150px, 1fr) minmax(100px, .5fr); align-items: center; gap: 6px 12px; }
+.connection-actions { margin-top: 8px; }
+.tabs { border-bottom: 1px solid #ccc; margin-bottom: 8px; }
+.tabs .btn { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.tabs [aria-selected="true"] { border-bottom-color: #0078d4; color: #0078d4; }
+[hidden] { display: none !important; }
+dialog { max-width: min(560px, 90vw); border: 1px solid #bbb; border-radius: 6px; color: inherit; }
+dialog::backdrop { background: #0004; }
+dialog h2 { font-size: 16px; }
+dialog p { white-space: pre-wrap; overflow-wrap: anywhere; }
+dialog form { text-align: right; }
+@media (max-width: 700px) {
+  .connection-grid { grid-template-columns: auto minmax(100px, 1fr); }
+  .connection-grid .muted { grid-column: 2; }
+}

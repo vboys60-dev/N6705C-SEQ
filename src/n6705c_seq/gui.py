@@ -4,13 +4,10 @@ addresses and run.  Tkinter with the Sun Valley theme."""
 from __future__ import annotations
 
 import ctypes
-import json
-import math
 import queue
 import sys
 import threading
 import tkinter as tk
-from pathlib import Path
 from tkinter import colorchooser, filedialog, font, messagebox, ttk
 
 import sv_ttk
@@ -22,59 +19,19 @@ from .e36441a import detect_model, kind_of, off_resources, run_resources
 from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, outputs_off, run_plan
 from .plan import SeqRow, load_csv, order_warnings, write_csv
 from .list_gui import ListTab
-from . import i18n
+from . import form, i18n
 from .i18n import tr
 
-FRAMES = 2
-CONFIG = Path.home() / ".n6705c_seq_gui.json"
+FRAMES = form.FRAMES
+CONFIG = form.CONFIG
 FONT_SCALE = 1.0  # calibration knob: enlarge/shrink every font
-PALETTE = ["#e05252", "#4a7fe8", "#55b685", "#e8833a", "#a855f0", "#52b2d0", "#e0b43c", "#dc5090"]
-
-# name, delay, low, high, rise, hold, fall, current limit  (ms / V / A)
-DEFAULTS = [
-    ("CH1", 0, 0, 12, 3, 60, 3), ("CH2", 5, 0, 5, 2, 55, 2), ("CH3", 10, 0, 3.3, 2, 50, 2),
-    ("CH4", 15, 0, 1.8, 1, 45, 1), ("CH5", 8, 0, 24, 4, 65, 4), ("CH6", 20, 0, 9, 3, 40, 3),
-    ("CH7", 0, 0, 5, 2, 30, 2), ("CH8", 12, 0, 12, 3, 50, 3),
-]  # fmt: skip
-COLUMNS = [
-    ("name", "column_name"), ("delay", "column_delay"), ("low", "column_low"),
-    ("high", "column_high"), ("rise", "column_rise"), ("hold", "column_hold"),
-    ("fall", "column_fall"), ("limit", "column_limit"),
-]  # fmt: skip
-TITLES = dict(COLUMNS)
-NUMERIC = {"delay": "ms", "low": "V", "high": "V", "rise": "ms", "hold": "ms", "fall": "ms"}
-
-
-def waveform(row: SeqRow, t_end: float, hold_dc: bool = False) -> list[tuple[float, float]]:
-    """Corner points (seconds, volts) of one rail, from t=0 to *t_end*."""
-    t1 = row.delay
-    t2 = t1 + row.rise
-    if hold_dc:
-        return [(0, row.low_v), (t1, row.low_v), (t2, row.high_v), (t_end, row.high_v)]
-    t3 = t2 + row.hold
-    t4 = t3 + row.fall
-    return [(0, row.low_v), (t1, row.low_v), (t2, row.high_v), (t3, row.high_v), (t4, row.low_v), (t_end, row.low_v)]
-
-
-def _tick_step(span_ms: float) -> int:
-    """1/2/5 x 10^k ms, at most ~10 ticks, never below 1 ms."""
-    raw = max(span_ms / 10, 1)
-    decade = 10 ** math.floor(math.log10(raw))
-    return int(next(m * decade for m in (1, 2, 5, 10) if m * decade >= raw))
+PALETTE, DEFAULTS, COLUMNS, TITLES, NUMERIC = form.PALETTE, form.DEFAULTS, form.COLUMNS, form.TITLES, form.NUMERIC
+waveform = form.waveform
+_tick_step = form.tick_step
 
 
 def _load_config() -> dict:
-    """Saved addresses; a missing or damaged file just means the defaults."""
-    try:
-        saved = json.loads(CONFIG.read_text())
-        resources, demo = saved["resources"], saved["demo"]
-        if not (isinstance(resources, list) and all(isinstance(r, str) for r in resources)
-                and isinstance(demo, bool)):
-            raise TypeError("bad schema")
-        return {"resources": resources, "demo": demo,
-                "lang": saved.get("lang") if saved.get("lang") in ("zh", "en") else "zh"}
-    except (OSError, ValueError, KeyError, TypeError):
-        return {"resources": [], "demo": True, "lang": "zh"}
+    return form.load_config(CONFIG)
 
 
 class App:
@@ -173,28 +130,23 @@ class App:
         heading = "SunValleyBodyStrongFont" if "SunValleyBodyStrongFont" in font.names(self.root) else "TkHeadingFont"
         for c, (_, title) in enumerate(COLUMNS, start=3):
             self._text(ttk.Label(grid, justify="center", font=heading), title).grid(row=0, column=c, padx=3, pady=3)
-        for i in range(FRAMES * CHANNELS_PER_FRAME):
-            d = DEFAULTS[i] if i < len(DEFAULTS) else (f"CH{i + 1}", 0, 0, 1, 1, 10, 1)
-            form = {
-                "enabled": tk.BooleanVar(value=i < len(DEFAULTS)),
-                "color": PALETTE[i % len(PALETTE)],
-                "name": tk.StringVar(value=d[0]),
-                **{k: tk.StringVar(value=f"{v:g}") for k, v in zip(NUMERIC, d[1:])},
-                "limit": tk.StringVar(),
-            }
-            self.forms.append(form)
+        for i, raw in enumerate(form.default_raw(FRAMES * CHANNELS_PER_FRAME)):
+            f = {key: tk.BooleanVar(value=value) if key == "enabled" else tk.StringVar(value=value)
+                 for key, value in raw.items()}
+            f["color"] = PALETTE[i % len(PALETTE)]
+            self.forms.append(f)
             r = i + 1
             pad = (8, 0) if i % CHANNELS_PER_FRAME == 0 and i else (0, 0)  # gap between mainframes
             ttk.Label(grid, text=f"F{i // CHANNELS_PER_FRAME + 1}:CH{i % CHANNELS_PER_FRAME + 1}").grid(
                 row=r, column=0, pady=pad
             )
-            ttk.Checkbutton(grid, variable=form["enabled"], command=self.schedule, style="Table.TCheckbutton").grid(row=r, column=1, pady=pad)
-            swatch = tk.Label(grid, bg=form["color"], width=6, relief="solid", borderwidth=1, cursor="hand2")
+            ttk.Checkbutton(grid, variable=f["enabled"], command=self.schedule, style="Table.TCheckbutton").grid(row=r, column=1, pady=pad)
+            swatch = tk.Label(grid, bg=f["color"], width=6, relief="solid", borderwidth=1, cursor="hand2")
             swatch.grid(row=r, column=2, pady=pad, padx=4)
-            swatch.bind("<Button-1>", lambda _e, f=form, s=swatch: self.pick_color(f, s))
-            form["swatch"] = swatch
+            swatch.bind("<Button-1>", lambda _e, f=f, s=swatch: self.pick_color(f, s))
+            f["swatch"] = swatch
             for c, (key, _) in enumerate(COLUMNS, start=3):
-                var = form[key]
+                var = f[key]
                 var.trace_add("write", lambda *_: self.schedule())
                 ttk.Entry(grid, textvariable=var, width=14 if key == "name" else 9, justify="center", style="Table.TEntry").grid(
                     row=r, column=c, padx=3, pady=pad
@@ -216,45 +168,14 @@ class App:
     # -- table <-> rows -------------------------------------------------------
 
     def read_rows(self) -> list[SeqRow]:
-        rows = []
-        for i, f in enumerate(self.forms, start=1):
-            on = f["enabled"].get()
-            label = f["name"].get() or f"CH{i}"
-            vals = {}
-            for key, unit in NUMERIC.items():
-                try:
-                    v = float(f[key].get())
-                    if v < 0 or not math.isfinite(v):
-                        raise ValueError
-                except ValueError:
-                    if on:
-                        raise ValueError(tr("invalid_nonnegative", label=label, title=tr(TITLES[key]).splitlines()[0])) from None
-                    v = 0.0
-                vals[key] = v / 1000 if unit == "ms" else v
-            limit = f["limit"].get().strip()
-            try:
-                current = float(limit) if limit else None
-                if current is not None and not (math.isfinite(current) and current > 0):
-                    raise ValueError
-            except ValueError:
-                if on:
-                    raise ValueError(tr("invalid_limit", label=label)) from None
-                current = None
-            rows.append(
-                SeqRow(i, on, label, vals["delay"], vals["low"], vals["high"], vals["rise"], vals["hold"], vals["fall"], current)
-            )
-        return rows
+        return form.parse_rows([{key: f[key].get() for key in form.RAW_KEYS} for f in self.forms])
 
     def fill(self, rows: list[SeqRow]) -> None:
-        if len(rows) > len(self.forms):
-            raise ValueError(tr("csv_capacity", rows=len(rows), channels=len(self.forms)))
-        for f, r in zip(self.forms, rows):
-            f["enabled"].set(r.enabled)
-            f["name"].set(r.name)
-            for key, value in (("delay", r.delay * 1000), ("low", r.low_v), ("high", r.high_v),
-                               ("rise", r.rise * 1000), ("hold", r.hold * 1000), ("fall", r.fall * 1000)):  # fmt: skip
-                f[key].set(f"{value:.10g}")
-            f["limit"].set("" if r.current_limit is None else f"{r.current_limit:g}")
+        current = [{key: f[key].get() for key in form.RAW_KEYS} for f in self.forms]
+        raw = form.rows_to_raw(rows, current)
+        for f, r in zip(self.forms, raw[:len(rows)]):
+            for key in form.RAW_KEYS:
+                f[key].set(r[key])
         for f in self.forms[len(rows):]:
             f["enabled"].set(False)
 
@@ -359,7 +280,7 @@ class App:
     # -- connection -----------------------------------------------------------
 
     def _save_config(self) -> None:
-        CONFIG.write_text(json.dumps({"resources": [v.get() for v in self.resources], "demo": self.demo.get(), "lang": i18n.lang}))
+        form.save_config(CONFIG, [v.get() for v in self.resources], self.demo.get(), i18n.lang)
 
     def test_connection(self) -> None:
         if self.busy:

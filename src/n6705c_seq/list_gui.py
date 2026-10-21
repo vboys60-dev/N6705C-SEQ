@@ -11,17 +11,15 @@ from tkinter import filedialog, messagebox, ttk
 
 from n6705c.core.group import CHANNELS_PER_FRAME, InstrumentGroup
 
-from . import e36441a, execute, synth
+from . import e36441a, execute, list_form, synth
 from .i18n import tr
 from .listplan import FIELDS, SHAPES, TIMES, ChannelList, ListPlan, Segment, load_json, write_json
 
-SHAPE_NAMES = ("Step", "Ramp", "Trapezoid", "Sine", "Triangle", "Staircase", "Exponential")
+SHAPE_NAMES = list_form.SHAPE_NAMES
 
 
 def _format_number(value):
-    """Show the shortest float representation without a trailing .0."""
-    text = str(value)
-    return text[:-2] if text.endswith(".0") else text
+    return list_form.format_number(value)
 
 
 class ListTab(ttk.Frame):
@@ -174,32 +172,19 @@ class ListTab(ttk.Frame):
 
     @staticmethod
     def _number(text, title, *, minimum=None, positive=False, integer=False):
-        try:
-            value = float(text)
-            if not math.isfinite(value) or (minimum is not None and value < minimum) or (positive and value <= 0):
-                raise ValueError
-            if integer and not value.is_integer():
-                raise ValueError
-        except ValueError:
-            requirement = tr("positive_integer") if integer and positive else tr("positive_number") if positive else tr("nonnegative_number") if minimum == 0 else tr("finite_number")
-            raise ValueError(tr("number_error", title=title, requirement=requirement)) from None
-        return int(value) if integer else value
+        return list_form.number(text, title, minimum=minimum, positive=positive, integer=integer)
 
     def read_segment(self):
         shape = SHAPES[SHAPE_NAMES.index(self.shape.get())]
-        params = {key: self._number(var.get(), tr(key), minimum=0 if key in TIMES else None,
-                                   positive=key in ("frequency", "tau", "n_steps"), integer=key == "n_steps")
-                  for key, var in self.params.items()}
-        repeat = self._number(self.segment_repeat.get(), tr("segment_repeat"), positive=True, integer=True)
-        return Segment(shape, params, repeat)
+        return list_form.read_segment(shape, {key: var.get() for key, var in self.params.items()}, self.segment_repeat.get())
 
     def _read_settings(self):
-        delay = self._number(self.delay.get(), tr("channel_delay"), minimum=0)
-        limit = self._number(self.limit.get(), tr("current_limit"), positive=True) if self.limit.get().strip() else None
-        repeat = self._number(self.repeat.get(), tr("sequence_repeat"), positive=True, integer=True)
-        if repeat > 256:
-            raise ValueError(tr("repeat_range"))
-        dwell = self._number(self.dwell.get(), tr("dwell"), positive=True) if self.dwell_mode.get() == "manual" else None
+        settings = list_form.parse_settings({
+            "channel": self.channel.channel, "enabled": self.enabled.get(), "label": self.label.get(),
+            "delay": self.delay.get(), "limit": self.limit.get(), "repeat": self.repeat.get(),
+            "hold_last": self.hold_last.get(), "dwell_mode": self.dwell_mode.get(), "dwell": self.dwell.get(),
+        })
+        delay, limit, repeat, dwell = settings["delay"], settings["limit"], settings["repeat"], settings["dwell"]
         ch = self.channel
         ch.enabled, ch.label, ch.delay, ch.current_limit = self.enabled.get(), self.label.get(), delay, limit
         if self.channel_index is None and ch != ChannelList(1, enabled=False):

@@ -89,7 +89,7 @@ def apply_settings(plan: ListPlan, settings: dict) -> ListPlan                  
 def plan_to_dict(plan: ListPlan) -> dict              # 與 write_json 同結構（不含 version）
 def plan_from_dict(raw: dict) -> ListPlan             # 驗證規則＝listplan.load_json（用暫存檔或抽共用都可，但不准改 listplan.py）
 def draft_view(shape: str, params: dict[str, str], repeat: str) -> dict                 # §2.4
-def compiled_view(plan: ListPlan, channel: int, segment_index: int | None, measured: dict) -> dict  # §2.5
+def compiled_view(plan: ListPlan, settings: dict, segment_index: int | None, measured: dict) -> dict  # §2.5；內部 parse_settings＋apply_settings，通道取 settings["channel"]
 ```
 
 - `settings` raw：`{"channel": int, "enabled": bool, "label": str, "delay": str, "limit": str, "repeat": str, "hold_last": bool, "dwell_mode": "auto"|"manual", "dwell": str}`。型別不符丟 `TypeError`。
@@ -109,7 +109,7 @@ def compiled_view(plan: ListPlan, channel: int, segment_index: int | None, measu
             "delay_text": str, "hold_text": str|null, "levels_text": str,
             "measured": [[ms, V]] | null}]}      # 抽點後 ≤ 2000 點、只留 ≤ t_end
 ```
-停用通道不出現在 `lanes`。驗證失敗時 `lanes` 為空、`message` 是錯誤文字。顏色、細通道隱藏標註是 JS 的事。
+停用通道不出現在 `lanes`。`seq_view` 收的是已驗證的 `SeqRow`，**不再驗證**；`parse_rows` 丟 `ValueError` 時由呼叫端（2a）回 `{"message": str(exc), "lanes": [], "ticks": [], "t_end": 1.0, …}`。顏色、細通道隱藏標註是 JS 的事。
 
 ### 2.4 `draft_view` 回傳（表單即時預覽，未 commit 的段落）
 
@@ -148,7 +148,7 @@ def compiled_view(plan: ListPlan, channel: int, segment_index: int | None, measu
 // spans: [{start, end, width}]；回傳 [{x, row}]，x 是標籤中心
 function placeTimeLabels(spans, left, width) { ... }
 ```
-規則＝`list_gui._draw_curve` 第 429–447 行的換行邏輯，但**有上限**：最多 `spans.length` 列；比可用寬度還寬的標籤靠左 `left + 4` 放、允許超出（不再無限迴圈）。
+規則＝`list_gui._draw_curve` 第 429–447 行的換行邏輯（起始列 0 或 1、放不下就往下一列，只遞增不繞回），但**有上限**：列號最大 `spans.length`；到上限仍放不下時（超寬標籤）以 `max(left + 4, 該列結尾 + 4)` 放、允許向右超出（不再無限迴圈）。tk 會停下的輸入，結果必須與 tk 相同。
 檔尾用 `if (typeof module !== "undefined") module.exports = { placeTimeLabels };`，讓 node 可以 `require`。
 
 ## 3. Bridge 合約
@@ -238,6 +238,7 @@ def list_run(self, plan: dict, settings: dict, resources, demo, capture) -> dict
 ### 3.6 `index.html`／`app.js` 骨架（1a）
 
 - 連線列靜態標記：`#res-0`、`#res-1`、`#conn-0`、`#conn-1`、`#btn-test`、`#chk-demo`、`#btn-off`、`#btn-lang`。`app.js` 只接 `#btn-lang`，其他由 `seq.js` 接。
+- 執行按鈕一律加 `data-action="run"`；`app.js` 只用 `#btn-off, [data-action='run']` 切換 busy 停用。
 - 分頁：`<section id="seq-tab">`、`<section id="list-tab">` 是空的，由 `seq.js`／`list.js` 自己建 DOM。載入順序：`app.js`、`layout.js`、`seq.js`、`list.js`。
 - 有固定文字的元素用 `data-i18n="key"`，切語言時 `app.js` 更新它們。**切語言不重建 DOM**（輸入欄的內容要保留）。
 - 全域物件：

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>N6705C-SEQ</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="seq.css">
+  <link rel="stylesheet" href="list.css">
+  <script defer src="app.js"></script>
+  <script defer src="layout.js"></script>
+  <script defer src="seq.js"></script>
+  <script defer src="list.js"></script>
+</head>
+<body>
+  <fieldset class="connection">
+    <legend data-i18n="connection"></legend>
+    <div class="connection-grid">
+      <label for="res-0" data-i18n="frame" data-number="1" data-first="1" data-last="4"></label>
+      <input id="res-0" class="field" type="text" spellcheck="false">
+      <span id="conn-0" class="muted"></span>
+      <label for="res-1" data-i18n="frame" data-number="2" data-first="5" data-last="8"></label>
+      <input id="res-1" class="field" type="text" spellcheck="false">
+      <span id="conn-1" class="muted"></span>
+    </div>
+    <div class="row connection-actions">
+      <button id="btn-test" class="btn" data-i18n="test_connection"></button>
+      <label><input id="chk-demo" type="checkbox"><span data-i18n="demo"></span></label>
+      <button id="btn-off" class="btn btn-danger" data-i18n="all_off_button"></button>
+      <button id="btn-lang" class="btn" data-i18n="other_language"></button>
+    </div>
+  </fieldset>
+  <nav class="row tabs" role="tablist">
+    <button id="tab-seq" class="btn" role="tab" aria-controls="seq-tab" aria-selected="true" data-i18n="sequence_tab"></button>
+    <button id="tab-list" class="btn" role="tab" aria-controls="list-tab" aria-selected="false" data-i18n="list_tab"></button>
+  </nav>
+  <section id="seq-tab" role="tabpanel" aria-labelledby="tab-seq"></section>
+  <section id="list-tab" role="tabpanel" aria-labelledby="tab-list" hidden></section>
+  <dialog id="result-dialog">
+    <h2 id="result-title"></h2>
+    <p id="result-text"></p>
+    <form method="dialog"><button class="btn" data-i18n="confirm"></button></form>
+  </dialog>
+</body>
+</html>
