@@ -1,1 +1,21 @@
-/* Tab styles follow in wave 2. */
+#list-tab { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 6px; min-width: 0; }
+#list-tab .list-field { display: inline-flex; align-items: center; gap: 5px; }
+#list-tab .list-field input[type="text"] { width: 100px; order: 1; }
+#list-tab .list-field input[type="checkbox"] { margin: 0; }
+#list-tab .list-lanes { min-height: 150px; flex: 1; cursor: pointer; }
+#list-tab .list-strip-bar { flex-wrap: nowrap; }
+#list-tab .list-strip { display: flex; flex: 1; min-width: 0; overflow-x: auto; background: white; gap: 3px; padding: 2px; }
+#list-tab .list-strip .btn { flex: 0 0 106px; width: 106px; padding: 1px; border: 2px solid #cbd5e1; border-radius: 0; }
+#list-tab .list-strip .selected { border-color: #dc2626; }
+#list-tab .list-strip span { display: block; font-size: 11px; white-space: nowrap; }
+#list-tab .list-statistics { white-space: pre-wrap; min-height: 32px; }
+#list-tab .list-editor { display: flex; align-items: flex-start; gap: 12px; }
+#list-tab .list-parameters { flex: 0 0 auto; }
+#list-tab .list-parameter { display: grid; grid-template-columns: auto auto 110px; align-items: center; gap: 4px; margin: 2px 0; }
+#list-tab .list-parameter input { grid-column: 3; }
+#list-tab .list-draft { flex: 1; min-width: 200px; }
+#list-tab .list-message { min-height: 32px; max-height: 72px; overflow-y: auto; }
+@media (max-width: 800px) {
+  #list-tab .list-editor { flex-wrap: wrap; }
+  #list-tab .list-draft { flex-basis: 100%; }
+}

@@ -1,1 +1,15 @@
-/* Tab styles follow in wave 2. */
+.seq-table-wrap { overflow-x: auto; }
+.seq-table { width: 100%; border-collapse: collapse; text-align: center; }
+.seq-table th { padding: 3px 4px; white-space: pre-line; font-weight: 600; }
+.seq-table td { padding: 2px 3px; }
+.seq-table .field { width: 100%; min-width: 64px; text-align: center; padding: 3px 5px; }
+.seq-table td:nth-child(4) { width: 15%; }
+.seq-table td:nth-child(4) .field { min-width: 100px; }
+.seq-table tbody tr:nth-child(5) td { padding-top: 8px; }
+.seq-color { width: 42px; height: 22px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.seq-actions { margin: 6px 0; }
+.seq-actions label { display: flex; align-items: center; gap: 4px; }
+.seq-run { margin-left: auto; }
+.seq-message { margin: 3px 0; }
+.seq-message:empty { margin: 0; }
+.seq-chart { height: max(200px, calc(100vh - 420px)); min-height: 200px; }

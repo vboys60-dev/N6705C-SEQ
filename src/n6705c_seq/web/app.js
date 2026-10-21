@@ -3,6 +3,7 @@
 (() => {
   const listeners = new Map();
   const tabs = [];
+  const results = [];
   let strings = {};
   let ready = false;
   const emit = (type, ...args) => {
@@ -22,6 +23,7 @@
     },
     showResult(kind, title, text) {
       const dialog = document.getElementById("result-dialog");
+      if (dialog.open) { results.push([kind, title, text]); return; }
       dialog.dataset.kind = kind;
       document.getElementById("result-title").textContent = title;
       document.getElementById("result-text").textContent = text;
@@ -39,7 +41,12 @@
   function showError(error) {
     App.showResult("error", App.t("run_result"), String(error?.message ?? error));
   }
-  window.addEventListener("error", event => { if (event.message) showError(event.error ?? event.message); });
+  window.addEventListener("error", event => {
+    if (event.message && !event.message.startsWith("ResizeObserver loop")) showError(event.error ?? event.message);
+  });
+  document.getElementById("result-dialog").addEventListener("close", () => {
+    if (results.length) App.showResult(...results.shift());
+  });
   window.addEventListener("unhandledrejection", event => {
     event.preventDefault();
     showError(event.reason);

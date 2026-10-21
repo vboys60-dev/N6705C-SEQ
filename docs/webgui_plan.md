@@ -4,7 +4,7 @@
 > ⛔ 使用者對每個任務說「開工」才動程式碼。開工後每個任務只准改 §1「擁有者」欄是自己的檔案。
 > 本文件 §2–§4 是任務之間的介面，**凍結**；要改先回報，由 Claude 統一修改。
 
-更新：2026-10-21　狀態：W0 合約（本文件）
+更新：2026-10-22　狀態：第 2 波完成（合約隨實作修正）
 
 使用者 2026-10-21 定案：功能 1:1；不打包 WebView2（偵測不到就報錯退出）；Codex 實作、Opus 審查、Claude 驗收；使用者說 commit 才 commit；允許 Codex 並行。
 
@@ -158,7 +158,7 @@ function placeTimeLabels(spans, left, width) { ... }
 - 所有 JS 檔都是**一般 `<script>`，不用 ES module**（Windows 的 `.js` MIME 可能被登錄檔設成 `text/plain`，module script 會被擋）。
 - `webview.start(..., http_server=True)`；頁面從 `Path(__file__).parent / "web" / "index.html"` 載入。凍結版的 datas 目的地是 `n6705c_seq/web`。
 - JS 等 `pywebviewready` 事件後才呼叫 `window.pywebview.api`。
-- Bridge 方法**不因使用者錯誤丟例外**：回 `{"error": str}`；取消回 `{"cancelled": true}`。只有 payload 型別錯（程式錯誤）才丟 `TypeError`，JS 在 `app.js` 的統一處理器顯示。
+- Bridge 方法**不因使用者錯誤丟例外**：回 `{"error": str}`（可另帶已翻譯的 `"title"`，對應 tk 的 messagebox 標題）；取消回 `{"cancelled": true}`。只有 payload 型別錯（程式錯誤）才丟 `TypeError`，JS 在 `app.js` 的統一處理器顯示。
 - 預覽類方法第一個參數是 `rev: int`，原樣放回回應的 `"rev"`。JS 每個面板**各自**一個計數器（seq 預覽、list 編譯、list 表單預覽），收到 `rev` 小於最新值的回應就丟掉。輸入改變（包括改成無效值）就加一。
 - 方法名稱：共用方法不加前綴；上電時序 `seq_`；List `list_`。pywebview 只有一個平的命名空間，不准重名。
 - 所有非 bridge 的屬性與方法都要底線開頭（pywebview 會把公開屬性遞迴暴露給 JS）。
@@ -204,7 +204,7 @@ class _Core:
 | `["busy", bool]` | `_Core` | `app.js`：`App.busy`，所有執行／全部關閉按鈕跟著停用 |
 | `["kind", "N6705C"\|"E36441A"]` | 2a | `app.js` 停用 List 分頁並切回上電時序；`seq.js` 停用擷取並取消勾選 |
 | `["status", frame_index, text]` | 2a | `seq.js` 更新連線列狀態 |
-| `["result", "info"\|"error"\|"warning", title, text]` | 任何人 | `app.js` 以 `<dialog>` 顯示 |
+| `["result", "info"\|"error"\|"warning", title, text]` | 任何人 | `app.js` 以 `<dialog>` 顯示；視窗開著時排隊，關掉再顯示下一個 |
 | `["measured", "seq"\|"list"]` | 2a／2b | 對應分頁重新要預覽 |
 
 ### 3.4 上電時序 bridge（2a，`web_seq.SeqApi`）
@@ -231,7 +231,8 @@ def list_save_json(self, plan: dict, settings: dict) -> dict
 def list_run(self, plan: dict, settings: dict, resources, demo, capture) -> dict
 ```
 - **List 計畫的狀態放在 JS**（已加入的段落用數字存）；草稿欄位是字串，按「新增／更新」時才呼叫 `list_draft` 拿 `segment` 放進計畫。段落的新增／刪除／移動是 `list.js` 裡的陣列操作。
-- 切換通道：JS 先呼叫 `list_compile`；有 `error` 就擋下並把下拉選單還原（＝現在的 `select_channel`），沒有就採用回傳的 `plan`。
+- 切換通道：JS 先呼叫 `list_compile`；有 `error` 就擋下並把下拉選單還原（＝現在的 `select_channel`），沒有就採用回傳的 `plan`。設定無效時 `compiled_view` 的 `plan` 為 null，bridge 另補 `error`。
+- 已知與 tk 版的差別：tk 的 List 執行驗證錯誤只顯示在訊息列，web 版另跳 `invalid_field` 視窗（執行鍵平常在 `ok` 為 false 時已停用）。
 - `list_run` 自己 `apply_settings`＋`compile_plan`，**不信**畫面上的預覽；開檔清除 `_measured["list"]`。
 - Worker 內容＝現在的 `ListTab._work`。
 

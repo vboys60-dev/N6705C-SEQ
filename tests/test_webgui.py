@@ -4,12 +4,12 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event, Lock
 
 import pytest
 import webview
 
-from n6705c_seq import gui, i18n, webgui
+from n6705c_seq import form, gui, i18n, webgui
 
 
 class FakeWindow:
@@ -32,7 +32,7 @@ class FakeWindow:
 
 @pytest.fixture
 def core(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "CONFIG", tmp_path / "config.json")
+    monkeypatch.setattr(form, "CONFIG", tmp_path / "config.json")
     original_lang = i18n.lang
     api = webgui.Api()
     api._window = FakeWindow()
@@ -105,6 +105,8 @@ def test_strings_and_public_surface(core):
     assert translated == {"lang": i18n.lang, "strings": {key: list(pair) for key, pair in i18n.STRINGS.items()}}
     assert {name for name in dir(core) if not name.startswith("_")} == {
         "config", "strings", "set_lang", "poll", "selftest_report",
+        "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "test_connection", "all_off",
+        "list_meta", "list_draft", "list_compile", "list_open_json", "list_save_json", "list_run",
     }
     translated["strings"]["title"][0] = "changed"
     assert core.strings()["strings"]["title"][0] == i18n.STRINGS["title"][0]
@@ -213,3 +215,39 @@ def test_main_with_fake_window(core, monkeypatch, platform, renderer, selftest, 
     else:
         assert not messages
         assert waits == ([30] if selftest else [])
+
+
+def test_config_writes_are_serialized_without_blocking_reserve(core, monkeypatch):
+    from time import sleep
+
+    barrier = Barrier(8)
+    writing = Event()
+    guard = Lock()
+    active = maximum = 0
+    save = form.save_config
+
+    def slow_save(*args):
+        nonlocal active, maximum
+        with guard:
+            active += 1
+            maximum = max(maximum, active)
+        writing.set()
+        sleep(0.02)
+        save(*args)
+        with guard:
+            active -= 1
+
+    def write(index):
+        barrier.wait()
+        core._save_config([str(index) * 1000], bool(index % 2))
+
+    monkeypatch.setattr(form, "save_config", slow_save)
+    with ThreadPoolExecutor(max_workers=9) as pool:
+        jobs = [pool.submit(write, index) for index in range(8)]
+        assert writing.wait(2)
+        assert pool.submit(core._reserve).result(timeout=0.1)
+        core._release()
+        for job in jobs:
+            job.result(timeout=3)
+    assert maximum == 1
+    assert json.loads(core._config_path.read_text()) == core.config()

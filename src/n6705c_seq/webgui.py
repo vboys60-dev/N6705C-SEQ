@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import json
 import os
 import queue
 import sys
@@ -13,28 +12,22 @@ from pathlib import Path
 
 import webview
 
-from . import gui, i18n
+from . import form, i18n
+from .web_list import ListApi
+from .web_seq import SeqApi
 from .i18n import tr
-
-_CONFIG_LOCK = threading.Lock()
-
 
 class _Core:
     def __init__(self, config_path: Path | None = None):
         self._window = None
         self._lock = threading.Lock()
+        self._config_lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue()
         self._busy = False
         self._closing = False
         self._kind = None
-        self._config_path = gui.CONFIG if config_path is None else Path(config_path)
-        with _CONFIG_LOCK:
-            original = gui.CONFIG
-            try:
-                gui.CONFIG = self._config_path
-                self._config = gui._load_config()
-            finally:
-                gui.CONFIG = original
+        self._config_path = form.CONFIG if config_path is None else Path(config_path)
+        self._config = form.load_config(self._config_path)
         self._measured = {"seq": {}, "list": {}}
         self._selftest = False
         self._selftest_done = threading.Event()
@@ -76,8 +69,9 @@ class _Core:
         return path
 
     def _save_config(self, resources: list[str], demo: bool) -> None:
-        self._config = {"resources": list(resources), "demo": demo, "lang": i18n.lang}
-        self._config_path.write_text(json.dumps(self._config))
+        with self._config_lock:
+            self._config = {"resources": list(resources), "demo": demo, "lang": i18n.lang}
+            form.save_config(self._config_path, self._config["resources"], demo, self._config["lang"])
 
     def _on_closing(self) -> bool:
         with self._lock:
@@ -118,7 +112,7 @@ class _Core:
             self._selftest_done.set()
 
 
-class Api(_Core):
+class Api(SeqApi, ListApi, _Core):
     pass
 
 
