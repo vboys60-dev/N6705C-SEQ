@@ -323,7 +323,7 @@ def test_list_form_sources_and_translation_keys():
     keys = re.findall(r'tr\("([^"\n]+)"', source)
     assert set(keys) <= i18n.STRINGS.keys()
     assert {key for fields in FIELDS.values() for key in fields} <= i18n.STRINGS.keys()
-    assert not re.search(r"\b(?:import|from)\s+(?:tkinter|webview)\b", source)
+    assert not re.search(r"\b(?:import|from)\s+(?:tk" + r"inter|webview)\b", source)
 
 
 def test_compilation_exception_keeps_thumbnails(monkeypatch):
@@ -337,3 +337,8 @@ def test_compilation_exception_keeps_thumbnails(monkeypatch):
     assert view["statistics"] == "" and view["lanes"] == []
     assert len(view["axis"]) == 5
     assert len(view["segments"][0]["samples"]) == 200
+
+
+@pytest.mark.parametrize("value, expected", [(0.1, "0.1"), (1.0, "1"), (0.00001024, "1.024e-05")])
+def test_format_number_uses_shortest_repr(value, expected):
+    assert list_form.format_number(value) == expected

@@ -16,9 +16,9 @@ $cli = (Resolve-Path "$app\n6705c-seq-cli.exe").Path
 & $cli run examples\powerup.csv --demo --yes
 if ($LASTEXITCODE -ne 0) { throw "self-test failed" }
 
-$web = (Resolve-Path "$app\N6705C-SEQ-web.exe").Path
-$p = Start-Process -FilePath $web -ArgumentList --selftest -Wait -PassThru
-if ($p.ExitCode -ne 0) { throw "web self-test failed" }
+$gui = (Resolve-Path "$app\N6705C-SEQ.exe").Path
+$p = Start-Process -FilePath $gui -ArgumentList '--selftest' -Wait -PassThru
+if ($p.ExitCode -ne 0) { throw "GUI self-test failed" }
 
 Copy-Item examples -Destination $app -Recurse
 Copy-Item README.md -Destination $app

@@ -3,7 +3,7 @@
 多台 Keysight N6705C 主機的上電時序（power-up sequencing）工具：用 CSV 表格定義每個通道的延遲、電壓、上升／維持／下降時間，一鍵依序輸出。
 
 - 每台主機以單一 `INIT:TRAN` 同時啟動所有通道（已用示波器驗證起始時間）。
-- 提供 GUI（tkinter）與命令列（CLI）兩種用法。
+- 提供 GUI（pywebview）與命令列（CLI）兩種用法。
 - 內建模擬器（`--demo`／GUI 的 Demo 模式），沒有儀器也能試跑。
 
 ## 環境需求
@@ -11,13 +11,15 @@
 | 項目 | 版本 | 說明 |
 |---|---|---|
 | Python | >= 3.11 | 已在 3.13 測試 |
-| tkinter | 隨 Python 附帶 | GUI 用；Linux 需另裝 `python3-tk` |
+| `pywebview` | 6.2.1 | GUI 用，隨本專案安裝 |
 | `pyvisa` | >= 1.14 | 隨本專案安裝 |
 | `pyvisa-py` | >= 0.7 | 純 Python 後端；LAN 一定可用，搭配下面兩項也能走 USB（隨本專案安裝） |
 | `pyusb` | >= 1.2 | `pyvisa-py` 走 USB（USBTMC）所需（隨本專案安裝） |
 | `libusb-package` | >= 1.0 | 附帶 libusb DLL，讓 `pyusb` 不必另裝系統 libusb（隨本專案安裝） |
 | `numpy` | >= 1.26 | 隨本專案安裝 |
 | `pytest` | >= 8 | 只有跑測試才需要（`dev` extra） |
+
+GUI：Windows 需要 **Microsoft Edge WebView2 Runtime**（Windows 11 已預裝）；離線電腦請使用 [WebView2 Standalone（offline）Installer](https://developer.microsoft.com/microsoft-edge/webview2/)。macOS 使用系統 WebKit；Linux GUI 尚未測試。
 
 儀器控制核心（`src/n6705c/core`）已內含在本專案，不需要另外安裝舊專案 `N6705C-APP`。
 
@@ -43,7 +45,7 @@ pip install -e ".[dev]"        # 只跑程式可省略 [dev]
 ```bash
 n6705c-seq-gui
 # 或
-python3 -m n6705c_seq.gui
+python3 -m n6705c_seq.webgui
 ```
 
 macOS 也可雙擊 `N6705C-SEQ.command`（內容寫死用 `/opt/anaconda3` 的 conda base，環境不同請自行改）。
@@ -93,6 +95,7 @@ enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a
 
 **使用者（不需要 Python）：** 從 GitHub Releases 下載 `N6705C-SEQ-<版本>-windows-x64.zip`，解壓縮後執行 `N6705C-SEQ.exe`（GUI）；命令列版是同資料夾的 `n6705c-seq-cli.exe`。
 
+- GUI 需要 Microsoft Edge WebView2 Runtime（Windows 11 已預裝）；不隨 zip 打包，離線電腦請先用 Standalone（offline）Installer 安裝。
 - 連 USB 儀器前，電腦要先安裝 **Keysight IO Libraries Suite** 或 **NI-VISA**（執行檔不含 VISA 驅動）；或改用內含的 `pyvisa-py` + `pyusb` + libusb DLL，但儀器的 USB 驅動須是 WinUSB（見上方，尚未實機驗證）。只用 LAN 且 VISA 資源填 `TCPIP...` 時，兩者都不需要。
 - 沒有程式碼簽章，第一次執行 Windows SmartScreen 會警告：點「其他資訊」→「仍要執行」。
 
@@ -100,7 +103,7 @@ enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a
 
 ```bash
 # 本機（Windows）：pip install -e ".[build]" 後
-.\packaging\build.ps1          # 產生 dist\N6705C-SEQ-<版本>-windows-x64.zip，並先用 --demo 自我測試
+.\packaging\build.ps1          # 產生 dist\N6705C-SEQ-<版本>-windows-x64.zip，並先跑 CLI --demo 與 GUI --selftest
 
 # GitHub：改 pyproject.toml 的 version，然後
 git tag v0.1.0 && git push origin v0.1.0   # CI 測試 → 建置 → 自動建立 Release 並附上 zip
@@ -111,7 +114,8 @@ git tag v0.1.0 && git push origin v0.1.0   # CI 測試 → 建置 → 自動建�
 ## 測試
 
 ```bash
-pytest          # 46 個測試，全部走模擬器，不需儀器
+PYTHONPATH=src python3 -m pytest -q   # 不需儀器、不開 GUI 視窗
+node --test tests/js
 ```
 
 ## 注意

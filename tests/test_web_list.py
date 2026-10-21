@@ -338,7 +338,7 @@ def test_sources_and_translation_keys():
     assert "innerHTML" not in paths[1].read_text()
 
 
-def test_list_javascript_handlers_without_window():
+def test_list_javascript_handlers_without_window(api):
     import json
     import shutil
     import subprocess
@@ -395,6 +395,7 @@ function compile(rev, plan, settings, index) {
 }
 const api = {
   async list_meta() { return meta; },
+  async list_open_json() { return OPEN_RESPONSE; },
   async list_compile(...a) { return compile(...a); },
   async list_draft(rev, shape, params, repeat) {
     return {rev, error: null, segment: {shape, params: Object.fromEntries(Object.entries(params).map(([k,v]) => [k, Number(v)])), repeat: Number(repeat)}, preview: PREVIEW};
@@ -423,6 +424,14 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
   await action("move_left").fire("click"); await flush();
   await action("run_list").fire("click");
   assert.deepEqual(args[0].channels[0].segments.map(s => s.params.end), [2, 1]);
+  await action("move_left").fire("click"); await flush();
+  await action("run_list").fire("click");
+  assert.deepEqual(args[0].channels[0].segments.map(s => s.params.end), [2, 1]);
+  const navigate = text => all().find(n => n.tagName === "button" && n.textContent === text);
+  await navigate("\u25b6\u25b6").fire("click"); await flush();
+  assert.equal(field("end").value, "1");
+  await navigate("\u25c0\u25c0").fire("click"); await flush();
+  assert.equal(field("end").value, "2");
   field("end").value = "3"; field("segment_repeat").value = "4";
   await action("update").fire("click"); await flush();
   await action("run_list").fire("click");
@@ -441,6 +450,14 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
   const end = field("end"); end.value = "7.125";
   tab.relabel(); await flush();
   assert.equal(field("end"), end); assert.equal(end.value, "7.125");
+  await action("open_json").fire("click"); await flush();
+  assert.equal(choice.value, "1");
+  assert.equal(field("current_limit_optional").value, "0.1");
+  assert.equal(field("channel_delay_s").value, "0.001");
+  choice.value = "2"; await choice.fire("change"); await flush();
+  assert.equal(choice.value, "2");
+  assert.equal(field("current_limit_optional").value, "0.1");
+  assert.equal(field("channel_delay_s").value, "0.002");
   const pending = [];
   api.list_compile = (...a) => new Promise(resolve => pending.push({a, resolve}));
   field("name").value = "old"; field("name").fire("input");
@@ -473,6 +490,8 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 })().catch(error => { console.error(error); process.exitCode = 1; });
 '''
     preview = list_form.draft_view("step", {"start": "0", "end": "1", "delay": "0.01", "end_time": "0.01"}, "1")["preview"]
+    api._window.path = str(Path(__file__).resolve().parents[1] / "examples" / "list_demo.json")
+    script = script.replace("OPEN_RESPONSE", json.dumps(api.list_open_json()))
     script = script.replace("META", json.dumps(list_form.meta())).replace("PREVIEW", json.dumps(preview))
     script = script.replace("LAYOUT", json.dumps(str(web / "layout.js"))).replace("SOURCE", json.dumps(str(web / "list.js")))
     completed = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
@@ -486,3 +505,13 @@ def test_run_error_titles(api):
     response = api.list_run(_plan(), {**_settings(), "delay": "bad"}, [], True, False)
     assert response["title"] == i18n.tr("invalid_field")
     assert not api._busy and not api._window.calls
+
+
+def test_open_numbers_use_shortest_repr(api):
+    api._window.path = str(Path(__file__).resolve().parents[1] / "examples" / "list_demo.json")
+    response = api.list_open_json()
+    assert response["settings"]["limit"] == "0.1"
+    assert "000000" not in response["settings"]["delay"]
+    second = next(ch for ch in response["plan"]["channels"] if ch["channel"] == 2)
+    assert second["current_limit"] == 0.1
+    assert second["delay"] == 0.002

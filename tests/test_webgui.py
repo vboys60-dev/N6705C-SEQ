@@ -9,7 +9,7 @@ from threading import Barrier, Event, Lock
 import pytest
 import webview
 
-from n6705c_seq import form, gui, i18n, webgui
+from n6705c_seq import form, i18n, webgui
 
 
 class FakeWindow:
@@ -128,20 +128,35 @@ def test_selftest_report(core):
 
 def test_web_sources_have_no_cjk_text():
     root = Path(__file__).resolve().parents[1]
-    paths = [Path(webgui.__file__), Path(__file__), root / "packaging" / "web_entry.py"]
-    paths += list((root / "src" / "n6705c_seq" / "web").glob("*"))
+    paths = [Path(webgui.__file__), Path(__file__), root / "packaging" / "gui_entry.py"]
+    source = root / "src" / "n6705c_seq"
+    paths += [source / name for name in ("form.py", "list_form.py", "synth.py", "listplan.py")]
+    paths += list(source.glob("web_*.py")) + list((source / "web").glob("*"))
     for path in paths:
         assert not re.search(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]", path.read_text(encoding="utf-8")), path
 
 
 def test_web_translation_keys():
-    source = Path(webgui.__file__)
-    keys = re.findall(r'tr\("([^"\n]+)"', source.read_text())
-    for path in (source.parent / "web").glob("*"):
-        text = path.read_text()
-        keys += re.findall(r'data-i18n="([^"\n]+)"', text)
-        keys += re.findall(r'\.t\("([^"\n]+)"', text)
-    assert set(keys) <= i18n.STRINGS.keys()
+    from n6705c_seq import form
+    from n6705c_seq.listplan import FIELDS
+
+    source = Path(webgui.__file__).parent
+    paths = [source / name for name in ("webgui.py", "form.py", "list_form.py")]
+    paths += list(source.glob("web_*.py")) + list((source / "web").glob("*.js"))
+    paths += list((source / "web").glob("*.html"))
+    keys = {"frame_channel", "enabled", "color"} | set(form.TITLES.values()) | {key for fields in FIELDS.values() for key in fields}
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        keys.update(re.findall(r'tr\("([^"\n]+)"', text))
+        keys.update(re.findall(r'\.t\("([^"\n]+)"', text))
+        keys.update(re.findall(r'data-i18n="([^"\n]+)"', text))
+        if path.suffix == ".js":
+            keys.update(re.findall(r'(?:el|element)\("[^"\n]+", [^,\n]+, "([a-z_]+)"', text))
+            keys.update(re.findall(r'(?:button|input|checkbox)\([^,\n]+, "([a-z_]+)"', text))
+            keys.update(re.findall(r'result\(.*?, "([a-z_]+)"\)', text))
+    assert keys <= i18n.STRINGS.keys()
+    assert all(isinstance(pair, tuple) and len(pair) == 2 and
+               all(isinstance(text, str) and text for text in pair) for pair in i18n.STRINGS.values())
 
 
 @pytest.mark.parametrize("platform, renderer, selftest, report, expected", [

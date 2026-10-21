@@ -62,7 +62,6 @@ STRINGS = {
     "sequence_repeat": ("時序重複", "Sequence Repeat"),
     "repeat_range": ("時序重複必須介於 1 到 256", "Sequence Repeat must be in 1..256"),
     "json_error": ("JSON 錯誤", "JSON Error"),
-    "all_files": ("所有檔案", "All Files"),
     "list_hold_done": ("List 完成，輸出維持在最後電壓。", "List complete; outputs remain on at the last level."),
     "list_done": ("List 完成，輸出已關閉。", "List complete; outputs are off."),
     "demo_prefix": ("【Demo】", "[Demo] "),

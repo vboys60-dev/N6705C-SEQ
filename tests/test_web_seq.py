@@ -445,3 +445,136 @@ def test_save_validation_title_and_write_error_default(api, monkeypatch):
 
     monkeypatch.setattr(web_seq, "write_csv", fail)
     assert api.seq_save_csv(_raw()) == {"error": "write failed"}
+
+
+def test_javascript_language_kind_and_thin_lanes():
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is unavailable")
+    script = r'''
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const painted = [], timers = [], listeners = {}, events = [];
+class Node {
+  constructor(tag) {
+    this.tagName = tag; this.children = []; this.dataset = {}; this.style = {};
+    this.events = {}; this.attributes = {}; this.value = ""; this.checked = false;
+    this.disabled = false; this.clientWidth = 600; this.clientHeight = 200;
+    this.classList = {add() {}, toggle() {}};
+  }
+  appendChild(child) { child.parent = this; this.children.push(child); }
+  append(child) { this.appendChild(child); }
+  replaceChildren() { this.children = []; }
+  remove() { this.parent.children.splice(this.parent.children.indexOf(this), 1); }
+  get firstChild() { return this.children[0]; }
+  get lastChild() { return this.children.at(-1); }
+  getBoundingClientRect() { return {width: 600, top: 0}; }
+  scrollIntoView() {}
+  addEventListener(type, fn) { this.events[type] = fn; }
+  setAttribute(key, value) { this.attributes[key] = value; }
+  querySelectorAll(selector) {
+    return this.children.flatMap(child => [child, ...child.querySelectorAll(selector)])
+      .filter(child => selector === "input" ? child.tagName === "input" :
+        selector === "#btn-off, [data-action='run']" ? child.dataset.action === "run" :
+        selector === "[data-i18n]" && child.dataset.i18n);
+  }
+  getContext() {
+    return {scale() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {},
+      stroke() {}, fillRect() {}, strokeRect() {},
+      measureText(text) { return {width: text.length * 7}; }, setLineDash() {}, fillText(text) { painted.push(text); }};
+  }
+}
+const ids = Object.fromEntries(["seq-tab", "list-tab", "res-0", "res-1", "conn-0", "conn-1",
+  "btn-test", "btn-off", "btn-lang", "chk-demo", "tab-seq", "tab-list", "result-dialog",
+  "result-title", "result-text"].map(id => [id, new Node("div")]));
+const document = global.document = {getElementById: id => ids[id], createElement: tag => new Node(tag),
+  documentElement: {}, querySelectorAll(selector) {
+    return [...(selector === "#btn-off, [data-action='run']" ? [ids["btn-off"]] : []),
+      ...Object.values(ids).flatMap(node => node.querySelectorAll(selector))];
+  }};
+const meta = META, strings = STRINGS;
+let lang = "zh", lanes = 8, listOk = false;
+const api = {
+  async strings() { return {lang, strings}; },
+  async config() { return {resources: [], demo: true}; },
+  async set_lang(value) { lang = value; },
+  async selftest_report() {},
+  async poll() { return events.splice(0); },
+  async seq_meta() { return meta; },
+  async list_meta() { return LIST_META; },
+  async list_compile(rev) { return {rev, ok: listOk, lanes: [], segments: []}; },
+  async list_draft(rev) { return {rev, preview: null}; },
+  async seq_preview(rev) {
+    return {rev, message: "", ticks: [], t_end: 100, time_axis: "axis", lanes:
+      Array.from({length: lanes}, (_, i) => ({channel: i + 1, name: "rail", low: 0, high: 1,
+        points: [[0, 0], [100, 1]], measured: null, delay: 1, top0: 2, top1: 3,
+        delay_text: "delay marker", hold_text: "hold marker", levels_text: "levels"}))};
+  },
+};
+global.window = {App: null, pywebview: {api}, devicePixelRatio: 1,
+  addEventListener(type, fn) { listeners[type] = fn; },
+  setTimeout(fn, ms) { timers.push({fn, ms}); return timers.length; }, clearTimeout() {}};
+global.ResizeObserver = class { observe() {} };
+global.getComputedStyle = () => ({fontFamily: "sans-serif"});
+for (const file of [APP, LAYOUT, SOURCE, LIST]) vm.runInThisContext(fs.readFileSync(file, "utf8"));
+const all = (root = ids["seq-tab"]) => [root, ...root.children.flatMap(child => all(child))];
+async function timer(ms) {
+  const index = timers.findLastIndex(item => item.ms === ms);
+  assert(index >= 0);
+  await timers.splice(index, 1)[0].fn();
+}
+(async () => {
+  await listeners.pywebviewready();
+  await timer(30);
+  const seqRun = all().find(n => n.dataset.action === "run");
+  const listRun = all(ids["list-tab"]).find(n => n.dataset.action === "run");
+  for (const ok of [false, true]) {
+    listOk = ok;
+    events.push(["measured", "list"]); await timer(100);
+    await Promise.resolve();
+    assert.equal(listRun.disabled, !ok);
+    events.push(["busy", true]); await timer(100);
+    for (const button of [seqRun, listRun, ids["btn-off"], ids["btn-test"]]) assert(button.disabled);
+    events.push(["busy", false]); await timer(100);
+    for (const button of [seqRun, ids["btn-off"], ids["btn-test"]]) assert(!button.disabled);
+    assert.equal(listRun.disabled, !ok);
+  }
+  assert(!painted.includes("delay marker") && !painted.includes("hold marker"));
+  const inputs = all().filter(n => n.tagName === "input" && n.type === "text");
+  const name = inputs[0]; name.value = "typed sequence";
+  lanes = 1; painted.length = 0;
+  await ids["btn-lang"].events.click(); await timer(30);
+  assert.equal(lang, "en");
+  assert.equal(inputs[0], name); assert.equal(name.value, "typed sequence");
+  assert(painted.includes("delay marker") && painted.includes("hold marker"));
+  assert.equal(all().find(n => n.dataset.i18n === "run_sequence").textContent,
+    strings.run_sequence[1]);
+  await ids["btn-lang"].events.click(); await timer(30);
+  assert.equal(lang, "zh"); assert.equal(name.value, "typed sequence");
+  const capture = all().find(n => n.tagName === "label" &&
+    n.children.some(c => c.dataset.i18n === "capture")).children[0];
+  capture.checked = true;
+  events.push(["kind", "E36441A"]); await timer(100);
+  assert(capture.disabled && !capture.checked && ids["tab-list"].disabled);
+  assert.equal(ids["tab-seq"].attributes["aria-selected"], "true");
+  events.push(["kind", "N6705C"]); await timer(100);
+  assert(!capture.disabled && !ids["tab-list"].disabled);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+'''
+    web = Path(web_seq.__file__).parent / "web"
+    from n6705c_seq import list_form
+
+    script = script.replace("LIST_META", json.dumps(list_form.meta()))
+    script = script.replace("META", json.dumps(_Api.seq_meta(None)))
+    script = script.replace("STRINGS", json.dumps(i18n.STRINGS))
+    script = script.replace("APP", json.dumps(str(web / "app.js")))
+    script = script.replace("SOURCE", json.dumps(str(web / "seq.js")))
+    script = script.replace("LAYOUT", json.dumps(str(web / "layout.js")))
+    script = script.replace("LIST", json.dumps(str(web / "list.js")))
+    completed = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
+    assert completed.returncode == 0, completed.stdout + completed.stderr

@@ -2,7 +2,7 @@
 
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。只做時序，不做量測。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-20　狀態：模擬器全過（309 tests）。細節看 git log；本檔只留接手需要的事實。
+最後更新：2026-10-22　狀態：模擬器全過（576 tests）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
 
 | 區塊 | 狀態 |
 |---|---|
@@ -20,9 +20,12 @@
 
 ## 1. 安裝與使用
 
+拉取本次變更後請重新執行 `pip install -e ".[dev]"`，舊的 `n6705c-seq-gui` console script 仍指向已移除的 `n6705c_seq.gui`。
+
 ```bash
-pip install -e ".[dev]"           # pyvisa、pyvisa-py、pyusb、libusb-package、numpy、sv-ttk
-python3 -m pytest -q              # 309 passed
+pip install -e ".[dev]"           # pyvisa、pyvisa-py、pyusb、libusb-package、numpy、pywebview==6.2.1
+python3 -m pytest -q              # 576 passed
+node --test tests/js              # 5 passed
 n6705c-seq check examples/powerup.csv                       # 只驗證、印時間軸
 n6705c-seq check plan.csv --suggest-out fixed.csv           # 跨台打平時另存建議分配
 n6705c-seq run plan.csv --demo --yes                        # 模擬器
@@ -44,9 +47,9 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 |---|---|
 | `src/n6705c_seq/plan.py` | `SeqRow`、`load_csv`／`write_csv`、`to_functions`、`order_warnings`、`suggest_assignment`、`timeline` |
 | `src/n6705c_seq/execute.py` | `run_plan` → `run_functions`（CSV 與 List 共用）：驗證 → `VOLT`／`CURR` 並開輸出 → load → 每台一道 `INIT:TRAN` 同時啟動（`start_together`）→ 等待 → 關輸出。另有 `connect_group` |
-| `src/n6705c_seq/listplan.py`、`synth.py`、`list_gui.py` | List 模式：JSON 計畫、段落→CDW 合成、GUI 分頁（§9） |
+| `src/n6705c_seq/listplan.py`、`synth.py`、`list_form.py`、`web_list.py`、`web/list.js` | List 模式：JSON 計畫、段落→CDW 合成、表單驗證、GUI 分頁（§9） |
 | `src/n6705c_seq/e36441a.py` | E36441A：`prepare`／`configure`／`arm`／`restore_commands`、`check()` 純函式（§10） |
-| `src/n6705c_seq/cli.py`、`gui.py`、`i18n.py` | `check`／`run`；tkinter GUI（連線測試、可編輯表格、共用時間軸波形、擷取、中英切換）；GUI 字串 `STRINGS={key:(中,英)}` |
+| `src/n6705c_seq/cli.py`、`webgui.py`、`web_seq.py`、`form.py`、`web/`、`i18n.py` | `check`／`run`；pywebview GUI 殼、上電時序 bridge、表單驗證、HTML／JS／CSS；GUI 字串 `STRINGS={key:(中,英)}` |
 | `scripts/hw_list_check.py`、`scripts/hw_e36441a_check.py` | 實機量測腳本（§9.2.3、§10） |
 | `packaging/`、`.github/workflows/ci.yml` | PyInstaller（Windows）、CI（§4.12） |
 
@@ -56,12 +59,12 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 
 - **4.1 延遲折進 `start_time`，`ChannelFunction.delay` 保持 0**：次數 1，兩處都設會延遲兩次（測試守著）。
 - **4.2 `run_plan` 自己開輸出**：驗證（機台數、模組電壓／時間上限）都在開任何輸出前完成；任何例外或 Ctrl-C 走 `all_outputs_off()`。`_outputs_off` 讀回 `OUTP?` 確認，未關或讀不到丟 `OutputsNotConfirmedOff`，CLI／GUI 不說「已強制關閉」。`OUTP?` 是命令狀態、不是實際軌壓。驗證被拒丟 `PlanRejected`（訊息「開輸出前被拒絕」）。
-- **4.2.2 輸入驗證**：數字須有限且 ≥ 0；`current_limit_a` 填了必須 > 0（0 與「不限制」無法區分）；GUI `read_rows` 與 `load_csv` 規則一致。
+- **4.2.2 輸入驗證**：數字須有限且 ≥ 0；`current_limit_a` 填了必須 > 0（0 與「不限制」無法區分）；GUI `form.parse_rows` 與 `load_csv` 規則一致。
 - **4.3 跨台時間差軟體消不掉**：實機（F.1.1.0）ARB 在 `INIT:TRAN` 當下就開跑、不等 `*TRG`（§4.10），所以每台一道 `INIT:TRAN (@全部通道)`。跨台各自 VISA 往返，抖動約 0.2–2 ms（`TRIGGER_SKEW_SECONDS=2e-3`）；`fire_together`（每台一條執行緒＋Barrier）只縮小差距。真解法是接線（舊 HANDOFF M11.3）。
 - **4.4 跨台打平**：不同機台、延遲差 < 2 ms 的通道標警告（同台沒事）。`suggest_assignment` 把互相打平的通道（連鎖也算）視為一組、同組同台，每台最多 4 個，塞不下改 first-fit-decreasing；無解時 `check` 印 `No frame assignment ...`、不寫檔、`--suggest-out` 結束碼 1。第 1 台沒滿時補停用備用列，讓第 2 台仍從第 5 列開始。⚠️ 使用者要自己把 DUT 電源軌換接到新通道。
 - **4.5 浮點陷阱**：`0.031-0.029` 是 `0.00199999…`；`_tied` 先 `round(...,9)`（測試 `test_a_gap_of_exactly_the_skew_is_not_a_tie`）。
 - **4.6 沿用舊專案的坑**：不支援的查詢會 **timeout**（`--timeout` 預設 10000 ms）；`OUTP?` 是命令狀態；fall 延遲讓「全部關閉」變慢。
-- **4.7 GUI**：執行時才連線、跑完就關（VISA session 非執行緒安全）；工作執行緒是 daemon，**執行中拒絕關閉視窗**；位址、Demo、語言存 `~/.n6705c_seq_gui.json`（壞了用預設）；沒有「停止」鈕；「■ 全部關閉」連到已填位址並回讀確認（Demo／執行中停用）。外觀：`gui.setup_theme()` 套 `sv_ttk`、CJK 字型（Windows JhengHei／mac PingFang）、`FONT_SCALE`、Windows 啟動時 DPI aware；通道高度太小時 `draw()` 不畫延遲／維持文字。Windows 實機外觀（DPI、字型、打包後 sv-ttk）未驗。
+- **4.7 GUI**：pywebview；執行時才連線、跑完就關（VISA session 非執行緒安全）；工作執行緒是 daemon，**執行中拒絕關閉視窗**（closing veto），JS 每 100 ms poll 工作事件。位址、Demo、語言仍存 `~/.n6705c_seq_gui.json`（壞了用預設）；沒有「停止」鈕；「■ 全部關閉」連到已填位址並回讀確認（Demo 只提示、執行中停用）。Windows 強制使用 Edge Chromium，啟動後檢查 WebView2；缺少時顯示下載網址與離線 Standalone Installer 提示後退出。macOS 使用系統 WebKit；Linux GUI 未測。`--selftest` 等 JS bridge ready 回報後關窗，成功結束碼 0，失敗或 30 秒逾時為 1；建置用 `Start-Process -Wait -PassThru` 執行 `N6705C-SEQ.exe --selftest`。視窗、DPI、字型與實機流程由 Claude／使用者驗收。
 
 ### 4.8 實機測試紀錄（2026-10-12，單台、CH1、空接）
 - 機台 `USB0::0x2A8D::0x0F02::MY66102013::INSTR`，4× **N6752A**，韌體 `F.1.1.0`。**`*IDN?` 型號欄位是固定亂碼**，ASCII 解碼會丟 `UnicodeDecodeError`；`execute.connect_group()` 把 pyvisa `encoding` 設 latin-1 繞過（連線會印一行「not an N6705 family mainframe」，可忽略）。
@@ -80,7 +83,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 
 ### 4.12 發佈與打包（Windows 11）
 - Release 的 `N6705C-SEQ-<版本>-windows-x64.zip`：`N6705C-SEQ.exe`（GUI）、`n6705c-seq-cli.exe`。**USB 儀器需另裝 Keysight IO Libraries 或 NI-VISA**；LAN 走內含 `pyvisa-py`。無 VISA 的 USB 路徑（pyusb＋libusb DLL，`transport._register_libusb()`，Windows 需 Zadig 換 WinUSB）**未實機驗證**。無簽章，SmartScreen 會警告。
-- `packaging/build.ps1`：建置 → `--demo` 自測 → 打包。CI：Windows／macOS／Ubuntu × Python 3.11、3.13；推 `v*` tag 才建 Release。發版：改 `pyproject.toml` version → `git tag vX.Y.Z && git push origin vX.Y.Z`。
+- `packaging/build.ps1`：建置 → CLI `--demo` 與 GUI `--selftest` 自測 → 打包。CI：Windows／macOS／Ubuntu × Python 3.11、3.13；推 `v*` tag 才建 Release。發版：改 `pyproject.toml` version → `git tag vX.Y.Z && git push origin vX.Y.Z`。
 - 2026-10-12 Windows 11 本機打包成功、exe 能開、`--demo` 輸出正確；**未接實機**。spec 已排除 `pyvisa_py.testsuite`（否則 PyInstaller 分析當機）；`build.ps1` 用 `Resolve-Path` 絕對路徑（UNC 工作目錄下相對路徑會被誤判成模組）。
 - **原生 VISA 探測**（`transport._native_backend_safe()`）：該機 `pyvisa.ResourceManager("")` 會直接讓行程當掉（`STATUS_STACK_BUFFER_OVERRUN`，系統只有 IVI 轉發 DLL、沒有廠商實作），所以用子行程探測（逾時 8 s、結果快取），`backend="auto"` 在不安全時只留 `@py`；入口檔需 `multiprocessing.freeze_support()`。舊專案若有同一份 `transport.py` 建議手動同步。
 
@@ -114,12 +117,12 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 | Track | 內容 | 狀態 |
 |---|---|---|
 | P0 / C | `listplan.py`、`execute.run_functions` | ✅ `3032c1a` |
-| A / D | `synth.py`（第一版不做頻寬警告，Triangle 沿用 Sine 門檻）／`list_gui.py`＋分頁 | ✅ `c051338` |
+| A / D | `synth.py`（第一版不做頻寬警告，Triangle 沿用 Sine 門檻）／`web_list.py`＋`web/list.js` 分頁（原實作已切換） | ✅ `c051338` |
 | H | `scripts/hw_list_check.py`（傳輸時間、輪間接縫、256 輪對齊、Sine 頻寬） | 前半 ✅ `82bb688`；實機等設備 |
 | I | 整合、回填實測常數、版本 0.2.0 | 前半 ✅ `82bb688`；後半等 H |
 | 其他 | List 模式英文化＋預覽標註 `ed7b357`；sv-ttk 主題＋DPI＋中英切換 `ce60f70`；小通道隱藏標註 `47d80ca` | ✅ |
 
-已知小事：`synth._validate` 與 `listplan.load_json` 重複檢查（因 GUI 直接組計畫不經 `load_json`，可在 I 後半合併）；測試直接 `root.destroy()` 時 stderr 會印 `invalid command name`，不影響結果。`execute.py` 訊息與 CSV 分頁維持中文，`list_gui.py` 不得有 CJK（測試守著）。`DEMO_SLOTS` 為 N6752A（實機是 4× N6752A；舊專案那台才是 N6762A）。
+已知小事：`synth._validate` 與 `listplan.load_json` 重複檢查（因 GUI 直接組計畫不經 `load_json`，可在 I 後半合併）。`execute.py` 訊息維持原樣；GUI 的 Python／JS 原始碼不得有 CJK，翻譯集中在 `i18n.py`（測試守著）。`DEMO_SLOTS` 為 N6752A（實機是 4× N6752A；舊專案那台才是 N6762A）。
 
 ### 9.2.3 接手要做
 1. **有設備時**：`python scripts/hw_list_check.py all --resource <VISA位址>`（開輸出前輸入 y；存 CSV 到 `hw_list_results/`；可單跑 `transfer`／`seam`／`align`／`sinebw`）。

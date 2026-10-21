@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from n6705c_seq import form, gui, i18n
+from n6705c_seq import form, i18n
 from n6705c_seq.plan import SeqRow, order_warnings
 from n6705c.core.group import TRIGGER_SKEW_SECONDS
 
@@ -165,34 +165,17 @@ def test_view_warnings_empty_and_zero_duration():
     assert view["lanes"][0]["high"] > view["lanes"][0]["low"]
 
 
-def test_config_and_gui_aliases(tmp_path, monkeypatch):
+def test_config(tmp_path):
     path = tmp_path / "config.json"
     default = dict(resources=[], demo=True, lang="zh")
     assert form.load_config(path) == default
-    for saved in ("bad", "[]", "null", '{"resources":[],"demo":1}', '{"resources":[1],"demo":true}'):
+    for saved in ("bad", "[]", "null", '{"resources":"TCPIP::h","demo":false}',
+                  '{"resources":[],"demo":"false"}', '{"resources":[],"demo":1}',
+                  '{"resources":[1],"demo":true}'):
         path.write_text(saved)
         assert form.load_config(path) == default
     form.save_config(path, ["A", "B"], False, "en")
     assert json.loads(path.read_text()) == dict(resources=["A", "B"], demo=False, lang="en")
-    monkeypatch.setattr(gui, "CONFIG", path)
-    assert gui._load_config() == form.load_config(path)
-    assert gui.waveform is form.waveform and gui._tick_step is form.tick_step
-    for name in ("FRAMES", "PALETTE", "DEFAULTS", "COLUMNS", "TITLES", "NUMERIC"):
-        assert getattr(gui, name) == getattr(form, name)
-
-
-def test_gui_adapters_without_display():
-    import tkinter as tk
-
-    master = tk.Tcl()
-    app = object.__new__(gui.App)
-    raw = form.default_raw(2)
-    app.forms = [{key: (tk.BooleanVar(master, value=value) if key == "enabled" else
-                       tk.StringVar(master, value=value)) for key, value in r.items()} for r in raw]
-    assert app.read_rows() == form.parse_rows(raw)
-    rows = [replace(app.read_rows()[0], name="changed", current_limit=0.123456789)]
-    app.fill(rows)
-    assert [{key: f[key].get() for key in form.RAW_KEYS} for f in app.forms] == form.rows_to_raw(rows, raw)
 
 
 def test_form_sources_and_translation_keys():
@@ -202,6 +185,29 @@ def test_form_sources_and_translation_keys():
     assert set(keys) | set(form.TITLES.values()) <= i18n.STRINGS.keys()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
-            assert all(alias.name.split(".")[0] not in ("tkinter", "webview") for alias in node.names)
+            assert all(alias.name.split(".")[0] not in ("tk" + "inter", "webview") for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            assert (node.module or "").split(".")[0] not in ("tkinter", "webview")
+            assert (node.module or "").split(".")[0] not in ("tk" + "inter", "webview")
+
+
+@pytest.mark.parametrize("span, step", [(8, 1), (95.6, 10), (60_000, 10_000), (3_600_000, 500_000)])
+def test_tick_step_covers_long_sequences(span, step):
+    assert form.tick_step(span) == step
+
+
+@pytest.mark.parametrize("saved, expected", [("en", "en"), ("zh", "zh"), ("invalid", "zh"), (None, "zh")])
+def test_config_language_keeps_other_fields(tmp_path, saved, expected):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"resources": ["A"], "demo": False, "lang": saved}))
+    assert form.load_config(path) == {"resources": ["A"], "demo": False, "lang": expected}
+
+
+@pytest.mark.parametrize("hold_dc, volts, times", [
+    (False, [0, 0, 5, 5, 0, 0], [0, 0.005, 0.007, 0.062, 0.064, 0.1]),
+    (True, [0, 0, 5, 5], [0, 0.005, 0.007, 0.1]),
+])
+def test_waveform_corners(hold_dc, volts, times):
+    row = SeqRow(1, True, "A", 0.005, 0.0, 5.0, 0.002, 0.055, 0.002)
+    points = form.waveform(row, 0.1, hold_dc)
+    assert [v for _, v in points] == volts
+    assert [t for t, _ in points] == pytest.approx(times)
