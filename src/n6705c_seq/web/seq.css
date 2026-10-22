@@ -12,4 +12,5 @@
 .seq-run { margin-left: auto; }
 .seq-message { margin: 3px 0; }
 .seq-message:empty { margin: 0; }
-.seq-chart { height: max(200px, calc(100vh - 420px)); min-height: 200px; }
+#seq-tab { display: flex; flex-direction: column; }
+.seq-chart { flex: 1; height: 0; min-height: 404px; } /* 8 lanes x 44px + axis: below this lane labels are dropped */

@@ -1,6 +1,8 @@
 :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; color: #202020; background: #fafafa; }
 * { box-sizing: border-box; }
-body { margin: 10px; }
+html, body { height: 100%; }
+body { margin: 0; padding: 10px; display: flex; flex-direction: column; overflow: hidden; }
+#seq-tab, #list-tab { flex: 1; min-height: 0; overflow: hidden; }
 button, input, select, textarea { font: inherit; }
 .btn { border: 1px solid #ccc; border-radius: 4px; padding: 6px 12px; background: #fff; color: inherit; cursor: pointer; }
 .btn:hover { background: #eee; }

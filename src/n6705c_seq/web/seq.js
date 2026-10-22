@@ -179,6 +179,7 @@
       this.relabel();
       setKind(App.kind);
       new ResizeObserver(draw).observe(canvas);
+      new ResizeObserver(() => requestAnimationFrame(() => fitZoom(panel))).observe(panel);
       preview();
     },
     relabel() {

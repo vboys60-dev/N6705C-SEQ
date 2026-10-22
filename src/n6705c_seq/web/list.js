@@ -255,6 +255,7 @@
     }
     ctx.textAlign = "right"; ctx.fillText(p.extras, x1, 12);
     line(ctx, p.samples.map((v, i) => [x(p.duration * i / 199), y(v)]), "#2563eb", 2);
+    fitZoom(root);
   }
   const lanes = element("canvas", root, null, "chart list-lanes");
   lanes.addEventListener("click", event => {
@@ -326,6 +327,7 @@
   for (const node of [...channelBar.querySelectorAll("input"), ...settingsBar.querySelectorAll("input")]) {
     node.addEventListener("input", () => { if (meta) compile(); });
   }
+  new ResizeObserver(() => requestAnimationFrame(() => fitZoom(root))).observe(document.body);
   App.on("busy", runState);
   App.on("measured", kind => { if (kind === "list") compile(); });
   let observedWidth, redrawFrame = null;
@@ -336,7 +338,7 @@
     if (redrawFrame !== null) return;
     redrawFrame = window.requestAnimationFrame(() => {
       redrawFrame = null;
-      drawCompiled(); drawDraft();
+      drawCompiled(); drawDraft(); fitZoom(root);
       if (compiled) drawSegments(compiled.segments || []);
     });
   }).observe(root);

@@ -1,6 +1,7 @@
 "use strict";
 
 (() => {
+  const LIST_VERIFIED = false; // List mode awaits hardware verification; flip to true to enable the tab
   const listeners = new Map();
   const tabs = [];
   const results = [];
@@ -70,7 +71,7 @@
           busyButtons();
         } else if (type === "kind") {
           App.kind = args[0];
-          document.getElementById("tab-list").disabled = App.kind === "E36441A";
+          document.getElementById("tab-list").disabled = !LIST_VERIFIED || App.kind === "E36441A";
           if (App.kind === "E36441A") selectTab("seq");
         } else if (type === "result") {
           App.showResult(...args);

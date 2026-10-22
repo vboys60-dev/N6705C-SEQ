@@ -21,4 +21,12 @@ function placeTimeLabels(spans, left, width) {
   });
 }
 
-if (typeof module !== "undefined") module.exports = { placeTimeLabels };
+// List tab has fixed-pixel canvases: shrink it (zoom) when taller than the window, never below 0.5.
+function fitZoom(panel) {
+  if (panel.hidden) return;
+  panel.style.zoom = 1;
+  const z = Math.max(0.5, Math.min(1, panel.clientHeight / panel.scrollHeight));
+  panel.style.zoom = z;
+}
+
+if (typeof module !== "undefined") module.exports = { placeTimeLabels, fitZoom };
