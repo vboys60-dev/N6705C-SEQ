@@ -7,7 +7,8 @@
 | 區塊 | 狀態 |
 |---|---|
 | CSV 上電時序 | 單台（4× N6752A）單通道實機跑通（§4.8）；多通道、帶載、跨台同步未量 |
-| ARB List 模式 | P0、C、A、D、H 前半、I 前半、D-EN、GUI 美化＋中英切換已 commit；等實機跑 H（§9） |
+| GUI 版面 | 整頁不捲動：`html/body` 固定視窗高、`overflow:hidden`；內容超高時分頁以 CSS `zoom` 等比縮小（§4.13，`b77a6e6`） |
+| ARB List 模式 | **分頁目前反灰鎖定**（`app.js` `LIST_VERIFIED=false`，未實機驗證）；P0、C、A、D、H 前半、I 前半、D-EN、GUI 美化＋中英切換已 commit；等實機跑 H（§9） |
 | E36441A | 指令產生＋驗證＋實機驗證腳本已 commit（`1cfbe76`、`dca33f1`），未接 CLI／GUI，核心假設未實機驗證（§10） |
 | Codex 審查 | 第 2 輪已核准（§8） |
 
@@ -87,12 +88,19 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - 2026-10-12 Windows 11 本機打包成功、exe 能開、`--demo` 輸出正確；**未接實機**。spec 已排除 `pyvisa_py.testsuite`（否則 PyInstaller 分析當機）；`build.ps1` 用 `Resolve-Path` 絕對路徑（UNC 工作目錄下相對路徑會被誤判成模組）。
 - **原生 VISA 探測**（`transport._native_backend_safe()`）：該機 `pyvisa.ResourceManager("")` 會直接讓行程當掉（`STATUS_STACK_BUFFER_OVERRUN`，系統只有 IVI 轉發 DLL、沒有廠商實作），所以用子行程探測（逾時 8 s、結果快取），`backend="auto"` 在不安全時只留 `@py`；入口檔需 `multiprocessing.freeze_support()`。舊專案若有同一份 `transport.py` 建議手動同步。
 
+### 4.13 GUI 自適應（不出現整頁捲軸）
+- `style.css`：`html, body {height:100%}`、body 為 flex column＋`overflow:hidden`，`#seq-tab`、`#list-tab` 為 `flex:1; min-height:0`。
+- `layout.js` 的 `fitZoom(panel)`：先 `zoom=1` 量 `scrollHeight`，再設 `zoom = clamp(clientHeight/scrollHeight, 0.5, 1)`；隱藏分頁不動。Sequence 在 `seq.js`（觀察 `#seq-tab`），List 在 `list.js`（觀察 body、`drawDraft` 末尾、root 寬度變化後）呼叫。
+- Sequence 圖表 `flex:1`、**最小高度 404px**（8 通道 × 44px＋座標軸）。低於 44px/通道時 `seq.js` 會隱藏「延遲／持續」標籤、波形範圍也會壓平，所以不能再縮小圖表，改用整體縮放。
+- List 畫布是寫死像素高度（lanes 150、draft 190 起），因此只能用縮放；真正自適應需重寫繪圖。
+- ⚠️ 已在 macOS 目標視窗看過正常；**極低解析度（縮到 0.5 倍）與 Windows WebView2 下畫布尺寸（`clientWidth`）在 CSS zoom 的行為未驗證**，若畫面模糊或滑鼠點擊位置偏移，先查這裡。
+
 ## 5. ⚠️ 尚未驗證
 
 1. 多通道、帶載、兩台、ms 級精度（需示波器）。
 2. **跨台同時 `INIT:TRAN` 的實際時間差**沒量過（同台 < 0.15 ms），2 ms 是保守估計。
 3. 建議分配只看起點先後，不處理維持與下降階段；不知道哪條電源軌接哪個通道。
-4. GUI 版面只在 macOS 看過；Windows 11 執行檔只在 CI 與本機打包驗過。
+4. GUI 版面只在 macOS 看過（自適應縮放見 §4.13）；Windows 11 執行檔只在 CI 與本機打包驗過。
 5. `fire_together` barrier 逾時 5 s、各台 `*TRG` 無整體逾時，上限靠 VISA `--timeout`。
 
 ## 6. 沒做、也沒被要求
@@ -111,6 +119,8 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - 第 2 輪（`8789f7d`）：`_outputs_off` 要求回傳通道＝`populated_channels`、新增 `PlanRejected`、`_wait` 查詢失敗讓整個執行失敗、GUI 設定檔型別檢查、逾時訊息改全域通道號。`VERDICT: APPROVED`。
 
 ## 9. ARB List 模式（2026-10-13 起）
+
+**GUI 分頁目前鎖定反灰**：H 實機驗證前不開放。啟用：`web/app.js` 的 `LIST_VERIFIED` 改 `true`，並把 `tests/test_web_seq.py` 末段對 `tab-list` 的斷言改回 `!…disabled`。
 
 每通道一串波形段落，電腦端合成一條 CDW（65,535 點）下載。CSV 時序表不動，GUI 另開分頁。文件：`docs/arb_list_mode.md`（設計理由）、`docs/arb_list_mode_plan.md`（合約 §2、規則 R1–R7 §3、Track §5、必測 §6）。
 
