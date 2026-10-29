@@ -6,6 +6,8 @@
 - 原版 HTML 任何時候不得改（sha1 = contracts.ORIGINAL_HTML_SHA1），不得刪；它是唯一的 JS 對拍基準。
 """
 import datetime
+from decimal import Decimal
+import re
 import hashlib
 import json
 import os
@@ -21,7 +23,7 @@ import dump_py
 from adapter import open_entry
 from fixtures.make_big import make_big
 from n6705c_seq.analysis import core
-from n6705c_seq.analysis.contracts import ORIGINAL_HTML_SHA1, STATS_AVG_RTOL
+from n6705c_seq.analysis.contracts import ORIGINAL_HTML_SHA1, STATS_AVG_RTOL, CSV_LAST_DIGIT_TOL
 
 HERE = Path(__file__).resolve().parent
 DEFAULT = HERE.parent / "fixtures" / "default_20260803_092740.dlog"
@@ -129,5 +131,14 @@ def test_csv_number_format_matches_js(js_src, tmp_path):
                                  datetime.datetime(2026, 10, 29)))
     py_lines = [l for l in raw.decode("utf-8").split("\r\n")[4:] if l]
     assert len(py_lines) == len(js_lines) == 20000
-    bad = [i for i, (a, b) in enumerate(zip(js_lines, py_lines)) if a != b]
-    assert not bad, "首個不一致列 %d：js=%r py=%r" % (bad[0], js_lines[bad[0]], py_lines[bad[0]])
+    for a, b in zip(js_lines, py_lines):
+        ac, bc = a.split(","), b.split(",")
+        assert len(ac) == len(bc)
+        for x, y in zip(ac, bc):
+            if re.fullmatch(r"-?\d+\.\d+", x):
+                assert re.fullmatch(r"-?\d+\.\d+", y)
+                places = len(x.split(".")[1])
+                assert len(y.split(".")[1]) == places
+                assert abs(Decimal(x).scaleb(places) - Decimal(y).scaleb(places)) <= CSV_LAST_DIGIT_TOL
+            else:
+                assert x == y

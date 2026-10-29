@@ -53,6 +53,9 @@ class _Core:
     def _finishing(self, token):
         self._gate.finishing(token)
 
+    def _untimed(self, token) -> bool:
+        return self._gate.untimed(token)
+
     def _power_denied(self):
         state, _ = self._gate.state()
         key = "busy_body" if state == contracts.State.POWER else contracts.DENY_TEXT_KEY.get(

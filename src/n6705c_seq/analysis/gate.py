@@ -96,6 +96,14 @@ class Gate:
                     self._transition(c.State.FAULT)
         self._timer(c.POWER_FINISH_TIMEOUT_S, expired)
 
+    def untimed(self, token) -> bool:
+        """Atomically admit the owner to untimed work and invalidate its timer."""
+        with self._lock:
+            if self._state != c.State.POWER or token != self._owner:
+                return False
+            self._finish_epoch += 1
+            return True
+
     def enter(self, prepare):
         """Prepare the server under the same lock as admission; failure leaves idle."""
         with self._lock:

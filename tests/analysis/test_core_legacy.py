@@ -19,7 +19,7 @@ ALL12 = [(k, c) for c in (1, 2, 3, 4) for k in ("V", "I")] + [("P", c) for c in 
 
 
 def _open(path, cache_root):
-    meta, _blob = core.open_dlog(path.read_bytes(), cache_root)
+    meta, _blob = core.open_dlog(path, cache_root)
     return meta, core.get_handle(meta["handle"], cache_root)
 
 
@@ -43,7 +43,7 @@ def _csv_lines(entry, specs, lo, hi, offset=False, max_limit=0.0):
 
 
 def test_open_metadata_and_lod_layout(default_dlog, cache_root):
-    meta, blob = core.open_dlog(default_dlog.read_bytes(), cache_root)
+    meta, blob = core.open_dlog(default_dlog, cache_root)
     assert meta["tint"] == 0.00098303996
     assert meta["nRecords"] == 81380
     assert meta["activeChannels"] == [1, 2, 3, 4]
@@ -65,13 +65,12 @@ def test_open_metadata_and_lod_layout(default_dlog, cache_root):
 
 
 def test_same_content_is_cache_hit(default_dlog, cache_root):
-    data = default_dlog.read_bytes()
-    meta1, _ = core.open_dlog(data, cache_root)
+    meta1, _ = core.open_dlog(default_dlog, cache_root)
     meta_file = cache_root / meta1["handle"] / "meta.json"
     stamp = meta_file.stat().st_mtime_ns
-    meta2, _ = core.open_dlog(data, cache_root)
+    meta2, _ = core.open_dlog(default_dlog, cache_root)
     assert meta2["handle"] == meta1["handle"]
-    assert meta_file.stat().st_mtime_ns == stamp, "同內容第二次開檔應命中快取，不得重寫"
+    assert meta_file.stat().st_mtime_ns >= stamp, "快取命中應更新 LRU 時間"
 
 
 def test_values_slice_shape(default_dlog, cache_root):
@@ -163,9 +162,11 @@ def test_csv_three_columns_header_and_rows(default_dlog, cache_root):
     assert len([l for l in lines[4:] if l]) == 2001
 
 
-def test_bad_input_and_unknown_handle(cache_root):
+def test_bad_input_and_unknown_handle(cache_root, tmp_path):
+    bad = tmp_path / "bad.dlog"
+    bad.write_bytes(b"not a dlog file")
     with pytest.raises(core.DlogFormatError):
-        core.open_dlog(b"not a dlog file", cache_root)
+        core.open_dlog(bad, cache_root)
     with pytest.raises(KeyError):
         core.get_handle("nope", cache_root)
 
@@ -186,7 +187,7 @@ def test_trailer_sorted_before_main(tmp_path, cache_root):
     assert (vneg[:5] < 0).all(), "電壓負值不該被校正"
 
 
-def test_partial_channel_and_nan_excluded(cache_root):
+def test_partial_channel_and_nan_excluded(cache_root, tmp_path):
     # CH1 記錄 V+I、CH2 只記錄 V；CH1 電壓第 2 筆是 NaN
     hdr = ("<dlog>\n<tint>0.001</tint>\n"
            '<channel id="1"><sense_volt>1</sense_volt><sense_curr>1</sense_curr></channel>\n'
@@ -194,7 +195,9 @@ def test_partial_channel_and_nan_excluded(cache_root):
            "</dlog>\n").encode("utf-8")
     recs = [(1.0, 0.5, 3.0), (float("nan"), 0.5, 3.0), (3.0, 0.5, 3.0)]
     part = hdr + struct.pack(">Q", 3) + b"".join(struct.pack(">fff", *r) for r in recs)
-    _meta, _blob = core.open_dlog(part, cache_root)
+    path = tmp_path / "partial.dlog"
+    path.write_bytes(part)
+    _meta, _blob = core.open_dlog(path, cache_root)
     entry = core.get_handle(_meta["handle"], cache_root)
 
     assert core.compute_stats(entry, "V", 1, 0, 2, False, 0.0) == {"min": 1.0, "max": 3.0, "avg": 2.0}

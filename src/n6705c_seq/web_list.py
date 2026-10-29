@@ -139,6 +139,7 @@ class ListApi:
     def _list_work(self, plan, compiled, frames, resources, demo, capture, token):
         group = None
         try:
+            self._finishing(token)
             try:
                 if not demo and e36441a.kind_of([e36441a.detect_model(r) for r in resources]) == "E36441A":
                     raise ValueError(tr("e36441a_no_list"))
@@ -155,7 +156,12 @@ class ListApi:
             except ValueError as exc:
                 raise execute.PlanRejected(str(exc)) from exc
             cap = {} if capture else None
-            execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap)
+            if not self._untimed(token):
+                return
+            try:
+                execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap)
+            finally:
+                self._finishing(token)
             text = tr("list_hold_done") if plan.hold_last else tr("list_done")
             if cap and "error" in cap:
                 text += tr("capture_error", error=cap.pop("error"))

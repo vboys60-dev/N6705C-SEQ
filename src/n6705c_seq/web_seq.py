@@ -181,12 +181,18 @@ class SeqApi:
 
     def _work(self, rows, frames, resources, demo, hold_dc, capture, token):
         try:
+            self._finishing(token)
             if not demo:
                 try:
                     if kind_of([detect_model(r) for r in resources]) == "E36441A":
                         if capture:
                             raise ValueError(tr("e36441a_no_capture"))
-                        run_resources(resources, rows, hold_dc=hold_dc)
+                        if not self._untimed(token):
+                            return
+                        try:
+                            run_resources(resources, rows, hold_dc=hold_dc)
+                        finally:
+                            self._finishing(token)
                         self._seq_result("info", tr("sequence_hold_done") if hold_dc else tr("sequence_done"))
                         return
                 except Exception as exc:
@@ -199,7 +205,12 @@ class SeqApi:
                 return
             try:
                 cap = {} if capture else None
-                run_plan(group, rows, hold_dc=hold_dc, capture=cap)
+                if not self._untimed(token):
+                    return
+                try:
+                    run_plan(group, rows, hold_dc=hold_dc, capture=cap)
+                finally:
+                    self._finishing(token)
                 text = tr("sequence_hold_done") if hold_dc else tr("sequence_done")
                 if cap and "error" in cap:
                     text += tr("capture_error", error=cap.pop("error"))

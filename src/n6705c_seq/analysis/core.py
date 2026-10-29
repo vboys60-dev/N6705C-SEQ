@@ -1,19 +1,27 @@
-"""
-.dlog 解析／正規化快取／LOD 建置。
+"""Path-based DLOG normalization, mapped caches and bounded analysis operations.
 
-解析邏輯（parse_dlog + build_lod）逐行對應瀏覽器端 Worker 原始碼
-（dlog_viewer_mem3_preview.html 內的 DLOG_WORKER_SRC），已用該 Worker
-原始碼在 Node 上實際執行、跟本檔輸出做 float32 逐位元組對拍驗證過
-（含單聲道／多聲道／pre-trigger trailer 三種情況），不可獨立修改其中
-任一份而不同步驗證另一份。
+Numerical behavior is checked against the frozen original JavaScript in the
+parity suite. Cache publication and mapping ownership are coordinated through
+analysis.storage; no instrument or GUI modules are imported here.
 """
 import hashlib
 import json
+import os
+import secrets
+import shutil
 import re
 import struct
 from pathlib import Path
 
 import numpy as np
+
+from . import storage
+from .contracts import (CACHE_VERSION, CACHE_MAX_BYTES, CORE_CHUNK_RECORDS,
+                        CORE_MAX_VALUES_SPAN, HASH_CHUNK_BYTES, CSV_ROWS_PER_CHUNK,
+                        MAX_BUCKETS, MAX_KEYS, AnalysisCancelled, LimitExceeded,
+                        SourceChanged, CacheWriteError)
+
+_check_cancel = storage.check_cancel
 
 LOD_F0 = 64
 LOD_F1 = 4096
@@ -23,13 +31,16 @@ class DlogFormatError(ValueError):
     pass
 
 
-def parse_dlog(buf: bytes) -> dict:
+def parse_dlog(buf, *, _destination=None, cancel=None, progress=None) -> dict:
     end_marker = b"</dlog>\n"
     idx = buf.find(end_marker)
     if idx == -1:
         raise DlogFormatError("找不到 </dlog> 結束標記，檔案格式不符")
     header_end = idx + len(end_marker)
-    header_text = buf[:header_end].decode("utf-8")
+    try:
+        header_text = buf[:header_end].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise DlogFormatError("Invalid UTF-8 header") from exc
 
     tint_m = re.search(r"<tint>([^<]+)</tint>", header_text)
     if not tint_m:
@@ -84,22 +95,51 @@ def parse_dlog(buf: bytes) -> dict:
     trailer_records = remain_after_main // bytes_per_record
     total_records = trailer_records + n_records
 
-    V = {ch: np.zeros(total_records, dtype=np.float32) for ch in active_channels}
-    I = {ch: np.zeros(total_records, dtype=np.float32) for ch in active_channels}
+    if total_records == 0:
+        raise DlogFormatError("No records")
+    def allocate(kind, ch):
+        if _destination is None:
+            return np.zeros(total_records, dtype=np.float32)
+        arr = np.lib.format.open_memmap(_destination / f"{kind}{ch}.npy",
+                                       mode="w+", dtype="<f4", shape=(total_records,))
+        _destination_maps.append(arr)
+        # A missing field is represented by zeros, without materializing a heap array.
+        if (ch, kind) not in fields:
+            for start in range(0, total_records, CORE_CHUNK_RECORDS):
+                _check_cancel(cancel)
+                arr[start:start + CORE_CHUNK_RECORDS] = 0
+        return arr
+    _destination_maps = []
+    V, I = {}, {}
+    try:
+        for ch in active_channels:
+            V[ch] = allocate("V", ch)
+            I[ch] = allocate("I", ch)
+    except BaseException:
+        _close_maps(_destination_maps)
+        raise
 
     def read_block(start_off, count, dest_offset):
-        if count == 0:
-            return
-        raw = np.frombuffer(
-            buf, dtype=">f4", count=count * len(fields) * per_field, offset=start_off
-        ).reshape(count, len(fields), per_field)
-        vals = raw[:, :, 0]
-        for k, (ch, kind) in enumerate(fields):
-            (V if kind == "V" else I)[ch][dest_offset:dest_offset + count] = vals[:, k]
+        for start in range(0, count, CORE_CHUNK_RECORDS):
+            _check_cancel(cancel)
+            size = min(CORE_CHUNK_RECORDS, count - start)
+            raw = np.frombuffer(buf, dtype=">f4", count=size * len(fields) * per_field,
+                                offset=start_off + start * bytes_per_record).reshape(size, len(fields), per_field)
+            try:
+                for k, (ch, kind) in enumerate(fields):
+                    (V if kind == "V" else I)[ch][dest_offset + start:dest_offset + start + size] = raw[:, k, 0]
+            finally:
+                del raw  # release the exported source buffer even on write/progress failure
+            if progress:
+                progress("parse", 100 * (dest_offset + start + size) / total_records)
 
-    if trailer_records > 0:
-        read_block(records_start + main_bytes, trailer_records, 0)
-    read_block(records_start, n_records, trailer_records)
+    try:
+        if trailer_records > 0:
+            read_block(records_start + main_bytes, trailer_records, 0)
+        read_block(records_start, n_records, trailer_records)
+    except BaseException:
+        _close_maps(_destination_maps)
+        raise
 
     return {
         "tint": tint,
@@ -114,155 +154,290 @@ def parse_dlog(buf: bytes) -> dict:
     }
 
 
-def build_lod(V: dict, I: dict, n: int, active_channels: list) -> dict:
+def build_lod(V: dict, I: dict, n: int, active_channels: list, *, cancel=None, progress=None) -> dict:
+    """Vectorized reductions over aligned blocks preserve the legacy float32 LOD."""
     lod = {}
-    group_size = LOD_F1 // LOD_F0
-    for ch in active_channels:
-        Vc, Ic = V[ch], I[ch]
+    chunk = max(LOD_F0, (CORE_CHUNK_RECORDS // LOD_F0) * LOD_F0)
+    for ci, ch in enumerate(active_channels):
         len0 = max(1, -(-n // LOD_F0))
-
-        vMin0 = np.empty(len0, dtype=np.float32); vMax0 = np.empty(len0, dtype=np.float32)
-        iMin0 = np.empty(len0, dtype=np.float32); iMax0 = np.empty(len0, dtype=np.float32)
-        pMin0 = np.empty(len0, dtype=np.float32); pMax0 = np.empty(len0, dtype=np.float32)
-        for b in range(len0):
-            start = b * LOD_F0
-            end = min(n - 1, start + LOD_F0 - 1)
-            vseg = Vc[start:end + 1]
-            iseg = Ic[start:end + 1]
-            pseg = (vseg.astype(np.float64) * iseg.astype(np.float64)).astype(np.float32)
-            vMin0[b] = vseg.min(); vMax0[b] = vseg.max()
-            iMin0[b] = iseg.min(); iMax0[b] = iseg.max()
-            pMin0[b] = pseg.min(); pMax0[b] = pseg.max()
-
-        len1 = max(1, -(-len0 // group_size))
-        vMin1 = np.empty(len1, dtype=np.float32); vMax1 = np.empty(len1, dtype=np.float32)
-        iMin1 = np.empty(len1, dtype=np.float32); iMax1 = np.empty(len1, dtype=np.float32)
-        pMin1 = np.empty(len1, dtype=np.float32); pMax1 = np.empty(len1, dtype=np.float32)
-        for b in range(len1):
-            start = b * group_size
-            end = min(len0 - 1, start + group_size - 1)
-            vMin1[b] = vMin0[start:end + 1].min(); vMax1[b] = vMax0[start:end + 1].max()
-            iMin1[b] = iMin0[start:end + 1].min(); iMax1[b] = iMax0[start:end + 1].max()
-            pMin1[b] = pMin0[start:end + 1].min(); pMax1[b] = pMax0[start:end + 1].max()
-
-        lod["V%d" % ch] = {"level0": (vMin0, vMax0), "level1": (vMin1, vMax1)}
-        lod["I%d" % ch] = {"level0": (iMin0, iMax0), "level1": (iMin1, iMax1)}
-        lod["P%d" % ch] = {"level0": (pMin0, pMax0), "level1": (pMin1, pMax1)}
+        arrays = {k: (np.empty(len0, dtype="<f4"), np.empty(len0, dtype="<f4")) for k in "VIP"}
+        for start in range(0, n, chunk):
+            _check_cancel(cancel)
+            end = min(n, start + chunk)
+            v = V[ch][start:end]
+            i = I[ch][start:end]
+            power = (v.astype(np.float64) * i.astype(np.float64)).astype(np.float32)
+            indices = np.arange(0, end - start, LOD_F0)
+            dest = slice(start // LOD_F0, -(-end // LOD_F0))
+            for kind, values in (("V", v), ("I", i), ("P", power)):
+                arrays[kind][0][dest] = np.minimum.reduceat(values, indices)
+                arrays[kind][1][dest] = np.maximum.reduceat(values, indices)
+            if progress:
+                progress("lod", 100 * (ci + end / n) / len(active_channels))
+        for kind, (mn, mx) in arrays.items():
+            indices = np.arange(0, len0, LOD_F1 // LOD_F0)
+            lod[f"{kind}{ch}"] = {"level0": (mn, mx),
+                                  "level1": (np.minimum.reduceat(mn, indices),
+                                             np.maximum.reduceat(mx, indices))}
     return lod
 
 
-# ---------------------------------------------------------------------------
-# 正規化快取：以檔案內容 sha1 當快取鍵（content-addressed），內容相同必定
-# 命中同一份快取、內容不同必定是不同資料夾，不需要另外比對來源檔 mtime。
-# ---------------------------------------------------------------------------
-
-def _digest_of(data: bytes) -> str:
-    return hashlib.sha1(data).hexdigest()
+def _close_maps(arrays):
+    for arr in arrays:
+        if isinstance(arr, np.memmap) and not arr._mmap.closed:
+            arr._mmap.close()
 
 
-def _cache_dir(cache_root: Path, digest: str) -> Path:
-    return cache_root / digest
+def _close_entry(entry):
+    _close_maps(list(entry["V"].values()) + list(entry["I"].values()) + list(entry["lod"].values()))
 
 
-def _is_cached(cache_dir: Path) -> bool:
-    return (cache_dir / "meta.json").exists()
+_open_cache = {}  # (resolved cache root, digest) -> Entry; guarded by storage.cache_lock
 
 
-def _write_cache(cache_dir: Path, parsed: dict, lod: dict) -> None:
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    for ch in parsed["activeChannels"]:
-        np.save(cache_dir / ("V%d.npy" % ch), parsed["V"][ch])
-        np.save(cache_dir / ("I%d.npy" % ch), parsed["I"][ch])
-
-    lod_arrays = {}
-    for key, levels in lod.items():
-        l0min, l0max = levels["level0"]
-        l1min, l1max = levels["level1"]
-        lod_arrays[key + "_l0min"] = l0min
-        lod_arrays[key + "_l0max"] = l0max
-        lod_arrays[key + "_l1min"] = l1min
-        lod_arrays[key + "_l1max"] = l1max
-    np.savez(cache_dir / "lod.npz", **lod_arrays)
-
-    meta = {
-        "tint": parsed["tint"],
-        "declaredTime": parsed["declaredTime"],
-        "nRecords": parsed["nRecords"],
-        "channelModels": parsed["channelModels"],
-        "activeChannels": parsed["activeChannels"],
-        "fields": parsed["fields"],
-        "minmax": parsed["minmax"],
-    }
-    (cache_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+def _cache_key(digest, cache_root):
+    return (str(Path(cache_root).resolve()), digest)
 
 
-def open_dlog(data: bytes, cache_root: Path) -> tuple:
-    """
-    解析（或命中快取）一份 .dlog 內容。回傳 (meta, lod_blob)。
-
-    LOD 隨開檔一次送到前端常駐（僅佔 raw 的 4.8%，10M×4ch 約 15MB），讓前端在
-    大範圍縮放時能完全本地、同步地算出分桶——實測本地 0.16ms／幀 vs 每幀跟 server
-    要 9.4ms／幀，重繪頻繁（拖曳、切主題、勾曲線）時差距會直接反映成操作延遲。
-
-    走二進位而不是 JSON：level0 在千萬筆檔案有 15 萬筆浮點數，
-    JSON 會膨脹數倍且前端還要付一次 parse 成本。
-    """
-    digest = _digest_of(data)
-    cache_dir = _cache_dir(cache_root, digest)
-
-    if not _is_cached(cache_dir):
-        parsed = parse_dlog(data)
-        lod = build_lod(parsed["V"], parsed["I"], parsed["nRecords"], parsed["activeChannels"])
-        _write_cache(cache_dir, parsed, lod)
-
-    meta = json.loads((cache_dir / "meta.json").read_text(encoding="utf-8"))
-    meta["handle"] = digest
-    meta["lodFactors"] = {"level0": LOD_F0, "level1": LOD_F1}
-
-    lod_npz = np.load(cache_dir / "lod.npz")
-    layout = []
-    chunks = []
-    cursor = 0
-    for ch in meta["activeChannels"]:
-        for kind in ("V", "I", "P"):
-            key = "%s%d" % (kind, ch)
-            for level, suffix in ((0, "l0"), (1, "l1")):
-                for which in ("min", "max"):
-                    arr = np.ascontiguousarray(lod_npz[key + "_" + suffix + which], dtype="<f4")
-                    layout.append({
-                        "key": key, "level": level, "which": which,
-                        "offset": cursor, "length": int(arr.size),
-                    })
-                    chunks.append(arr.tobytes())
-                    cursor += arr.nbytes
-    meta["lodLayout"] = layout
-    return meta, b"".join(chunks)
+def _load_entry(digest, cache_root):
+    directory = Path(cache_root) / digest
+    maps = []
+    try:
+        meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+        if meta["cacheVersion"] != CACHE_VERSION or meta["nRecords"] <= 0:
+            raise ValueError("Invalid cache version or record count")
+        if not meta["activeChannels"] or any(ch not in (1, 2, 3, 4) for ch in meta["activeChannels"]):
+            raise ValueError("Invalid channels")
+        def load(name, length):
+            arr = np.load(directory / (name + ".npy"), mmap_mode="r", allow_pickle=False)
+            maps.append(arr)
+            if arr.shape != (length,) or arr.dtype != np.dtype("<f4"):
+                raise ValueError("Invalid cache array: " + name)
+            return arr
+        n = meta["nRecords"]
+        V = {ch: load(f"V{ch}", n) for ch in meta["activeChannels"]}
+        I = {ch: load(f"I{ch}", n) for ch in meta["activeChannels"]}
+        lod = {}
+        for ch in meta["activeChannels"]:
+            for kind in "VIP":
+                for level, length in ((0, -(-n // LOD_F0)), (1, -(-n // LOD_F1))):
+                    for which in ("min", "max"):
+                        name = f"{kind}{ch}_l{level}{which}"
+                        lod[name] = load(name, length)
+        return {"meta": meta, "dir": directory, "V": V, "I": I, "lod": lod,
+                "digest": digest, "_refs": 0, "_key": _cache_key(digest, cache_root)}
+    except BaseException:
+        _close_maps(maps)
+        raise
 
 
-# ---------------------------------------------------------------------------
-# 資料存取層：一律以 memmap 開快取的 .npy，不把原始樣本讀進 RAM。
-# ---------------------------------------------------------------------------
-
-_open_cache = {}  # digest -> {"meta":dict, "dir":Path, "V":{ch:memmap}, "I":{ch:memmap}, "lod":NpzFile}
-
-
-def get_handle(digest: str, cache_root: Path) -> dict:
-    entry = _open_cache.get(digest)
-    if entry is not None:
+def acquire_handle(digest: str, cache_root: Path) -> dict:
+    if not re.fullmatch(r"[0-9a-f]{40}", digest):
+        raise KeyError(digest)
+    with storage.cache_lock:
+        key = _cache_key(digest, cache_root)
+        entry = _open_cache.get(key)
+        if entry is None:
+            try:
+                entry = _load_entry(digest, cache_root)
+            except (OSError, ValueError, KeyError, TypeError, EOFError) as exc:
+                raise KeyError(digest) from exc
+            _open_cache[key] = entry
+        os.utime(entry["dir"] / "meta.json", None)
+        entry["_refs"] += 1
         return entry
-    cache_dir = _cache_dir(cache_root, digest)
-    if not _is_cached(cache_dir):
-        raise KeyError("未知的 handle（快取不存在，請重新載入檔案）：%s" % digest)
-    meta = json.loads((cache_dir / "meta.json").read_text(encoding="utf-8"))
-    entry = {
-        "meta": meta,
-        "dir": cache_dir,
-        "V": {ch: np.load(cache_dir / ("V%d.npy" % ch), mmap_mode="r") for ch in meta["activeChannels"]},
-        "I": {ch: np.load(cache_dir / ("I%d.npy" % ch), mmap_mode="r") for ch in meta["activeChannels"]},
-        "lod": np.load(cache_dir / "lod.npz"),
-    }
-    _open_cache[digest] = entry
-    return entry
+
+
+def release_handle(entry):
+    # No I/O on the CONTROL /release route.
+    with storage.cache_lock:
+        if _open_cache.get(entry["_key"]) is entry and entry["_refs"] > 0:
+            entry["_refs"] -= 1
+
+
+get_handle = acquire_handle
+
+
+def close_all():
+    with storage.cache_lock:
+        for key, entry in list(_open_cache.items()):
+            if not entry["_refs"]:
+                _close_entry(entry)
+                del _open_cache[key]
+        return not _open_cache
+
+
+def _evict(cache_root, keep):
+    with storage.cache_lock:
+        root = str(Path(cache_root).resolve())
+        pinned = {keep}
+        for key, entry in list(_open_cache.items()):
+            if key[0] != root:
+                continue
+            if entry["_refs"]:
+                pinned.add(entry["digest"])
+            else:
+                _close_entry(entry)
+                del _open_cache[key]
+        storage.evict_lru(cache_root, CACHE_MAX_BYTES, pinned)
+
+
+def _stamp(path):
+    st = Path(path).stat()
+    return st.st_size, st.st_mtime_ns
+
+
+def _assert_source(path, stamp):
+    try:
+        same = _stamp(path) == stamp
+    except OSError:
+        same = False
+    if not same:
+        raise SourceChanged(str(path))
+
+
+def _digest_of(path, cancel=None, progress=None):
+    digest = hashlib.sha1()
+    size = Path(path).stat().st_size
+    done = 0
+    with Path(path).open("rb") as f:
+        while True:
+            _check_cancel(cancel)
+            chunk = f.read(HASH_CHUNK_BYTES)
+            if not chunk:
+                break
+            digest.update(chunk)
+            done += len(chunk)
+            if progress:
+                progress("hash", min(100, 100 * done / max(1, size)))
+    return digest.hexdigest()
+
+
+def _build_cache(path, directory, stamp, cancel, progress):
+    source = None
+    parsed = None
+    try:
+        if not stamp[0]:
+            raise DlogFormatError("Empty file")
+        _assert_source(path, stamp)
+        source = np.memmap(path, mode="r", dtype=np.uint8)
+        _assert_source(path, stamp)
+        def parse_progress(stage, pct):
+            _assert_source(path, stamp)
+            if progress:
+                progress(stage, pct)
+            _check_cancel(cancel)
+            _assert_source(path, stamp)
+        try:
+            parsed = parse_dlog(source._mmap, _destination=directory, cancel=cancel, progress=parse_progress)
+        except (ValueError, UnicodeError, struct.error) as exc:
+            _assert_source(path, stamp)
+            if isinstance(exc, DlogFormatError):
+                raise
+            raise DlogFormatError(str(exc)) from exc
+        _assert_source(path, stamp)
+        lod = build_lod(parsed["V"], parsed["I"], parsed["nRecords"], parsed["activeChannels"],
+                        cancel=cancel, progress=progress)
+        for key, levels in lod.items():
+            for level in (0, 1):
+                for which, arr in zip(("min", "max"), levels[f"level{level}"]):
+                    _check_cancel(cancel)
+                    np.save(directory / f"{key}_l{level}{which}.npy", arr)
+        meta = {k: v for k, v in parsed.items() if k not in ("V", "I")}
+        meta["cacheVersion"] = CACHE_VERSION
+        (directory / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        _assert_source(path, stamp)
+    finally:
+        try:
+            if parsed is not None:
+                arrays = list(parsed["V"].values()) + list(parsed["I"].values())
+                try:
+                    for arr in arrays:
+                        arr.flush()
+                finally:
+                    _close_maps(arrays)
+        finally:
+            if source is not None:
+                source._mmap.close()
+
+
+def open_dlog(path, cache_root: Path, *, cancel=None, progress=None) -> tuple:
+    path, cache_root = Path(path), Path(cache_root).resolve()
+    _check_cancel(cancel)
+    stamp = _stamp(path)
+    digest = _digest_of(path, cancel, progress)
+    _assert_source(path, stamp)
+    storage.ensure_dir(cache_root)
+    directory = cache_root / digest
+    with storage.path_lock(directory, cancel):
+        # Validation, mapping registration and LRU share one lock, so no eviction can
+        # slip between cache validation and pinning.
+        with storage.cache_lock:
+            key = _cache_key(digest, cache_root)
+            old = _open_cache.get(key)
+            if old is not None and not old["_refs"]:
+                _close_entry(old)
+                del _open_cache[key]
+            try:
+                entry = acquire_handle(digest, cache_root)
+            except KeyError:
+                entry = None
+            if entry is None and directory.exists():
+                try:
+                    if directory.is_dir():
+                        shutil.rmtree(directory)
+                    else:
+                        directory.unlink()
+                except OSError as exc:
+                    raise CacheWriteError(f"{directory}: {exc}") from exc
+        if entry is None:
+            tmp = cache_root / f"{digest}.tmp-{os.getpid()}-{secrets.token_hex(8)}"
+            try:
+                with storage.cache_lock:
+                    tmp.mkdir()
+                    storage._active_tmp.add(tmp)
+                _build_cache(path, tmp, stamp, cancel, progress)
+                _check_cancel(cancel)
+                _assert_source(path, stamp)
+                with storage.cache_lock:
+                    # Another process may have published while we were building.
+                    if not directory.exists():
+                        try:
+                            os.replace(tmp, directory)
+                        except OSError:
+                            if not directory.exists():
+                                raise
+                    entry = acquire_handle(digest, cache_root)
+            except (AnalysisCancelled, SourceChanged, DlogFormatError):
+                raise
+            except OSError as exc:
+                raise CacheWriteError(f"{directory}: {exc}") from exc
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+                with storage.cache_lock:
+                    storage._active_tmp.discard(tmp)
+        try:
+            _assert_source(path, stamp)
+            _check_cancel(cancel)
+            meta = dict(entry["meta"], handle=digest, fileName=path.name,
+                        lodFactors={"level0": LOD_F0, "level1": LOD_F1})
+            chunks, layout, cursor = [], [], 0
+            for ch in meta["activeChannels"]:
+                for kind in "VIP":
+                    for level in (0, 1):
+                        for which in ("min", "max"):
+                            _check_cancel(cancel)
+                            arr = entry["lod"][f"{kind}{ch}_l{level}{which}"]
+                            layout.append(dict(key=f"{kind}{ch}", level=level, which=which,
+                                               offset=cursor, length=int(arr.size)))
+                            chunks.append(arr.tobytes())
+                            cursor += arr.nbytes
+            meta["lodLayout"] = layout
+            os.utime(directory / "meta.json", None)
+            _evict(cache_root, digest)
+            return meta, b"".join(chunks)
+        finally:
+            release_handle(entry)
 
 
 # splitmix64：由索引推導 (0,1] 均勻亂數。同一索引不論落在哪個請求切片、哪個端點，
@@ -299,24 +474,39 @@ def apply_current_offset(seg: np.ndarray, idx_start: int, max_limit: float) -> n
     return out
 
 
-def get_values(entry: dict, kind: str, ch: int, lo: int, hi: int,
-               offset: bool, max_limit: float) -> np.ndarray:
-    """
-    取 [lo, hi] 閉區間的數值。P（功率）以 float64 相乘後回傳 float64——
-    與前端 getVal() 的 `getV()*getI()`（JS number 即 float64）對應；
-    LOD 內的 P 則是 float32（build_lod 會轉型），兩者精度差異沿襲現行行為。
-    """
-    if hi < lo:
-        return np.zeros(0, dtype=np.float64)
+def _values_at(entry, kind, ch, indices, offset, max_limit):
     if kind == "V":
-        return np.array(entry["V"][ch][lo:hi + 1], dtype=np.float32)
-    cur = entry["I"][ch][lo:hi + 1]
+        return np.array(entry["V"][ch][indices], dtype=np.float32)
+    cur = np.array(entry["I"][ch][indices], dtype=np.float32)
     if offset:
-        cur = apply_current_offset(cur, lo, max_limit)
+        neg = np.isfinite(cur) & (cur < 0)
+        if max_limit <= 0:
+            cur[neg] = 0
+        elif neg.any():
+            if isinstance(indices, slice):
+                idx = np.nonzero(neg)[0].astype(np.uint64) + np.uint64(indices.start)
+            else:
+                idx = indices[neg].astype(np.uint64)
+            cur[neg] = (max_limit * offset_uniform(idx)).astype(np.float32)
     if kind == "I":
-        return np.array(cur, dtype=np.float32)
-    volt = entry["V"][ch][lo:hi + 1]
-    return volt.astype(np.float64) * cur.astype(np.float64)
+        return cur
+    return entry["V"][ch][indices].astype(np.float64) * cur.astype(np.float64)
+
+
+def get_values(entry: dict, kind: str, ch: int, lo: int, hi: int,
+               offset: bool, max_limit: float, *, cancel=None) -> np.ndarray:
+    _check_cancel(cancel)
+    if hi - lo + 1 > CORE_MAX_VALUES_SPAN:
+        raise LimitExceeded("get_values span")
+    n = entry["meta"]["nRecords"]
+    lo, hi = max(0, lo), min(n - 1, hi)
+    out = np.empty(max(0, hi - lo + 1), dtype=np.float64 if kind == "P" else np.float32)
+    for start in range(lo, hi + 1, CORE_CHUNK_RECORDS):
+        _check_cancel(cancel)
+        end = min(hi + 1, start + CORE_CHUNK_RECORDS)
+        out[start - lo:end - lo] = _values_at(entry, kind, ch, slice(start, end), offset, max_limit)
+    _check_cancel(cancel)
+    return out
 
 
 def _lod_level(entry: dict, key: str, level: int):
@@ -354,13 +544,19 @@ def _buckets_from_lod_level(level, idx_lo, idx_hi, tint, n_buckets):
 
 
 def compute_buckets(entry: dict, kind: str, ch: int, idx_lo: int, idx_hi: int,
-                    n_buckets: int, offset: bool, max_limit: float):
+                    n_buckets: int, offset: bool, max_limit: float, *, cancel=None):
     """
     與前端 computeViewBuckets()（HTML L1242）的三條路徑逐行對應，
     差別只在資料來源是 memmap 而非 Float32Array，且不含 posOffset（純視覺位移，留在前端）。
     回傳 (t[], min[], max[])。
     """
+    _check_cancel(cancel)
+    if n_buckets > MAX_BUCKETS:
+        raise LimitExceeded("bucket count")
+    if n_buckets < 1:
+        raise ValueError("bucket count must be positive")
     tint = entry["meta"]["tint"]
+    _check_cancel(cancel)
     n_rec = entry["meta"]["nRecords"]
     idx_lo = max(0, min(n_rec - 1, idx_lo))
     idx_hi = max(0, min(n_rec - 1, idx_hi))
@@ -369,7 +565,7 @@ def compute_buckets(entry: dict, kind: str, ch: int, idx_lo: int, idx_hi: int,
         return np.zeros(0), np.zeros(0), np.zeros(0)
 
     if count <= n_buckets:
-        vals = get_values(entry, kind, ch, idx_lo, idx_hi, offset, max_limit).astype(np.float64)
+        vals = get_values(entry, kind, ch, idx_lo, idx_hi, offset, max_limit, cancel=cancel).astype(np.float64)
         t = np.arange(idx_lo, idx_hi + 1, dtype=np.float64) * tint
         return t, vals, vals
 
@@ -389,20 +585,30 @@ def compute_buckets(entry: dict, kind: str, ch: int, idx_lo: int, idx_hi: int,
     bucket_size = -(-count // n_buckets)
     starts = np.arange(idx_lo, idx_hi + 1, bucket_size)
     ends = np.minimum(idx_hi, starts + bucket_size - 1)
-    vals = get_values(entry, kind, ch, idx_lo, idx_hi, offset, max_limit).astype(np.float64)
-    seg = (starts - idx_lo).astype(np.intp)
-    mn = np.minimum.reduceat(vals, seg)
-    mx = np.maximum.reduceat(vals, seg)
+    mn = np.full(starts.size, np.inf)
+    mx = np.full(starts.size, -np.inf)
+    # Preserve global bucket boundaries even when a chunk cuts through a bucket.
+    for start in range(idx_lo, idx_hi + 1, CORE_CHUNK_RECORDS):
+        _check_cancel(cancel)
+        end = min(idx_hi + 1, start + CORE_CHUNK_RECORDS)
+        vals = get_values(entry, kind, ch, start, end - 1, offset, max_limit, cancel=cancel)
+        first = (start - idx_lo) // bucket_size
+        last = (end - 1 - idx_lo) // bucket_size
+        cuts = np.maximum(start, starts[first:last + 1]) - start
+        mn[first:last + 1] = np.minimum(mn[first:last + 1], np.minimum.reduceat(vals, cuts))
+        mx[first:last + 1] = np.maximum(mx[first:last + 1], np.maximum.reduceat(vals, cuts))
+
     t = ((starts + ends) / 2.0) * tint
     return t, mn, mx
 
 
-_STATS_CHUNK = 4_000_000  # 分塊掃描，避免超大區間一次materialize 出巨大陣列
+_STATS_CHUNK = CORE_CHUNK_RECORDS  # 分塊掃描，避免超大區間一次materialize 出巨大陣列
 
 
 def compute_stats(entry: dict, kind: str, ch: int, idx_lo: int, idx_hi: int,
-                  offset: bool, max_limit: float) -> dict:
+                  offset: bool, max_limit: float, *, cancel=None) -> dict:
     """與前端 computeRangeStats()（HTML L1343）對應：區間內的 min/max/avg。"""
+    _check_cancel(cancel)
     n_rec = entry["meta"]["nRecords"]
     idx_lo = max(0, min(n_rec - 1, idx_lo))
     idx_hi = max(0, min(n_rec - 1, idx_hi))
@@ -411,7 +617,7 @@ def compute_stats(entry: dict, kind: str, ch: int, idx_lo: int, idx_hi: int,
     mn, mx, total, cnt = np.inf, -np.inf, 0.0, 0
     for start in range(idx_lo, idx_hi + 1, _STATS_CHUNK):
         end = min(idx_hi, start + _STATS_CHUNK - 1)
-        vals = get_values(entry, kind, ch, start, end, offset, max_limit).astype(np.float64)
+        vals = get_values(entry, kind, ch, start, end, offset, max_limit, cancel=cancel).astype(np.float64)
         # 排除 NaN/Inf：否則會污染整段統計，且 json.dumps 產生的 NaN 前端 JSON.parse 解不開
         vals = vals[np.isfinite(vals)]
         if vals.size == 0:
@@ -433,7 +639,7 @@ def compute_stats(entry: dict, kind: str, ch: int, idx_lo: int, idx_hi: int,
 # 格式與前端 L2776-2803 完全一致：三行前導 + 標題列，CRLF 行尾，UTF-8 無 BOM。
 # ---------------------------------------------------------------------------
 
-_CSV_ROWS_PER_CHUNK = 20000
+_CSV_ROWS_PER_CHUNK = CSV_ROWS_PER_CHUNK
 
 
 def ctime_like(d) -> str:
@@ -453,12 +659,17 @@ def _js_number(x: float) -> str:
 
 
 def iter_csv(primary: dict, columns: list, idx_lo: int, idx_hi: int,
-             offset: bool, max_limit: float, now):
+             offset: bool, max_limit: float, now, *, cancel=None):
     """
     columns：[{entry, kind, ch, label}, ...]，順序即輸出欄位順序。
     時間軸一律以 primary 的取樣格點為準；其他來源（比對檔）依同一時間點就近取樣，
     超出其記錄範圍的儲存格留空——與前端 L2782-2797 的行為一致。
     """
+    _check_cancel(cancel)
+    if len(columns) > MAX_KEYS:
+        raise LimitExceeded("CSV columns")
+    idx_lo = max(0, min(primary["meta"]["nRecords"] - 1, idx_lo))
+    idx_hi = max(0, min(primary["meta"]["nRecords"] - 1, idx_hi))
     tint = primary["meta"]["tint"]
     header = "\r\n".join([
         "14585A Exported Waveform",
@@ -469,6 +680,7 @@ def iter_csv(primary: dict, columns: list, idx_lo: int, idx_hi: int,
     yield (header + "\r\n").encode("utf-8")
 
     for start in range(idx_lo, idx_hi + 1, _CSV_ROWS_PER_CHUNK):
+        _check_cancel(cancel)
         end = min(idx_hi, start + _CSV_ROWS_PER_CHUNK - 1)
         count = end - start + 1
         times = np.arange(start, end + 1, dtype=np.float64) * tint
@@ -481,7 +693,7 @@ def iter_csv(primary: dict, columns: list, idx_lo: int, idx_hi: int,
                 continue
             if entry is primary:
                 col_values.append(get_values(entry, c["kind"], c["ch"], start, end,
-                                             offset, max_limit).astype(np.float64))
+                                             offset, max_limit, cancel=cancel).astype(np.float64))
                 continue
             # 其他來源：以主檔案的時間點就近取樣（round 到最近索引）
             other_tint = entry["meta"]["tint"]
@@ -490,17 +702,11 @@ def iter_csv(primary: dict, columns: list, idx_lo: int, idx_hi: int,
             valid = (kk >= 0) & (kk < other_n)
             vals = np.full(count, np.nan, dtype=np.float64)
             if valid.any():
-                lo2, hi2 = int(kk[valid].min()), int(kk[valid].max())
-                block = get_values(entry, c["kind"], c["ch"], lo2, hi2,
-                                   offset, max_limit).astype(np.float64)
-                vals[valid] = block[kk[valid] - lo2]
+                _check_cancel(cancel)
+                vals[valid] = _values_at(entry, c["kind"], c["ch"], kk[valid], offset, max_limit)
             col_values.append(vals)
 
-        lines = []
-        for r in range(count):
-            cells = ["%.8f" % times[r]]
-            for vals in col_values:
-                v = vals[r]
-                cells.append("" if np.isnan(v) else "%.9f" % v)
-            lines.append(",".join(cells))
+        fmt = "%.8f" + ",%.9f" * len(columns)
+        lines = [(fmt % row).replace(",nan", ",") for row in zip(times, *col_values)]
+        _check_cancel(cancel)
         yield ("\r\n".join(lines) + "\r\n").encode("utf-8")

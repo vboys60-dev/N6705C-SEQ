@@ -296,3 +296,138 @@ def test_selftest_server_callsite(api, monkeypatch, check):
     assert api._fake_server.checks == 1
     assert api._starts == [True]
     assert api._fake_server.shutdowns == [1.0]
+
+
+@pytest.fixture
+def power_worker(api, monkeypatch):
+    """Wire all three main calls to fakes while retaining actual worker cleanup."""
+    def setup(kind, main=lambda *a, **kw: None, *, demo=False):
+        closed = []
+        group = SimpleNamespace(instruments=[SimpleNamespace(close=lambda: closed.append(True))])
+        model = "E36441A" if kind == "resources" else "N6705C"
+        monkeypatch.setattr(web_seq, "detect_model", lambda r: model)
+        monkeypatch.setattr(web_list.e36441a, "detect_model", lambda r: model)
+        monkeypatch.setattr(web_seq, "connect_group", lambda r: group)
+        monkeypatch.setattr(web_list.execute, "connect_group", lambda r: group)
+        monkeypatch.setattr(web_seq.InstrumentGroup, "demo", lambda **kw: group)
+        monkeypatch.setattr(web_seq, "run_resources", main)
+        monkeypatch.setattr(web_seq, "run_plan", main)
+        monkeypatch.setattr(web_list.execute, "run_functions", main)
+        monkeypatch.setattr(web_list.synth, "to_functions", lambda *a: {})
+        token = api._reserve("power")
+        assert token is not None
+        def run():
+            if kind == "functions":
+                api._list_work(SimpleNamespace(hold_last=False), None, 1, ["x"], demo, False, token)
+            else:
+                api._work([], 1, ["x"], demo, False, False, token)
+        return run, token, closed
+    return setup
+
+
+@pytest.mark.parametrize("kind,stage", [
+    ("resources", "detect"), ("plan", "detect"), ("plan", "connect"),
+    ("functions", "detect"), ("functions", "connect"),
+])
+def test_worker_frontend_timeout_skips_main_and_cleans_up(api, monkeypatch, power_worker, kind, stage):
+    monkeypatch.setattr(c, "POWER_FINISH_TIMEOUT_S", 0.03)
+    calls = []
+    run, token, closed = power_worker(kind, lambda *a, **kw: calls.append(True))
+    entered, resume = threading.Event(), threading.Event()
+    module = web_list.e36441a if kind == "functions" else web_seq
+    name = "detect_model"
+    if stage == "connect":
+        module = web_list.execute if kind == "functions" else web_seq
+        name = "connect_group"
+    original = getattr(module, name)
+    def blocked(*args):
+        entered.set()
+        assert resume.wait(2)
+        return original(*args)
+    monkeypatch.setattr(module, name, blocked)
+    releases = []
+    release = api._release
+    monkeypatch.setattr(api, "_release", lambda t: releases.append(release(t)))
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(1)
+        wait_for(lambda: api._gate.state()[0] == c.State.FAULT)
+        assert api._untimed(token) is False
+    finally:
+        resume.set()
+        worker.join(1)
+    assert not worker.is_alive()
+    assert calls == []
+    # E36441A opens and closes sessions inside run_resources, which was skipped.
+    assert closed == ([] if kind == "resources" else [True])
+    assert releases == [False] and api._gate.worker_done
+    assert api._gate.state()[0] == c.State.FAULT
+
+
+@pytest.mark.parametrize("kind,demo", [
+    ("resources", False), ("plan", False), ("functions", False),
+    ("plan", True), ("functions", True),
+])
+def test_main_work_is_untimed_beyond_timeout(api, monkeypatch, power_worker, kind, demo):
+    monkeypatch.setattr(c, "POWER_FINISH_TIMEOUT_S", 0.03)
+    def main(*args, **kwargs):
+        # Let the real initial timer fire while the main call is still running.
+        time.sleep(0.09)
+        assert api._gate.state()[0] == c.State.POWER
+    run, token, closed = power_worker(kind, main, demo=demo)
+    run()
+    assert api._gate.state()[0] == c.State.IDLE
+    assert closed == ([] if kind == "resources" else [True])
+
+
+@pytest.mark.parametrize("kind", ["resources", "plan", "functions"])
+@pytest.mark.parametrize("raises", [False, True])
+def test_main_exit_rearms_before_blocked_result_or_except(api, monkeypatch, power_worker, kind, raises):
+    monkeypatch.setattr(c, "POWER_FINISH_TIMEOUT_S", 0.03)
+    def main(*args, **kwargs):
+        if raises:
+            raise RuntimeError("main failed")
+    run, token, closed = power_worker(kind, main)
+    entered, resume = threading.Event(), threading.Event()
+    emit = api._emit
+    def blocked_result(event):
+        # Keep fault notification free to run under the gate lock.
+        if event[0] == "result" and event[2] == i18n.tr("run_result"):
+            assert event[1] == ("error" if raises else "info")
+            entered.set()
+            assert resume.wait(2)
+        emit(event)
+    monkeypatch.setattr(api, "_emit", blocked_result)
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(1)
+        wait_for(lambda: api._gate.state()[0] == c.State.FAULT)
+    finally:
+        resume.set()
+        worker.join(1)
+    assert not worker.is_alive()
+    assert api._gate.state()[0] == c.State.FAULT
+    assert api._gate.worker_done
+    assert closed == ([] if kind == "resources" else [True])
+
+
+@pytest.mark.parametrize("kind", ["resources", "plan", "functions"])
+def test_main_entry_timer_race_has_single_winner(api, monkeypatch, power_worker, kind):
+    calls, timers, admissions = [], [], []
+    run, token, closed = power_worker(kind, lambda *a, **kw: calls.append(True))
+    monkeypatch.setattr(api._gate, "_timer", lambda seconds, callback: timers.append(callback))
+    untimed = api._untimed
+    def expire_before_admission(t):
+        timers[-1]()
+        accepted = untimed(t)
+        admissions.append(accepted)
+        return accepted
+    monkeypatch.setattr(api, "_untimed", expire_before_admission)
+    run()
+    assert admissions == [False] and calls == []
+    assert closed == ([] if kind == "resources" else [True])
+    assert api._release(token) is False
+    assert api._gate.state()[0] == c.State.FAULT
+    assert api._gate.worker_done

@@ -284,3 +284,61 @@ def test_all_contract_edges_are_exercised(monkeypatch):
         wait_for(lambda: gate.state()[0] != c.State.DRAINING)
         record(events)
     assert edges == {(source, target) for source, targets in c.TRANSITIONS.items() for target in targets}
+
+
+def test_untimed_owner_checks_do_not_mutate_state(monkeypatch):
+    gate, events = make_gate()
+    timers = []
+    monkeypatch.setattr(gate, "_timer", lambda seconds, callback: timers.append(callback))
+    old = gate.reserve("power")
+    assert gate.release(old)
+    gen = enter(gate)
+    assert gate.leave(gen)
+    wait_for(lambda: gate.state()[0] == c.State.IDLE)
+    token = gate.reserve("power")
+    gate.finishing(token)
+    before = (gate.payload(), gate._finish_epoch, list(events))
+    for invalid in (None, old, c.Token("power", token.gen - 1, token.serial),
+                    c.Token("power", token.gen, token.serial + 1)):
+        assert gate.untimed(invalid) is False
+        assert (gate.payload(), gate._finish_epoch, events) == before
+    # Invalid calls must not invalidate the owner's timer.
+    timers[-1]()
+    assert gate.state()[0] == c.State.FAULT
+    before = (gate.payload(), gate._finish_epoch, list(events))
+    assert gate.untimed(token) is False
+    gate.finishing(token)
+    assert (gate.payload(), gate._finish_epoch, events) == before
+    assert gate.release(token) is False
+    gate.on_closing()
+    assert gate.untimed(token) is False
+    assert gate.state()[0] == c.State.CLOSING
+
+
+def test_untimed_invalidates_old_timer_and_finishing_rearms(monkeypatch):
+    gate, _ = make_gate()
+    timers = []
+    monkeypatch.setattr(gate, "_timer", lambda seconds, callback: timers.append(callback))
+    token = gate.reserve("power")
+    gate.finishing(token)
+    assert gate.untimed(token) is True
+    timers[-1]()
+    assert gate.state()[0] == c.State.POWER
+    epoch = gate._finish_epoch
+    gate.finishing(c.Token("power", token.gen, token.serial + 1))
+    assert gate._finish_epoch == epoch and len(timers) == 1
+    gate.finishing(token)
+    gate.finishing(token)
+    timers[-2]()
+    assert gate.state()[0] == c.State.POWER
+    timers[-1]()
+    assert gate.state()[0] == c.State.FAULT
+    gate.finishing(token)
+    assert len(timers) == 3
+
+    gate, _ = make_gate()
+    token = gate.reserve("power")
+    assert gate.release(token)
+    before = (gate.payload(), gate._finish_epoch)
+    assert gate.untimed(token) is False
+    assert (gate.payload(), gate._finish_epoch) == before

@@ -29,7 +29,13 @@ def cache_root(tmp_path) -> Path:
 
 @pytest.fixture(autouse=True)
 def _fresh_handles():
-    # core 的 _open_cache 以 digest 為鍵、與快取根目錄無關；換了暫存目錄必須清掉，否則會拿到舊句柄
-    core._open_cache.clear()
+    def cleanup():
+        # Tests may acquire multiple compatibility handles. Release them before
+        # removing temp directories, including on Windows.
+        for entry in list(core._open_cache.values()):
+            while entry["_refs"]:
+                core.release_handle(entry)
+        assert core.close_all()
+    cleanup()
     yield
-    core._open_cache.clear()
+    cleanup()
