@@ -47,7 +47,12 @@ POWER_ALLOWED_STATES = frozenset({State.IDLE})
 ANALYSIS_ENTER_STATES = frozenset({State.IDLE})
 
 DRAINING_TIMEOUT_S = 30.0         # from analysis_leave() accepted -> jobs stopped + resources closed
-POWER_FINISH_TIMEOUT_S = 60.0     # from latest _finishing(token) (re-armable) -> _release(token)
+POWER_FINISH_TIMEOUT_S = 60.0     # from latest _finishing(token) (re-armable) -> successful _untimed(token)
+                                  # or _release(token). Untimed: only run_resources / run_plan / run_functions
+# _untimed(token) -> bool: atomic under the gate lock; True only if state is POWER and token == owner.
+# False (timer already faulted, stale/released token) -> worker skips the main work and goes to cleanup.
+# Main work is wrapped in try/finally whose finally calls _finishing(token) (re-arm on return or raise).
+# Supersedes report section 5 "timed from stop/finish signal": timing starts at each _finishing call.
 CLOSING_CLEANUP_TIMEOUT_S = 10.0  # from background cleanup start -> server shut down; then os._exit
 CANCEL_LATENCY_S = 2.0            # cancel flag set -> long job raises AnalysisCancelled (10M x 4ch)
 GRANT_TTL_S = 300.0               # path grant lifetime after the dialog returns
@@ -488,6 +493,8 @@ class StartServer(Protocol):
 
 Kind = Literal["V", "I", "P"]
 KEY_PATTERN = r"^[VIP][1-4]$"  # "V1", "I3", "P2"
+HANDLE_PATTERN = r"^[0-9a-f]{40}$"  # h / hc: sha1 hex; mismatch -> 400, well-formed but unknown -> 404 handle
+# Exceptions: /release with an unknown handle -> 200 {ok:true}; optional hc absent -> not validated
 
 
 class DlogMeta(TypedDict):
@@ -587,6 +594,10 @@ CSV_LABEL_FMT = "{file} Instrument A Channel {ch} {word} Avg"  # file: "File1"(p
 CSV_KIND_WORD = {"V": "Voltage", "I": "Current", "P": "Power"}
 # Lines: title, "Sampling Period:"+String(tint), "Date:"+ctime_like(now), "Time,"+labels; then rows
 # "%.8f" time, "%.9f" values, "" for NaN/missing. CRLF, UTF-8 without BOM.
+# Parity vs JS toFixed is NOT byte-exact: non-numeric text exact; each number has the same decimals
+# and may differ by CSV_LAST_DIGIT_TOL in the last decimal (JS rounds binary halves up, Python %f
+# rounds half to even). Compare as decimal.Decimal scaled to the last digit.
+CSV_LAST_DIGIT_TOL = 1
 
 
 class CoreApi(Protocol):
