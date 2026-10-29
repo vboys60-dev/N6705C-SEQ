@@ -605,7 +605,15 @@ class CoreApi(Protocol):
 
     def open_dlog(self, path: str | Path, cache_root: Path, *, cancel: CancelFlag | None = None,
                   progress: Callable[[str, float], None] | None = None) -> tuple[OpenMeta, bytes]:
-        """(meta, lod_blob). meta has handle (sha1 hex), lodFactors, lodLayout, fileName."""
+        """(meta, lod_blob). meta has handle (sha1 hex), lodFactors, lodLayout, fileName.
+        = open_handle then release_handle: returns holding NO reference (doc 6.5). Not for server."""
+
+    def open_handle(self, path: str | Path, cache_root: Path, *, cancel: CancelFlag | None = None,
+                    progress: Callable[[str, float], None] | None = None
+                    ) -> tuple[OpenMeta, bytes, Entry]:
+        """Like open_dlog, but returns holding one reference on Entry (taken under the cache lock
+        together with cache validation); ownership passes to the caller on return. On any exception
+        core releases it first. Server /open adopts this same reference (doc 6.5)."""
 
     def acquire_handle(self, digest: str, cache_root: Path) -> Entry:
         """Refcount +1; KeyError if unknown."""

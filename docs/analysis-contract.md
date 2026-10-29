@@ -1,6 +1,6 @@
 # 離線分析分頁｜T0 介面契約（v1）
 
-日期：2026-10-29（修訂：Codex 第 7 輪 9 項必修；T1/T2 後 5 項：`_finishing` 範圍、legacy 測試、T4 HTTP 原檢查、CSV 容差、未搬工具；Codex 第 8 輪 5 項：`_untimed` 原子回傳 bool、主工作 try/finally 重新計時、主工作內部 I/O 例外明列、取代報告 §5 計時起點、`/release` 例外）　擁有者：T0　來源：`報告分析升級版/升級報告.md`（§5、§7、§9）
+日期：2026-10-29（修訂：Codex 第 7 輪 9 項必修；T1/T2 後 5 項：`_finishing` 範圍、legacy 測試、T4 HTTP 原檢查、CSV 容差、未搬工具；Codex 第 8 輪 5 項：`_untimed` 原子回傳 bool、主工作 try/finally 重新計時、主工作內部 I/O 例外明列、取代報告 §5 計時起點、`/release` 例外；T3/T4 後 2 項：handle 引用交接（§6.5）、來源檔外部截短已知風險（§6.6））　擁有者：T0　來源：`報告分析升級版/升級報告.md`（§5、§7、§9）
 
 本文件與 `src/n6705c_seq/analysis/contracts.py` 是**同一份契約的兩半**：數字、列舉、型別以 `contracts.py` 為準（程式直接 import），語意與流程以本文件為準。兩者衝突時，回報 T0 修正，不得各自解讀。
 
@@ -239,7 +239,7 @@ def start_server(gate: GateForServer, *, cache_root: Path | None = None,
 - JSON body 上限 `MAX_JSON_BODY_BYTES`=64 KiB，超過 413。
 - CSV 欄位標題、格式、行尾、聲道缺欄留空規則與舊 `dlog_server._handle_export_csv` 完全相同（常數 `CSV_TITLE_LINE`、`CSV_LABEL_FMT`、`CSV_KIND_WORD`；欄位物件 `CsvColumn`：`missing` 預設 False，該來源 `meta.fields` 沒記錄此欄（P 需 V、I 都有）即為 True、整欄留空）；`cols` 有 `c:` 但缺 `hc` → 400；`name` 參數取消（檔名由對話框決定）。
 - 寫檔（`/save`、`/export/csv`、`/prefs`）一律 `storage.atomic_write_*`（§6.3）：**同目標互斥＋唯一暫存檔**——持有該目標（`Path.resolve()` 後）的程序內鎖期間，寫 `<目標>.<secrets.token_hex(4)>.part`（`PART_SUFFIX`）→ `os.replace`；失敗或取消只刪自己的暫存檔，原檔不動。同目標的併發請求依序執行、後者覆蓋前者（`/prefs` 為 last-writer-wins）。CSV 為串流寫入，不受 `MAX_RESPONSE_BYTES` 限制。
-- server 為每次 `/open` 持有一次 `core.acquire_handle`，`/release` 放掉；每個請求處理期間另外 acquire/release 一次（pin）。`release_resources()`：放掉所有持有，再 `core.close_all()`，回其結果。
+- server 為每次 `/open` 持有一個引用：**接手 `core.open_handle` 帶回的那一個**（§6.5，不另呼叫 `acquire_handle`），`/release` 放掉；每個請求處理期間另外 acquire/release 一次（pin）。`release_resources()`：放掉所有持有，再 `core.close_all()`，回其結果。
 - 移除舊的 `SimpleHTTPRequestHandler(directory=...)`；非白名單一律 404。
 
 ---
@@ -319,7 +319,8 @@ T3 把 `open_dlog` 改成路徑 API（§6.2）時，必須在同一變更內同�
 
 以 `contracts.CoreApi` 為準：
 ```python
-open_dlog(path, cache_root, *, cancel=None, progress=None) -> tuple[dict, bytes]
+open_handle(path, cache_root, *, cancel=None, progress=None) -> tuple[dict, bytes, Entry]  # 返回時已持有 1 個引用，移交呼叫端（§6.5）
+open_dlog(path, cache_root, *, cancel=None, progress=None) -> tuple[dict, bytes]  # = open_handle 後立即 release；返回時零引用
 acquire_handle(digest, cache_root) -> Entry      # refcount +1，未知 → KeyError
 release_handle(entry) -> None
 close_all() -> bool                              # 關閉所有零引用映射；仍有引用回 False
@@ -340,7 +341,7 @@ iter_csv(primary, columns, idx_lo, idx_hi, offset, max_limit, now, *, cancel=Non
 - 來源檔以 `np.memmap(path, mode="r")` 讀；sha1 以 `HASH_CHUNK_BYTES` 分塊；雜湊前與解析後比對 `(st_size, st_mtime_ns)`，變了丟 `SourceChanged`。
 - V/I 以 `np.lib.format.open_memmap` 寫入 `<root>/<sha1>.tmp-<pid>-<rand>/`，LOD 分塊計算；完成後關閉所有映射再 `os.replace` 到 `<root>/<sha1>/`；目標已存在（他人先建好）則丟棄 tmp。
 - 同 digest 併發建置：程序內 per-digest 鎖；後到者等待後直接命中。
-- 引用計數／pin：被引用的 digest 不得被 LRU 淘汰；Windows 上淘汰／取代前必須先關映射。
+- 引用計數／pin：被引用的 digest 不得被 LRU 淘汰；Windows 上淘汰／取代前必須先關映射。誰在何時持有引用、交接與釋放責任見 §6.5。
 - 快取上限 `CACHE_MAX_BYTES`（5 GiB）LRU（以 `meta.json` mtime 當最近使用）；`cacheVersion` 不符或檔案缺損 → 刪掉重建。
 - 上限：`get_values` 範圍 > `CORE_MAX_VALUES_SPAN`（4,000,000）丟 `LimitExceeded`；`compute_buckets` 的 `n_buckets` > `MAX_BUCKETS` 丟 `LimitExceeded`；`compute_stats` 與校正開啟的逐筆分桶路徑以 `CORE_CHUNK_RECORDS` 分塊，不一次 materialize 整段；`iter_csv` 比對檔取樣率不同時以索引直接取值，不取 `lo2..hi2` 整段。
 
@@ -361,6 +362,64 @@ atomic_write_iter(path, chunks: Iterable[bytes], cancel=None) -> int
 ### 6.4 偏好 `analysis_prefs.json`
 
 `{"version": 1, "theme": "dark"|"soft-dark"|"light", "fold": {"<details id>": bool}}`；預設 `PREFS_DEFAULT`。版本不符或損壞 → 用預設、不報錯。語言**不**存（跟 SEQ）。不碰 SEQ 的 `~/.n6705c_seq_gui.json`。
+
+### 6.5 Handle 引用（pin）交接規則
+
+**定義**：引用＝`Entry["_refs"]` 的一單位；`_refs > 0` 的 entry 稱 **pinned**。所有增減都在 `storage.cache_lock` 內做。
+
+**空窗（本節要消除的問題）**：若 `/open` 寫成「`open_dlog` 返回（零引用）→ server 再 `acquire_handle`」，兩步之間別的執行緒的 `open_*` 會跑 `_evict`：關掉零引用的映射，且超過 `CACHE_MAX_BYTES` 時可能刪掉這個目錄 → server 的 `acquire_handle` 得到 `KeyError`，一次成功的開檔回 404 `handle`。所以引用必須**從 core 驗證快取那一刻起不中斷地**交給 server。
+
+規則：
+1. **第一個引用由 core 取得**：`open_handle(path, cache_root, *, cancel=None, progress=None) -> (OpenMeta, bytes, Entry)` 在 `cache_lock` 內、與快取驗證／發布同一次持鎖時呼叫 `acquire_handle`（命中或建置發布後皆同），**帶著這個引用返回**。返回那一刻持有權移交呼叫端。
+2. **返回前失敗由 core 負責**：`open_handle` 在取得引用之後、返回之前的任何例外（`AnalysisCancelled`、`SourceChanged`、`DlogFormatError`、`CacheWriteError`、組 LOD blob 時的錯）→ core 先 `release_handle` 自己的引用再往上丟。呼叫端拿到例外時什麼都不欠。
+3. **`open_dlog` 保留為零引用包裝**：`open_dlog(...) -> (meta, blob)`＝`open_handle` 後立即 `release_handle`，返回時零引用、語意與 1566bfc 相同。只給不需持有 handle 的呼叫端（`test_core_legacy.py`、`adapter.py`、`test_core.py`、`test_memory.py`）。server **不得**用「`open_dlog`＋`acquire_handle`」組合（那就是空窗）。依據：不改 `open_dlog` 本身的返回語意，是因為上述測試多處依賴「`open_dlog` 後 `close_all()` 為 True」。
+4. **server 接手同一引用、不另加**：`/open` 固定寫法——
+   ```python
+   meta, blob, entry = app.core.open_handle(path, app.cache_root, cancel=job.cancel)
+   try:
+       app.adopt(meta["handle"], entry)   # 只把這個 entry 記入 held，不呼叫 core
+   except BaseException:
+       app.core.release_handle(entry)
+       raise
+   self._send(200, "application/octet-stream", frame_binary(meta, blob))
+   ```
+   `open_handle` 返回到 `adopt` 之間不得有 I/O、cancel 檢查或可阻塞呼叫；`adopt` 只做程序內鎖＋`append`。
+5. **接手後的釋放只有兩處**：`/release {h}`（自 `held[h]` pop 一個並 `release_handle`）、`release_resources()`→放掉全部 `held`。`adopt` 之後才發生的取消、或 `_send` 失敗（iframe 斷線、重載），**不**另外釋放：iframe 沒拿到 handle、不會送 `/release`，這個引用留到 leave／closing 的 `release_resources` 回收。依據：同 digest 共用一份映射，重送 `/open` 只增加計數、不增加記憶體；代價只是該 digest 在本世代內不會被 LRU 淘汰。
+6. **與 leave 併發不漏收**：`adopt` 必在該 JOB 的 `job_end` 之前完成（`_route` 的 `finally`）；gate 只在 job 數歸零後才呼叫 `release_resources`（§1.1 `draining`）。所以引用不是被 `release_resources` 收回，就是根本沒產生。
+7. **每請求 pin**（`/samples`、`/buckets`、`/stats`、`/export/csv`）：`acquire_handle` → 處理 → `finally: release_handle`，不變。
+8. **pinned 對 LRU 與關映射的行為**：
+   - `_evict` 傳給 `storage.evict_lru` 的 `pinned`＝同 `cache_root` 下所有 `_refs > 0` 的 digest ∪ 本次開檔的 digest。pinned 一律跳過：不刪目錄、不關映射。全部 pinned 時允許超過 `CACHE_MAX_BYTES`（軟上限，不報錯）。
+   - `close_all()`、`_evict` 的關映射、`open_handle` 的「同 digest 舊 entry 重載」都只碰 `_refs == 0` 的 entry。
+   - 非 pinned：先關映射（Windows 要求）再刪目錄。單一目錄刪除失敗（`OSError`，例如 Windows 上被其他進程或防毒開著）→ 跳過該目錄、繼續淘汰下一個；**不得**讓觸發淘汰的 `open_*` 失敗。刪到一半的目錄由下次 `open_handle` 驗證失敗後重建（§6.2「檔案缺損 → 刪掉重建」）。
+9. `release_handle` 對已不在 `_open_cache` 或 `_refs == 0` 的 entry 無作用、不丟例外（冪等）。
+
+驗收（H1–H3、H7 屬 T3 `tests/analysis/test_core.py`；H4–H6 屬 T4 `tests/analysis/test_http.py` 或 `test_server_core.py`）：
+- **H1**：`open_handle` 返回時該 entry `_refs == 1`；`open_dlog` 返回時 `_refs == 0` 且 `close_all()` 為 True。
+- **H2**：`open_handle` 在取得引用之後被取消（以 `progress` 回呼設旗標）／`SourceChanged`／組 blob 丟例外（monkeypatch）→ 往上丟，且 `close_all()` 為 True（無殘留引用）。
+- **H3 空窗併發淘汰（core）**：`CACHE_MAX_BYTES` monkeypatch 為 1。`open_handle(A)` 返回後不釋放，接著 `open_dlog(B)`（觸發 `_evict`）→ A 目錄仍在、A 的映射未關（`get_values(A, …)` 可讀且與返回前相同）。`release_handle(A)` 後再 `open_dlog(B)` → A 目錄被刪。
+- **H4 空窗併發淘汰（server）**：真 core、`CACHE_MAX_BYTES`=1。包裝 `core.open_handle`：真實返回後、交回 server 前，同步跑一次 `core.open_dlog(B)`（模擬另一執行緒在空窗內淘汰）→ `/open` A 回 200，隨後同 handle 的 `/samples` 回 200（不是 404 `handle`）。（同一注入點放在 1566bfc 的 `open_dlog` 與 `app.hold` 之間，現況應回 404——此案例就是打在空窗上。）
+- **H5**：monkeypatch `adopt` 丟例外 → `/open` 回 500 `internal`，該 digest `_refs == 0`。
+- **H6 leave 與 /open 併發**：`/open` 以 `progress` 回呼阻塞在 `open_handle` 內 → 呼叫 `analysis_leave` → 放行；`open_handle` 若已過最後 cancel 檢查而正常返回，仍被 `adopt`；draining 完成後 `close_all()` 為 True、所有 `_refs == 0`。
+- **H7**：monkeypatch `shutil.rmtree` 對某一個非 pinned 目錄丟 `PermissionError` → 跳過該目錄、其他可淘汰目錄照刪，觸發的 `open_*` 正常返回。
+
+### 6.6 已知風險：讀取中來源檔被外部截短
+
+**風險**：冷開檔（快取未命中）時，core 以 `np.memmap` 映射來源 `.dlog` 解析。`(st_size, st_mtime_ns)` 只在檢查點比對（雜湊前後、每次 parse 進度回呼前後、建置前後），**兩檢查點之間**被外部截短時，讀到已超出檔尾的頁：
+- macOS／Linux：`SIGBUS`，Python 無法以例外攔截，**整個 GUI 進程結束**（v1 同進程，§0 題 3）。
+- Windows：一般程式無法截短或刪除已被映射的檔（OS 拒絕寫入端），本機磁碟上大致不會發生；網路磁碟斷線時讀頁失敗同樣使進程結束。
+- 只換檔（另存新檔再 `os.replace`、刪除）不觸發：映射持有舊 inode，下一個檢查點以 `SourceChanged` 擋下。
+- 快取建好之後的讀取只碰快取 `.npy`、不再讀來源檔，所以風險窗只在冷開檔期間。快取目錄內 `.npy` 被外部截短同理（使用者手動清快取目錄；不在本節保證範圍）。
+
+stat 比對**無法完全防止**此情況；v1 處理方式＝**最佳努力，不保證**：
+1. **UI 提示**（T5，Viewer 自己的字典，不進 `I18N_KEYS`）：開檔進度顯示期間，進度旁顯示「分析中請勿移動、覆寫或編輯來源檔」／"Do not move, overwrite or edit the source file while it is being analyzed"。
+2. **core 錯誤對應**：讀來源的步驟（開頭 `_stamp`、雜湊的 `read`、建立 `np.memmap`、parse）遇 `OSError` → 再 stat 一次：檔案不見或 stamp 不同 → 丟 `SourceChanged`（409 `source_changed`）；stamp 相同 → 原例外照舊（寫快取的 `OSError` 仍為 `CacheWriteError` 507）。
+3. 不攔截 `SIGBUS`／page fault（不裝 signal handler、不靠 `faulthandler` 救援）。升級路徑＝§7.3 worker 子進程（worker 死掉只回 500，不帶走 GUI）；要做時回報 T0 改契約。
+
+驗收（T3 `tests/analysis/test_core.py`；只驗檢查點與錯誤對應，不驗 SIGBUS）：
+- **R1**：`progress("hash", …)` 回呼內把來源檔截短 → `SourceChanged`，無 `*.tmp-*` 殘留。
+- **R2**：`progress("parse", …)` 回呼內把來源檔截短 → `SourceChanged`（回呼後的檢查點先擋下，不讀到檔尾外）、無 tmp 殘留。
+- **R3**：grant 發出後、`open_handle` 前刪除來源檔 → `SourceChanged`（HTTP 409 `source_changed`，不是 507）。
+- **R4**：monkeypatch 雜湊的讀取在刪檔後丟 `OSError` → `SourceChanged`；檔案未變而讀取丟 `OSError` → 原例外（非 `SourceChanged`）。
 
 ---
 
@@ -474,6 +533,11 @@ RSS 預算算式：`2 × 原始 V/I 位元組（來源 memmap＋快取 memmap �
 - 可改：`src/n6705c_seq/analysis/core.py`（接手）、`src/n6705c_seq/analysis/storage.py`（新建）、`tests/analysis/test_core_legacy.py`（接手）、`tests/analysis/parity_tools/adapter.py`（接手）、`tests/analysis/parity_tools/test_parity.py`（接手，只改 CSV 比對為 §8 容差）、`tests/analysis/test_core.py`、`tests/analysis/test_storage.py`、`tests/analysis/test_memory.py`。
 - 依據：§5、§6.2–6.4、§7、§8。
 - 驗收：parity 全過（重跑貼輸出；CSV 依 §8 容差）；`open_dlog` 改路徑 API 時 `test_core_legacy.py` 與 `adapter.py` 同步改完（§6.1）；快取損壞可復原；取消 ≤2 s 且不留半成品；§7.2 預算（峰值 RSS 與 tracemalloc 皆過；大檔測試以環境變數啟用）；同目標併發 `atomic_write_*` 不互刪暫存檔、結果為完整檔；比對檔取樣率不同時不爆記憶體。
+- **T3 後續修補（1566bfc 未涵蓋，需補；同一可改清單；T4 修補 1 依賴本項 1）**：
+  1. 新增 `core.open_handle`（§6.5 規則 1–3）。現況 `open_dlog` 在最後的 `finally: release_handle(entry)`（`core.py:439–440`）返回時已是零引用，正是空窗來源。改法：把現有 `open_dlog` 本體改名為 `open_handle`，最後的 `finally` 改成 `except BaseException: release_handle(entry); raise`，回傳加 `entry`；`open_dlog` 改為呼叫 `open_handle` 後 `release_handle` 的包裝。
+  2. `storage.evict_lru` 的 `shutil.rmtree(p)`（`storage.py:111`）沒有例外處理：Windows 上某目錄被占用時 `PermissionError` 會從 `_evict`（`core.py:437`，不在 `OSError→CacheWriteError` 的 `try` 內）原樣丟出，讓 `/open` 回 507。改為單一目錄失敗跳過（§6.5 規則 8）。
+  3. 讀來源 `OSError` 的對應（§6.6 處理 2）：現況開頭 `_stamp`（`core.py:367`）、`_digest_of`（`core.py:368`）的 `OSError` 原樣丟出（server 對應 507 `storage`）；`_build_cache` 內讀來源的 `OSError` 被 `open_dlog` 包成 `CacheWriteError`（`core.py:413–414`）。改為再 stat、變了或不見 → `SourceChanged`。
+  4. 測試：§6.5 H1、H2、H3、H7；§6.6 R1–R4（R1、R2 現況應已過；R3、R4 現況不過）。改完重跑 parity、`pytest tests/analysis`。
 
 ### T4（Sonnet）server
 - 可改：`src/n6705c_seq/analysis/server.py`（新建）、`tests/analysis/test_server*.py`、`tests/analysis/test_http.py`。
@@ -485,10 +549,15 @@ RSS 預算算式：`2 × 原始 V/I 位元組（來源 memmap＋快取 memmap �
   3. `/buckets` layout：每 key `offset` 指向 t，min 在 `offset + length×4`、max 在 `offset + 2×length×4`；`length ≤ n`；切出值與 `core.compute_buckets` 相同（含 `offset=1` 時 I 的 min／max 全 > 0）。
   4. Content-Disposition 與 `name`：原版 `GET /export/csv?name=t.csv` 回 `Content-Disposition: attachment; filename*=UTF-8''…`。新版改 `POST /export/csv`＋grant：回應為 JSON，**不得**帶 `Content-Disposition`；回應 `name` ＝授權路徑 basename（含非 ASCII 檔名原樣）；body 多帶 `name` 鍵 → 忽略，不影響實際檔名。輸出檔前 4 行與列數照原檢查（標題、`Sampling Period:0.00098303996`、3 欄標籤、2001 列）。
   5. 壞 handle：原版 `h=nope` → 400。新版：不符 `HANDLE_PATTERN` → 400 `bad_request`；格式正確但未知（40 個 `0`）→ 404 `handle`；例外 `/release` 同一未知 handle → 200 `{ok:true}`；`/export/csv` 缺 `hc`（且 `cols` 無 `c:`）→ 不因格式報 400。
+- **T4 後續修補（1566bfc 未涵蓋，需補；同一可改清單；需 T3 修補 1 先完成）**：
+  1. `_r_open`（`server.py:349–355`）現況是 `core.open_dlog(...)` 後 `app.hold(meta["handle"])`，`hold`（`server.py:149–152`）再呼叫 `core.acquire_handle`——兩步之間即 §6.5 空窗；且 `hold` 的 `KeyError` 會讓一次已建好快取的開檔回 404 `handle`。改為 §6.5 規則 4 固定寫法（`open_handle`＋`adopt`）。
+  2. `_App` 加 `adopt(digest, entry)`：只在 `self.lock` 內 `held.setdefault(digest, []).append(entry)`，不呼叫 core。`hold` 不再有呼叫端，刪除。`unhold`／`release_all` 不變（現況已符 §6.5 規則 5、9）。
+  3. `tests/analysis/test_http.py` 的 `StubCore` 補 `open_handle`（回 `(meta, blob, entry)` 且計數 +1）。
+  4. 測試：§6.5 H4、H5、H6。
 
 ### T5（Sonnet）Viewer 改接
 - 可改：`src/n6705c_seq/analysis/web/viewer.html`（接手）、`src/n6705c_seq/analysis/web/shell_stub.html`（新建，`dev=True` 才送出）。
-- 依據：§3.3、§4、§6.4、§7.1。開檔（主檔、比對檔、Marker）改 `open_request`＋`/open`／`/import/markers`；PNG、HTML 報告、Marker JSON 改 `save_request`＋`/save`（帶 `X-Analysis-Purpose`＝該 `purpose`）；`/samples`／`/buckets` 依 §7.1 `use_buckets` 算式切換；CSV 改 `save_request`＋`/export/csv`（不再 `location.href`，可按取消呼叫 `/cancel`）；`localStorage` 全換 `/prefs`；語言只聽外殼。
+- 依據：§3.3、§4、§6.4、§6.6（開檔進度旁的「請勿動來源檔」提示，Viewer 自己的字典）、§7.1。開檔（主檔、比對檔、Marker）改 `open_request`＋`/open`／`/import/markers`；PNG、HTML 報告、Marker JSON 改 `save_request`＋`/save`（帶 `X-Analysis-Purpose`＝該 `purpose`）；`/samples`／`/buckets` 依 §7.1 `use_buckets` 算式切換；CSV 改 `save_request`＋`/export/csv`（不再 `location.href`，可按取消呼叫 `/cancel`）；`localStorage` 全換 `/prefs`；語言只聽外殼。
 - 驗收：人眼確認清單 §1–3；四類匯出可存檔；`lang` 訊息即時切換；在 `shell_stub.html` 下 targetOrigin、source、gen 及 §4.2 類型層驗證生效（無 id 的 `lang` 被接受、錯型或錯方向訊息被丟）。
 
 ### T6（Opus）SEQ 外殼
