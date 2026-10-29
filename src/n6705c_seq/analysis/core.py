@@ -320,7 +320,11 @@ def _build_cache(path, directory, stamp, cancel, progress):
         if not stamp[0]:
             raise DlogFormatError("Empty file")
         _assert_source(path, stamp)
-        source = np.memmap(path, mode="r", dtype=np.uint8)
+        try:
+            source = np.memmap(path, mode="r", dtype=np.uint8)
+        except OSError:
+            _assert_source(path, stamp)
+            raise
         _assert_source(path, stamp)
         def parse_progress(stage, pct):
             _assert_source(path, stamp)
@@ -330,6 +334,9 @@ def _build_cache(path, directory, stamp, cancel, progress):
             _assert_source(path, stamp)
         try:
             parsed = parse_dlog(source._mmap, _destination=directory, cancel=cancel, progress=parse_progress)
+        except OSError:
+            _assert_source(path, stamp)
+            raise
         except (ValueError, UnicodeError, struct.error) as exc:
             _assert_source(path, stamp)
             if isinstance(exc, DlogFormatError):
@@ -361,62 +368,75 @@ def _build_cache(path, directory, stamp, cancel, progress):
                 source._mmap.close()
 
 
-def open_dlog(path, cache_root: Path, *, cancel=None, progress=None) -> tuple:
+def open_handle(path, cache_root: Path, *, cancel=None, progress=None) -> tuple:
     path, cache_root = Path(path), Path(cache_root).resolve()
     _check_cancel(cancel)
-    stamp = _stamp(path)
-    digest = _digest_of(path, cancel, progress)
+    try:
+        stamp = _stamp(path)
+    except OSError:
+        # No baseline yet: a second failed stat means the granted source is gone.
+        try:
+            _stamp(path)
+        except OSError as exc:
+            raise SourceChanged(str(path)) from exc
+        raise
+    try:
+        digest = _digest_of(path, cancel, progress)
+    except OSError:
+        _assert_source(path, stamp)
+        raise
     _assert_source(path, stamp)
     storage.ensure_dir(cache_root)
     directory = cache_root / digest
-    with storage.path_lock(directory, cancel):
-        # Validation, mapping registration and LRU share one lock, so no eviction can
-        # slip between cache validation and pinning.
-        with storage.cache_lock:
-            key = _cache_key(digest, cache_root)
-            old = _open_cache.get(key)
-            if old is not None and not old["_refs"]:
-                _close_entry(old)
-                del _open_cache[key]
-            try:
-                entry = acquire_handle(digest, cache_root)
-            except KeyError:
-                entry = None
-            if entry is None and directory.exists():
+    entry = None
+    try:
+        with storage.path_lock(directory, cancel):
+            # Validation, mapping registration and LRU share one lock, so no eviction can
+            # slip between cache validation and pinning.
+            with storage.cache_lock:
+                key = _cache_key(digest, cache_root)
+                old = _open_cache.get(key)
+                if old is not None and not old["_refs"]:
+                    _close_entry(old)
+                    del _open_cache[key]
                 try:
-                    if directory.is_dir():
-                        shutil.rmtree(directory)
-                    else:
-                        directory.unlink()
+                    entry = acquire_handle(digest, cache_root)
+                except KeyError:
+                    entry = None
+                if entry is None and directory.exists():
+                    try:
+                        if directory.is_dir():
+                            shutil.rmtree(directory)
+                        else:
+                            directory.unlink()
+                    except OSError as exc:
+                        raise CacheWriteError(f"{directory}: {exc}") from exc
+            if entry is None:
+                tmp = cache_root / f"{digest}.tmp-{os.getpid()}-{secrets.token_hex(8)}"
+                try:
+                    with storage.cache_lock:
+                        tmp.mkdir()
+                        storage._active_tmp.add(tmp)
+                    _build_cache(path, tmp, stamp, cancel, progress)
+                    _check_cancel(cancel)
+                    _assert_source(path, stamp)
+                    with storage.cache_lock:
+                        # Another process may have published while we were building.
+                        if not directory.exists():
+                            try:
+                                os.replace(tmp, directory)
+                            except OSError:
+                                if not directory.exists():
+                                    raise
+                        entry = acquire_handle(digest, cache_root)
+                except (AnalysisCancelled, SourceChanged, DlogFormatError):
+                    raise
                 except OSError as exc:
                     raise CacheWriteError(f"{directory}: {exc}") from exc
-        if entry is None:
-            tmp = cache_root / f"{digest}.tmp-{os.getpid()}-{secrets.token_hex(8)}"
-            try:
-                with storage.cache_lock:
-                    tmp.mkdir()
-                    storage._active_tmp.add(tmp)
-                _build_cache(path, tmp, stamp, cancel, progress)
-                _check_cancel(cancel)
-                _assert_source(path, stamp)
-                with storage.cache_lock:
-                    # Another process may have published while we were building.
-                    if not directory.exists():
-                        try:
-                            os.replace(tmp, directory)
-                        except OSError:
-                            if not directory.exists():
-                                raise
-                    entry = acquire_handle(digest, cache_root)
-            except (AnalysisCancelled, SourceChanged, DlogFormatError):
-                raise
-            except OSError as exc:
-                raise CacheWriteError(f"{directory}: {exc}") from exc
-            finally:
-                shutil.rmtree(tmp, ignore_errors=True)
-                with storage.cache_lock:
-                    storage._active_tmp.discard(tmp)
-        try:
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+                    with storage.cache_lock:
+                        storage._active_tmp.discard(tmp)
             _assert_source(path, stamp)
             _check_cancel(cancel)
             meta = dict(entry["meta"], handle=digest, fileName=path.name,
@@ -435,9 +455,18 @@ def open_dlog(path, cache_root: Path, *, cancel=None, progress=None) -> tuple:
             meta["lodLayout"] = layout
             os.utime(directory / "meta.json", None)
             _evict(cache_root, digest)
-            return meta, b"".join(chunks)
-        finally:
+            return meta, b"".join(chunks), entry
+    except BaseException:
+        if entry is not None:
             release_handle(entry)
+        raise
+
+
+def open_dlog(path, cache_root: Path, *, cancel=None, progress=None) -> tuple:
+    """Compatibility API: return metadata and LOD bytes without owning a pin."""
+    meta, blob, entry = open_handle(path, cache_root, cancel=cancel, progress=progress)
+    release_handle(entry)
+    return meta, blob
 
 
 # splitmix64：由索引推導 (0,1] 均勻亂數。同一索引不論落在哪個請求切片、哪個端點，

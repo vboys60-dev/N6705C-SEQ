@@ -392,7 +392,7 @@
     </div>
     <div class="file-controls">
       <div class="control-row">
-        <div class="lang-switch" id="langSwitch">
+        <div class="lang-switch" id="langSwitch" hidden style="display:none">
           <button type="button" class="lang-opt active" data-lang="zh">中文</button>
           <button type="button" class="lang-opt" data-lang="en">EN</button>
         </div>
@@ -402,13 +402,11 @@
           <option value="light" data-i18n="themeLightOpt">淺色紙感</option>
         </select>
       </div>
-      <label class="file-btn">
-        <input type="file" id="fileInput" accept=".dlog" hidden>
+      <label class="file-btn" id="openMainBtn" role="button" tabindex="0">
         <span data-i18n="chooseFileBtn">選擇 .dlog 檔案</span>
       </label>
       <div class="control-row">
-        <label class="file-btn small">
-          <input type="file" id="compareFileInput" accept=".dlog" hidden>
+        <label class="file-btn small" id="openCompareBtn" role="button" tabindex="0">
           <span data-i18n="compareFileBtn">載入比對檔案</span>
         </label>
         <button id="compareClearBtn" type="button" data-i18n="compareClearBtn" style="display:none;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:8px;font-size:12px;cursor:pointer;">移除比對檔</button>
@@ -421,6 +419,8 @@
     <div class="file-info" id="compareFileInfo" style="margin-top:4px;"><span class="dim" id="compareFileName">尚未載入比對檔案</span></div>
     <div class="file-info" id="parseProgressRow" style="margin-top:4px;display:none;">
       <span class="info" id="parseProgressText">解析中...</span>
+      <span class="info" id="srcWarn" data-i18n="srcWarn" style="margin-left:10px;color:var(--ch3);"></span>
+      <button id="parseCancelBtn" type="button" data-i18n="cancelBtn" style="margin-left:10px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:2px 10px;border-radius:6px;font-size:12px;cursor:pointer;"></button>
     </div>
   </div>
 
@@ -514,9 +514,8 @@
       <span class="mt-hint" data-i18n="markerTableHint">開啟後，在圖表任一顯示中的曲線上按滑鼠右鍵即可新增標記（最多 10 點，自動吸附最近資料點）</span>
       <div class="mt-actions">
         <button id="exportJsonBtn" disabled data-i18n="btnExportJson">匯出 JSON</button>
-        <label class="file-btn small">
+        <label class="file-btn small" id="importJsonBtn" role="button" tabindex="0">
           <span data-i18n="btnImportJson">載入 JSON</span>
-          <input type="file" id="importJsonInput" accept=".json" hidden>
         </label>
       </div>
     </div>
@@ -539,6 +538,15 @@
   const MONO_FONT = "11px ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
   const PAD = { l:60, r:60, t:24, b:36 };
   const N_BUCKETS = 1800;
+
+  // 外殼傳入的連線資訊（fragment：t、gen、lang、parent）；讀完立刻清掉 fragment。
+  const shellCtx = (function(){
+    const p = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const c = { token:p.get('t')||'', gen:parseInt(p.get('gen'),10), lang:p.get('lang'), parent:p.get('parent')||'' };
+    try{ history.replaceState(null, '', location.pathname + location.search); }catch(_){ /* ignore */ }
+    c.ok = /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}$/.test(c.parent) && c.token.length>0 && Number.isInteger(c.gen);
+    return c;
+  })();
 
   // 頁面外觀主題：同時涵蓋 CSS 介面色（見 <style> 內 html[data-theme=...]）
   // 與 canvas 圖表繪製色（grid/軸文字/Marker線/曲線預設色），兩邊用同一組
@@ -577,7 +585,7 @@
     viewHistory:[],
     vAxis:{ auto:true, ref:0, perDiv:1, _autoMin:null, _autoMax:null },
     iAxis:{ auto:true, ref:0, perDiv:1, _autoMin:null, _autoMax:null },
-    lang:'zh',
+    lang:(shellCtx.lang==='en' ? 'en' : 'zh'),
     caseName:'',
     theme:'dark',
   };
@@ -599,6 +607,13 @@
       offsetHint: '開啟後，電流負值會被 0（不含）~ 最大值限制 區間內的亂數取代，恆大於 0、不等於 0（模擬雜訊底值；特殊測項專用，一般測試請保持關閉）',
       chooseFileBtn: '選擇 .dlog 檔案',
       noFileLoaded: '尚未載入檔案',
+      srcWarn: '分析中請勿移動、覆寫或編輯來源檔',
+      cancelBtn: '取消',
+      progressParse: '解析中',
+      progressLod: '建立摘要',
+      progressCsv: 'CSV 匯出中...',
+      errBadParent: '無法與外殼建立連線，開檔與存檔已停用',
+      saveFailedPrefix: '儲存失敗：',
       compareFileBtn: '載入比對檔案',
       compareClearBtn: '移除比對檔',
       compareNoFile: '尚未載入比對檔案',
@@ -713,6 +728,13 @@
       offsetHint: 'When enabled, negative current values are replaced with a random value in (0, Max Limit] — always greater than 0, never exactly 0 (simulates the noise floor; special test items only — keep this off for normal tests).',
       chooseFileBtn: 'Choose .dlog File',
       noFileLoaded: 'No file loaded',
+      srcWarn: 'Do not move, overwrite or edit the source file while it is being analyzed',
+      cancelBtn: 'Cancel',
+      progressParse: 'Parsing',
+      progressLod: 'Building overview',
+      progressCsv: 'Exporting CSV...',
+      errBadParent: 'Cannot reach the host shell; open and save are disabled',
+      saveFailedPrefix: 'Save failed: ',
       compareFileBtn: 'Load Comparison File',
       compareClearBtn: 'Remove Comparison',
       compareNoFile: 'No comparison file loaded',
@@ -837,7 +859,100 @@
   //   2. state.rawWindow 目前視野附近的原始樣本（含前後各一倍 margin），涵蓋放大後的細節
   // 只有「視野改變且離開已快取的 raw 視窗」才會觸發一次非同步取數。
   // ---------------------------------------------------------------
-  const API = '';  // 同源；頁面本身即由 dlog_server.py 提供
+  const API = '';  // 同源；頁面由分析 server 提供
+
+  // ---- HTTP：所有請求帶 token＋gen；JOB 類請求在用戶端限 3 條並行（server 上限 4，
+  // /cancel、/release 為 CONTROL，不佔名額）。
+  const JOB_SLOTS = 3;
+  let jobActive = 0;
+  const jobWaiters = [];
+  async function jobSlot(){
+    if(jobActive>=JOB_SLOTS) await new Promise(r=>jobWaiters.push(r));
+    jobActive++;
+  }
+  function jobDone(){
+    jobActive--;
+    const w = jobWaiters.shift();
+    if(w) w();
+  }
+  async function apiFetch(path, opt, control){
+    opt = Object.assign({}, opt);
+    opt.headers = Object.assign({ 'X-Analysis-Token':shellCtx.token, 'X-Analysis-Gen':String(shellCtx.gen) }, opt.headers||{});
+    if(!control) await jobSlot();
+    try{
+      const res = await fetch(API+path, opt);
+      if(!res.ok){
+        let msg = 'HTTP '+res.status, code = '';
+        try{ const j = await res.json(); msg = j.error || msg; code = j.code || ''; }catch(_){ /* ignore */ }
+        const e = new Error(msg); e.code = code; e.status = res.status;
+        throw e;
+      }
+      return res;
+    }finally{
+      if(!control) jobDone();
+    }
+  }
+  function postJson(path, body, req, control){
+    const headers = { 'Content-Type':'application/json' };
+    if(req) headers['X-Analysis-Req'] = req;
+    return apiFetch(path, { method:'POST', headers, body:JSON.stringify(body) }, control);
+  }
+
+  // ---- postMessage（契約 §4）：只對 parent 精確 origin 發送；收訊驗 source/origin/v/gen/type
+  let reqSeq = 0;
+  function nextId(){ return 'r'+(++reqSeq); }
+  const pendingReplies = new Map();   // id -> { type: 期望的回覆型別, resolve }
+  function shellSend(msg){
+    if(!shellCtx.ok) return;
+    window.parent.postMessage(Object.assign({ v:1, gen:shellCtx.gen }, msg), shellCtx.parent);
+  }
+  function shellAsk(type, fields){
+    if(!shellCtx.ok) return Promise.reject(new Error(T('errBadParent')));
+    return new Promise(resolve=>{
+      const id = nextId();
+      pendingReplies.set(id, { type: type==='open_request' ? 'open_result' : 'save_result', resolve });
+      shellSend(Object.assign({ type, id }, fields));
+    });
+  }
+  window.addEventListener('message', (ev)=>{
+    if(!shellCtx.ok || ev.source!==window.parent || ev.origin!==shellCtx.parent) return;
+    const d = ev.data;
+    if(!d || typeof d!=='object' || d.v!==1 || d.gen!==shellCtx.gen) return;
+    if(d.type==='lang'){
+      if(d.lang==='zh' || d.lang==='en') setLang(d.lang);
+      return;
+    }
+    if(d.type==='open_result' || d.type==='save_result'){
+      if(typeof d.id!=='string' || typeof d.ok!=='boolean') return;
+      const p = pendingReplies.get(d.id);
+      if(!p || p.type!==d.type) return;
+      pendingReplies.delete(d.id);
+      p.resolve(d);
+    }
+  });
+  // 向外殼要路徑授權；使用者取消 → null；被拒 → 丟錯
+  async function askPath(type, fields){
+    const r = await shellAsk(type, fields);
+    if(r.cancelled) return null;
+    if(!r.ok || typeof r.grant!=='string'){
+      const e = new Error(r.error || 'denied'); e.code = r.code || '';
+      throw e;
+    }
+    return r;
+  }
+  async function saveBlob(purpose, suggested, blob){
+    const g = await askPath('save_request', { purpose, suggested });
+    if(!g) return false;
+    await apiFetch('/save', { method:'POST', headers:{ 'X-Analysis-Grant':g.grant, 'X-Analysis-Purpose':purpose, 'Content-Type':'application/octet-stream' }, body:blob });
+    return true;
+  }
+  function releaseHandle(h){
+    if(h) postJson('/release', { h }, null, true).catch(()=>{});
+  }
+  let activeReq = null;
+  function cancelActive(){
+    if(activeReq) postJson('/cancel', { req:activeReq }, null, true).catch(()=>{});
+  }
 
   // 回應格式：[4-byte meta 長度][JSON metadata][Float32 payload]
   function splitBinary(buf){
@@ -850,22 +965,18 @@
     return new Float32Array(buf, base + offset, length);
   }
 
-  async function apiOpen(file, onProgress){
+  async function apiOpen(grant, onProgress){
     if(onProgress) onProgress('parse', 0);
-    const res = await fetch(API+'/open', {
-      method:'POST',
-      headers:{ 'X-File-Name': encodeURIComponent(file.name) },
-      body: file,
-    });
-    if(!res.ok){
-      let msg = 'HTTP '+res.status;
-      try{ msg = (await res.json()).error || msg; }catch(_){}
-      throw new Error(msg);
+    const req = nextId();
+    activeReq = req;
+    let res;
+    try{
+      res = await postJson('/open', { grant }, req);
+    }finally{
+      activeReq = null;
     }
     if(onProgress) onProgress('lod', 50);
     const { meta, payload, base } = splitBinary(await res.arrayBuffer());
-    // 依 lodLayout 把連續的 Float32 blob 切成 installLod() 需要的形狀：
-    // { V3:{ level0:{min,max,factor,n}, level1:{...} }, ... }
     const lodObj = {};
     const factors = meta.lodFactors;
     meta.lodLayout.forEach(seg=>{
@@ -879,6 +990,17 @@
     });
     if(onProgress) onProgress('lod', 100);
     return { meta, lod: lodObj };
+  }
+
+  // §7.1：與 contracts.use_buckets 同一算式
+  const MAX_SAMPLES_SPAN = 2000000, MAX_RESPONSE_BYTES = 64*1024*1024, META_RESERVE_BYTES = 64*1024, SAMPLE_BYTES = 4;
+  function useBuckets(span, nKeys){
+    return span>MAX_SAMPLES_SPAN || (META_RESERVE_BYTES + span*nKeys*SAMPLE_BYTES)>MAX_RESPONSE_BYTES;
+  }
+  // /samples 預設 keys＝所有啟用聲道的 V、I
+  function nKeysOfHandle(handle){
+    const ch = (state.compare && handle===state.compare.handle) ? state.compare.activeChannels : state.activeChannels;
+    return 2*((ch&&ch.length)||4);
   }
 
   function qs(params){
@@ -897,8 +1019,7 @@
   }
 
   async function apiSamples(handle, lo, hi){
-    const res = await fetch(API+'/samples?'+qs({ h:handle, lo, hi, ...offsetParams() }));
-    if(!res.ok) throw new Error('取樣失敗 HTTP '+res.status);
+    const res = await apiFetch('/samples?'+qs({ h:handle, lo, hi, ...offsetParams() }));
     const { meta, payload, base } = splitBinary(await res.arrayBuffer());
     const V = {}, I = {};
     meta.layout.forEach(seg=>{
@@ -909,9 +1030,52 @@
   }
 
   async function apiStats(handle, keys, lo, hi){
-    const res = await fetch(API+'/stats?'+qs({ h:handle, keys:keys.join(','), lo, hi, ...offsetParams() }));
-    if(!res.ok) throw new Error('統計失敗 HTTP '+res.status);
+    const res = await apiFetch('/stats?'+qs({ h:handle, keys:keys.join(','), lo, hi, ...offsetParams() }));
     return res.json();
+  }
+
+  // 範圍過大（useBuckets）時改走 /buckets：每 key 連續 t、min、max 三段
+  async function apiBuckets(handle, keys, lo, hi, n){
+    const res = await apiFetch('/buckets?'+qs({ h:handle, keys:keys.join(','), lo, hi, n, ...offsetParams() }));
+    const { meta, payload, base } = splitBinary(await res.arrayBuffer());
+    const out = {};
+    meta.layout.forEach(seg=>{
+      out[seg.key] = {
+        t:   f32View(payload, base, seg.offset, seg.length),
+        min: f32View(payload, base, seg.offset + seg.length*4, seg.length),
+        max: f32View(payload, base, seg.offset + seg.length*8, seg.length),
+      };
+    });
+    return out;
+  }
+  const srvBuckets = new Map();   // handle -> { sig, data:{key:{t,min,max}} }
+  function serverBuckets(trace, idxLo, idxHi, nBuckets, off){
+    const handle = handleOf(trace);
+    const key = trace.kind+trace.ch;
+    const sig = [idxLo, idxHi, nBuckets, currentDataSig()].join('|');
+    const c = srvBuckets.get(handle);
+    if(c && c.sig===sig && c.data[key]){
+      const d = c.data[key];
+      const b = new Array(d.t.length);
+      for(let i=0;i<b.length;i++) b[i] = { t:d.t[i], min:d.min[i]+off, max:d.max[i]+off };
+      trace._lastBuckets = b;
+      return b;
+    }
+    const pk = 'b:'+handle+':'+sig;
+    if(!rawPending.has(pk)){
+      const keys = new Set([key]);
+      state.traces.filter(t=>t.visible && handleOf(t)===handle).forEach(t=>keys.add(t.kind+t.ch));
+      rawPending.set(pk, apiBuckets(handle, Array.from(keys), idxLo, idxHi, nBuckets).then(data=>{
+        rawPending.delete(pk);
+        if(rawWindowSig !== currentDataSig()) return;
+        srvBuckets.set(handle, { sig, data });
+        scheduleRedraw();
+      }).catch(err=>{
+        rawPending.delete(pk);
+        console.error('buckets 取得失敗：', err);
+      }));
+    }
+    return trace._lastBuckets || [];
   }
 
   // ---------------------------------------------------------------
@@ -928,6 +1092,7 @@
   }
   function invalidateDataCaches(){
     rawWindows.clear();
+    srvBuckets.clear();
     rawPending.clear();
     pointCache.clear();
     pointPending.clear();
@@ -948,8 +1113,9 @@
     if(w && idxLo>=w.lo && idxHi<=w.hi) return true;
     if(rawPending.get(handle)) return false;
     const span = idxHi - idxLo + 1;
-    const lo = Math.max(0, idxLo - span);
-    const hi = Math.min(nRec-1, idxHi + span);
+    let lo = Math.max(0, idxLo - span);
+    let hi = Math.min(nRec-1, idxHi + span);
+    if(useBuckets(hi-lo+1, nKeysOfHandle(handle))){ lo = idxLo; hi = idxHi; }  // 邊界放不下就只取視野本身
     // rawPending 存的是「這次取數的 promise」而不是單純的 true——匯出流程
     // （ensureExportData）需要能 await 它，等資料真的到齊再開始畫。
     rawPending.set(handle, apiSamples(handle, lo, hi).then(win=>{
@@ -1056,7 +1222,9 @@
     const txt = document.getElementById('parseProgressText');
     if(!row || !txt) return;
     row.style.display = '';
-    txt.textContent = (phase==='lod' ? T('progressLod') : T('progressParse')) + ' ' + pct + '%';
+    const warn = document.getElementById('srcWarn');
+    if(warn) warn.style.display = phase==='csv' ? 'none' : '';
+    txt.textContent = phase==='csv' ? T('progressCsv') : (phase==='lod' ? T('progressLod') : T('progressParse')) + ' ' + pct + '%';
   }
   function hideParseProgress(){
     const row = document.getElementById('parseProgressRow');
@@ -1312,6 +1480,9 @@
 
     // 走到這裡代表需要原始樣本：確保 raw 視窗已涵蓋這個範圍。
     // 尚未就緒時沿用上一幀的結果（避免畫面空白閃爍），資料到達後會自動重繪。
+    if(useBuckets(count, nKeysOfHandle(handleOf(trace)))){
+      return serverBuckets(trace, idxLo, idxHi, nBuckets, off);
+    }
     if(!ensureRawWindow(handleOf(trace), nRec, idxLo, idxHi)){
       return trace._lastBuckets || [];
     }
@@ -1555,15 +1726,22 @@
   // ---------------------------------------------------------------
   // 檔案載入
   // ---------------------------------------------------------------
-  const fileInput = document.getElementById('fileInput');
-  fileInput.addEventListener('change', async (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    showParseProgress('parse', 0);
+  function onActivate(id, fn){
+    const el = document.getElementById(id);
+    el.addEventListener('click', fn);
+    el.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); fn(); } });
+  }
+  document.getElementById('parseCancelBtn').addEventListener('click', cancelActive);
+  onActivate('openMainBtn', async ()=>{
     try{
-      const { meta, lod } = await apiOpen(file, (phase,pct)=>showParseProgress(phase,pct));
-      state.fileName = file.name;
+      const g = await askPath('open_request', { purpose:'dlog' });
+      if(!g) return;
+      showParseProgress('parse', 0);
+      const { meta, lod } = await apiOpen(g.grant, (phase,pct)=>showParseProgress(phase,pct));
+      const oldHandle = state.handle;
+      state.fileName = meta.fileName;
       state.handle = meta.handle;
+      releaseHandle(oldHandle);
       state.tint = meta.tint;
       state.declaredTime = meta.declaredTime;
       state.nRecords = meta.nRecords;
@@ -1620,11 +1798,10 @@
       setPanelFoldOpen('exportFold', false); // 檔案載入成功＝設定階段結束、進入分析階段，收起用不到的匯出區
       scheduleRedraw();
     }catch(err){
-      alert(T('parseFailedPrefix')+err.message);
+      if(err.code!=='cancelled') alert(T('parseFailedPrefix')+err.message);
       console.error(err);
     }finally{
       hideParseProgress();
-      e.target.value = '';
     }
   });
 
@@ -1642,22 +1819,22 @@
       : T('compareNoFile');
   }
 
-  const compareFileInput = document.getElementById('compareFileInput');
-  compareFileInput.addEventListener('change', async (e)=>{
+  onActivate('openCompareBtn', async ()=>{
     if(!state.loaded){
       alert(T('compareNeedMain'));
-      e.target.value = '';
       return;
     }
-    const file = e.target.files[0];
-    if(!file) return;
-    showParseProgress('parse', 0);
     try{
-      const { meta, lod } = await apiOpen(file, (phase,pct)=>showParseProgress(phase,pct));
+      const g = await askPath('open_request', { purpose:'dlog' });
+      if(!g) return;
+      showParseProgress('parse', 0);
+      const { meta, lod } = await apiOpen(g.grant, (phase,pct)=>showParseProgress(phase,pct));
+      const oldCompare = state.compare && state.compare.handle;
       state.compare = {
-        fileName:file.name, handle:meta.handle, tint:meta.tint, nRecords:meta.nRecords,
+        fileName:meta.fileName, handle:meta.handle, tint:meta.tint, nRecords:meta.nRecords, activeChannels:meta.activeChannels,
         fields:meta.fields.map(f=>({ ch:f[0], kind:f[1] })), minmax:meta.minmax,
       };
+      releaseHandle(oldCompare);
       installLod('c:', lod);
       statsCache.clear(); // 舊比對檔的統計（曲線 key 與新檔相同）不可沿用
       // 移除舊的比對檔曲線與相關標記（若先前已載入過比對檔），主檔案（'p'）的曲線與標記不受影響
@@ -1683,17 +1860,17 @@
       renderChips();
       renderMarkerTable();
       scheduleRedraw();
-      flashMessage(T('compareLoaded', file.name));
+      flashMessage(T('compareLoaded', meta.fileName));
     }catch(err){
-      alert(T('compareLoadFailed')+err.message);
+      if(err.code!=='cancelled') alert(T('compareLoadFailed')+err.message);
       console.error(err);
     }finally{
       hideParseProgress();
-      e.target.value = '';
     }
   });
 
   document.getElementById('compareClearBtn').addEventListener('click', ()=>{
+    releaseHandle(state.compare && state.compare.handle);
     state.compare = null;
     installLod('c:', null); // 一併清掉比對檔的 LOD 快取
     invalidateDataCaches();
@@ -2117,16 +2294,12 @@
     await ensureExportData();
     const mode = document.getElementById('imageThemeSelect').value;
     const off = renderExportCanvasFull(mode); // 曲線圖 + 統計值區域，Marker Table 開啟時一併附加
-    off.toBlob(blob=>{
+    off.toBlob(async blob=>{
       if(!blob){ flashMessage(T('msgImageExportFailed')); return; }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const base = exportBaseName();
       const tag = mode==='light' ? '_print' : (mode==='negative' ? '_negative' : '');
-      a.href = url; a.download = base+tag+'.png';
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
-      flashMessage(T('msgImageExported'));
+      try{
+        if(await saveBlob('png', exportBaseName()+tag+'.png', blob)) flashMessage(T('msgImageExported'));
+      }catch(err){ alert(T('saveFailedPrefix')+err.message); }
     }, 'image/png');
   });
 
@@ -2236,13 +2409,9 @@
     const imgDataUrl = off.toDataURL('image/png');
     const html = buildReportHtml(imgDataUrl, T(theme.labelKey));
     const blob = new Blob([html], { type:'text/html;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const base = exportBaseName();
-    a.href = url; a.download = base+'_report.html';
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-    flashMessage(T('msgReportExported'));
+    try{
+      if(await saveBlob('html', exportBaseName()+'_report.html', blob)) flashMessage(T('msgReportExported'));
+    }catch(err){ alert(T('saveFailedPrefix')+err.message); }
   });
 
   // 滑鼠停留在左／右軸邊界時，游標改為上下拖曳樣式，提示可拖曳調整 Ref
@@ -2874,12 +3043,9 @@
       })
     };
     const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const base = exportBaseName();
-    a.href = url; a.download = base+'.markers.json';
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
+    try{
+      await saveBlob('markers', exportBaseName()+'.markers.json', blob);
+    }catch(err){ alert(T('saveFailedPrefix')+err.message); }
   });
 
   // ---------------------------------------------------------------
@@ -2939,7 +3105,7 @@
   // 記憶體用量與筆數無關——舊版把整份 CSV 組成一個 JS 字串再包 Blob，千萬筆會直接
   // 撐爆分頁，因此當時需要一個 200 萬筆的確認對話框擋著；現在那個限制已不存在。
   // 電流負值校正由 server 端套用（見 offsetParams()），匯出的檔案不會出現校正前的負值。
-  document.getElementById('exportCsvBtn').addEventListener('click', ()=>{
+  document.getElementById('exportCsvBtn').addEventListener('click', async ()=>{
     if(!state.loaded) return;
     const mode = document.getElementById('csvRangeSelect').value;
     const range = csvRangeIdx(mode);
@@ -2955,25 +3121,38 @@
 
     const base = exportBaseName();
     const rangeTag = mode==='markers' ? '_M1-M2' : (mode==='view' ? '_view' : '_all');
-    const params = {
+    const body = {
       h: state.handle,
       lo: idxLo, hi: idxHi,
       cols: cols.map(c=>(c.trace.src==='c' ? 'c:' : 'p:')+c.trace.kind+c.trace.ch).join(','),
-      name: base+rangeTag+'.csv',
+      offset: !!state.offsetMode,
+      maxLimit: Math.max(0, state.offsetMaxLimit||0),
     };
-    if(state.compare) params.hc = state.compare.handle;
-    Object.assign(params, offsetParams());
-    // server 回應帶 Content-Disposition: attachment，交給瀏覽器自己的下載流程
-    window.location.href = API+'/export/csv?'+qs(params);
-    flashMessage(T('msgCsvExported', (idxHi-idxLo+1).toLocaleString()));
+    if(state.compare) body.hc = state.compare.handle;
+    try{
+      const g = await askPath('save_request', { purpose:'csv', suggested: base+rangeTag+'.csv' });
+      if(!g) return;
+      body.grant = g.grant;
+      const req = nextId();
+      activeReq = req;
+      showParseProgress('csv', 0);
+      try{
+        await postJson('/export/csv', body, req);
+      }finally{
+        activeReq = null;
+        hideParseProgress();
+      }
+      flashMessage(T('msgCsvExported', (idxHi-idxLo+1).toLocaleString()));
+    }catch(err){
+      if(err.code!=='cancelled') alert(T('saveFailedPrefix')+err.message);
+    }
   });
 
-  document.getElementById('importJsonInput').addEventListener('change', async (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
+  onActivate('importJsonBtn', async ()=>{
     try{
-      const text = await file.text();
-      const json = JSON.parse(text);
+      const g = await askPath('open_request', { purpose:'markers' });
+      if(!g) return;
+      const json = (await (await postJson('/import/markers', { grant:g.grant })).json()).data || {};
       state.markers = (json.markers||[]).filter(m=>Number.isFinite(m.time_s)).slice(0,10).map((m,i)=>{
         const ch = parseInt(String(m.channel).replace(/\D/g,''), 10) || 1;
         const kind = (m.type==='I' || m.type==='P') ? m.type : 'V';
@@ -2994,8 +3173,6 @@
       flashMessage(T('msgMarkersLoaded', state.markers.length));
     }catch(err){
       alert(T('msgJsonLoadFailed')+err.message);
-    }finally{
-      e.target.value='';
     }
   });
 
@@ -3052,24 +3229,21 @@
     renderMarkerTable();
     updateStatsPanel();
     scheduleRedraw();
-    try{ localStorage.setItem('dlogViewerLang', state.lang); }catch(err){ /* 私密瀏覽等環境可能擋掉，忽略即可 */ }
   }
 
-  document.getElementById('langSwitch').addEventListener('click', (e)=>{
-    const btn = e.target.closest('.lang-opt');
-    if(!btn) return;
-    const lang = btn.dataset.lang;
+  // 語言只聽外殼的 lang 訊息（初值取自 fragment）；Viewer 不提供自己的切換。
+  function setLang(lang){
     if(lang===state.lang) return;
     state.lang = lang;
     applyLanguage();
-  });
+  }
 
   // ---------------------------------------------------------------
   // 頁面外觀主題切換：套用到 <html data-theme="...">（CSS 介面色跟著換），
   // 並同步更新畫布繪圖色（見 CHART_THEMES）與「尚未自訂過顏色」的預設曲線色。
   // 使用者手動改過的曲線顏色（colorIsDefault=false）不會被主題切換覆蓋。
   // ---------------------------------------------------------------
-  function applyTheme(themeName){
+  function applyTheme(themeName, persist){
     state.theme = CHART_THEMES[themeName] ? themeName : 'dark';
     document.documentElement.setAttribute('data-theme', state.theme);
     const sel = document.getElementById('themeSelect');
@@ -3086,7 +3260,7 @@
       renderChips();
     }
     scheduleRedraw();
-    try{ localStorage.setItem('dlogViewerTheme', state.theme); }catch(err){ /* 忽略 */ }
+    if(persist!==false){ prefs.theme = state.theme; savePrefs(); }
   }
 
   document.getElementById('themeSelect').addEventListener('change', (e)=>{
@@ -3104,32 +3278,39 @@
   // exportFold（見 fileInput 的 change handler），代表「設定階段結束、
   // 進入分析階段」的明確分界，之後使用者手動重新展開仍會被記住。
   // ---------------------------------------------------------------
+  // 偏好走 server 的 /prefs（完整物件覆寫，防抖 300ms）；語言不存。
+  const prefs = { version:1, theme:'dark', fold:{} };
+  let prefTimer = null;
+  function savePrefs(){
+    if(!shellCtx.ok) return;
+    clearTimeout(prefTimer);
+    prefTimer = setTimeout(()=>{ postJson('/prefs', prefs).catch(()=>{}); }, 300);
+  }
   function setPanelFoldOpen(id, open){
     const el = document.getElementById(id);
     if(el) el.open = open;
-    try{ localStorage.setItem('dlogViewerFold:'+id, open ? '1' : '0'); }catch(err){ /* 忽略 */ }
+    prefs.fold[id] = !!open;
+    savePrefs();
   }
-  document.querySelectorAll('details.panel-fold[id]').forEach(el=>{
-    try{
-      const saved = localStorage.getItem('dlogViewerFold:'+el.id);
-      if(saved==='1') el.open = true;
-      else if(saved==='0') el.open = false;
-    }catch(err){ /* 忽略，維持 HTML 預設開合狀態 */ }
-    el.addEventListener('toggle', ()=>{
-      try{ localStorage.setItem('dlogViewerFold:'+el.id, el.open ? '1' : '0'); }catch(err){ /* 忽略 */ }
+  async function loadPrefs(){
+    if(shellCtx.ok){
+      try{
+        const p = await (await apiFetch('/prefs')).json();
+        if(p && typeof p==='object'){
+          if(CHART_THEMES[p.theme]){ prefs.theme = p.theme; applyTheme(p.theme, false); }
+          if(p.fold && typeof p.fold==='object') prefs.fold = Object.assign({}, p.fold);
+        }
+      }catch(err){ /* 讀不到就用預設 */ }
+    }
+    document.querySelectorAll('details.panel-fold[id]').forEach(el=>{
+      if(typeof prefs.fold[el.id]==='boolean') el.open = prefs.fold[el.id];
+      el.addEventListener('toggle', ()=>{ prefs.fold[el.id] = el.open; savePrefs(); });
     });
-  });
+  }
 
   // ---------------------------------------------------------------
-  // Init（先讀回上次的語言／主題偏好，若無或讀取失敗則用預設值）
+  // Init
   // ---------------------------------------------------------------
-  try{
-    const savedLang = localStorage.getItem('dlogViewerLang');
-    if(savedLang==='en' || savedLang==='zh') state.lang = savedLang;
-    const savedTheme = localStorage.getItem('dlogViewerTheme');
-    if(savedTheme && CHART_THEMES[savedTheme]) state.theme = savedTheme;
-  }catch(err){ /* 忽略，維持預設 zh / dark */ }
-
   document.documentElement.setAttribute('data-theme', state.theme);
   const themeSelectEl = document.getElementById('themeSelect');
   if(themeSelectEl) themeSelectEl.value = state.theme;
@@ -3142,6 +3323,13 @@
   renderMarkerTable();
   applyLanguage();
   scheduleRedraw();
+  if(!shellCtx.ok){
+    ['openMainBtn','openCompareBtn','importJsonBtn'].forEach(id=>{ const el = document.getElementById(id); el.style.pointerEvents = 'none'; el.style.opacity = '.4'; });
+    flashMessage(T('errBadParent'));
+  }else{
+    shellSend({ type:'ready' });
+  }
+  loadPrefs();
 })();
 </script>
 </body>

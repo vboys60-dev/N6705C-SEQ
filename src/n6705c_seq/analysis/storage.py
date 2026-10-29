@@ -108,7 +108,12 @@ def evict_lru(cache_root, max_bytes, pinned):
             if total <= max_bytes:
                 break
             if p.name not in pinned:
-                shutil.rmtree(p)
+                try:
+                    shutil.rmtree(p)
+                except OSError:
+                    # Eviction is best effort (e.g. another Windows process has
+                    # a file open). Keep its bytes counted and try the next entry.
+                    continue
                 total -= size
 
 

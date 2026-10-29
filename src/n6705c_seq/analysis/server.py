@@ -146,10 +146,10 @@ class _App:
         self.active = 0
         self.held = {}  # digest -> [Entry, ...], one per /open
 
-    def hold(self, digest):
-        e = self.core.acquire_handle(digest, self.cache_root)
+    def adopt(self, digest, entry):
+        # takes over the reference open_handle returned; must not call core (contract 6.5)
         with self.lock:
-            self.held.setdefault(digest, []).append(e)
+            self.held.setdefault(digest, []).append(entry)
 
     def unhold(self, digest):
         with self.lock:
@@ -350,8 +350,12 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._body_json()
         path = self._grant(body.get("grant"), "open", "dlog")
         app = self.app
-        meta, blob = app.core.open_dlog(path, app.cache_root, cancel=job.cancel)
-        app.hold(meta["handle"])
+        meta, blob, entry = app.core.open_handle(path, app.cache_root, cancel=job.cancel)
+        try:
+            app.adopt(meta["handle"], entry)
+        except BaseException:
+            app.core.release_handle(entry)
+            raise
         self._send(200, "application/octet-stream", frame_binary(meta, blob))
 
     def _r_release(self, job, qs, gen):

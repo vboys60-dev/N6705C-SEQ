@@ -126,3 +126,33 @@ def test_fsync_failure_preserves_target(tmp_path, monkeypatch):
         storage.atomic_write_bytes(target, b'new')
     assert target.read_bytes() == b'original'
     assert not list(tmp_path.glob('*.part'))
+
+
+def test_lru_all_pinned_can_exceed_limit(cache_root, monkeypatch):
+    pinned = {str(i) * 40 for i in (1, 2)}
+    for name in pinned:
+        directory = cache_root / name
+        directory.mkdir()
+        (directory / 'meta.json').write_bytes(b'x' * 10)
+    def unexpected(*args, **kwargs):
+        pytest.fail('pinned directory must never be removed')
+    monkeypatch.setattr(storage.shutil, 'rmtree', unexpected)
+    storage.evict_lru(cache_root, 1, pinned)
+    assert {p.name for p in cache_root.iterdir()} == pinned
+
+
+def test_lru_busy_directory_keeps_bytes_counted(cache_root, monkeypatch):
+    paths = [cache_root / (str(i) * 40) for i in range(1, 4)]
+    for i, path in enumerate(paths):
+        path.mkdir()
+        (path / 'meta.json').write_bytes(b'x' * 10)
+        os.utime(path / 'meta.json', (i + 1, i + 1))
+    remove = storage.shutil.rmtree
+    def busy(path):
+        if path == paths[0]:
+            raise PermissionError('busy')
+        remove(path)
+    monkeypatch.setattr(storage.shutil, 'rmtree', busy)
+    storage.evict_lru(cache_root, 10, set())
+    assert paths[0].exists()
+    assert not paths[1].exists() and not paths[2].exists()

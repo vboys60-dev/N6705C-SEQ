@@ -28,7 +28,7 @@ class StubCore:
         self.hold_evt.set()
         self.closed = 0
 
-    def open_dlog(self, path, cache_root, *, cancel=None, progress=None):
+    def open_handle(self, path, cache_root, *, cancel=None, progress=None):
         if str(path).endswith("bad.dlog"):
             raise self.DlogFormatError("bad file")
         h = "%040x" % (abs(hash(os.path.basename(str(path)))) % 10**30 + 1)
@@ -37,8 +37,8 @@ class StubCore:
                 "fields": [[1, "V"], [1, "I"], [2, "V"]], "minmax": False, "cacheVersion": 1,
                 "handle": h, "lodFactors": {"level0": 64, "level1": 4096}, "lodLayout": [],
                 "fileName": os.path.basename(str(path))}
-        self.held.setdefault(h, 0)
-        return meta, b"\x00" * 16
+        self.held[h] = self.held.get(h, 0) + 1
+        return meta, b"\x00" * 16, {"meta": meta, "digest": h}
 
     def acquire_handle(self, digest, cache_root):
         if digest not in self.held:
