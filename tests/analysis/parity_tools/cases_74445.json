@@ -1,0 +1,17 @@
+[
+ {"ch":3,"kind":"V","idxLo":0,"idxHi":929262,"nBuckets":1800},
+ {"ch":3,"kind":"I","idxLo":0,"idxHi":929262,"nBuckets":1800},
+ {"ch":3,"kind":"P","idxLo":0,"idxHi":929262,"nBuckets":1800},
+ {"ch":3,"kind":"V","idxLo":1000,"idxHi":2500,"nBuckets":1800},
+ {"ch":3,"kind":"I","idxLo":1000,"idxHi":2500,"nBuckets":1800},
+ {"ch":3,"kind":"P","idxLo":500,"idxHi":900,"nBuckets":1800},
+ {"ch":3,"kind":"V","idxLo":10000,"idxHi":60000,"nBuckets":1800},
+ {"ch":3,"kind":"I","idxLo":10000,"idxHi":60000,"nBuckets":1800},
+ {"ch":3,"kind":"P","idxLo":10000,"idxHi":60000,"nBuckets":1800},
+ {"ch":3,"kind":"V","idxLo":0,"idxHi":200000,"nBuckets":1800},
+ {"ch":3,"kind":"I","idxLo":300000,"idxHi":900000,"nBuckets":1800},
+ {"ch":3,"kind":"P","idxLo":300000,"idxHi":900000,"nBuckets":1800},
+ {"ch":3,"kind":"I","idxLo":0,"idxHi":929262,"nBuckets":1800,"offset":true,"maxLimit":0.0001},
+ {"ch":3,"kind":"P","idxLo":10000,"idxHi":60000,"nBuckets":1800,"offset":true,"maxLimit":0.0001},
+ {"ch":3,"kind":"I","idxLo":1000,"idxHi":2500,"nBuckets":1800,"offset":true,"maxLimit":0.0001}
+]

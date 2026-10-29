@@ -98,30 +98,32 @@ class SeqApi:
         self._seq_bools(demo)
 
     def _seq_start(self, target, args, resources, demo, confirmation=None):
-        if not self._reserve():
-            return {"error": tr("busy_body")}
+        token = self._reserve("power")
+        if token is None:
+            return self._power_denied()
         try:
             if confirmation is not None and not self._confirm(tr("confirm"), confirmation):
-                self._release()
+                self._release(token)
                 return {"cancelled": True}
             if resources is not None:
                 self._save_config(resources, demo)
             if target == self._work:
                 self._measured["seq"] = {}
                 self._emit(["measured", "seq"])
-            threading.Thread(target=target, args=args, daemon=True).start()
+            threading.Thread(target=target, args=(*args, token), daemon=True).start()
         except Exception as exc:
-            self._release()
+            self._release(token)
             return {"error": str(exc)}
         return {}
 
     def _seq_result(self, kind, text, title=None):
         self._emit(["result", kind, title or tr("run_result"), text])
 
-    def _test(self, targets, demo):
+    def _test(self, targets, demo, token):
         try:
             models = []
             for i, res in enumerate(targets):
+                self._finishing(token)
                 self._emit(["status", i, ""])
                 if not res and not demo:
                     self._emit(["status", i, tr("not_set")])
@@ -148,9 +150,10 @@ class SeqApi:
             except ValueError as exc:
                 self._seq_result("error", str(exc), tr("connection_failed"))
         finally:
-            self._release()
+            self._release(token)
 
-    def _off_work(self, resources):
+    def _off_work(self, resources, token):
+        self._finishing(token)
         try:
             try:
                 if kind_of([detect_model(r) for r in resources]) == "E36441A":
@@ -171,11 +174,12 @@ class SeqApi:
             except Exception as exc:
                 self._seq_result("error", str(exc))
             finally:
+                self._finishing(token)
                 self._seq_close(group)
         finally:
-            self._release()
+            self._release(token)
 
-    def _work(self, rows, frames, resources, demo, hold_dc, capture):
+    def _work(self, rows, frames, resources, demo, hold_dc, capture, token):
         try:
             if not demo:
                 try:
@@ -208,9 +212,10 @@ class SeqApi:
                         else tr("rejected") if isinstance(exc, PlanRejected) else tr("forced_off"))
                 self._seq_result("error", f"{exc}{note}")
             finally:
+                self._finishing(token)
                 self._seq_close(group)
         finally:
-            self._release()
+            self._release(token)
 
     def _seq_close(self, group):
         for inst in group.instruments:

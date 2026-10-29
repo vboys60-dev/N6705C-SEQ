@@ -13,6 +13,10 @@ from n6705c_seq.listplan import ChannelList, ListPlan, Segment, load_json, write
 from n6705c_seq.web_list import ListApi
 
 
+def _legacy_events(api):
+    return [event for event in api.poll() if event[0] != "state"]
+
+
 class _Api(ListApi, webgui._Core):
     pass
 
@@ -104,10 +108,11 @@ def test_json_round_trip_and_new_channel(api, tmp_path, empty):
 def test_compile_errors_and_busy_block_run(api, monkeypatch):
     plan, settings = _plan(), _settings()
     assert api.list_compile(1, plan, settings, 0)["ok"]
-    assert api._reserve()
+    token = api._reserve("power")
+    assert token
     assert "error" in api.list_run(plan, settings, [], True, False)
     assert api._window.calls == []
-    api._release()
+    api._release(token)
     compiled = synth.compile_plan(list_form.plan_from_dict(plan))
     compiled.errors = ["over budget"]
     monkeypatch.setattr(synth, "compile_plan", lambda p: compiled)
@@ -138,7 +143,7 @@ def test_run_snapshot_before_confirmation_and_shared_busy(api, monkeypatch):
     jobs = []
 
     def confirm(title, text):
-        assert api._busy
+        assert (api._gate.state()[0] == "power")
         plan["channels"][0]["segments"].clear()
         resources[0] = "changed"
         settings["hold_last"] = False
@@ -155,8 +160,8 @@ def test_run_snapshot_before_confirmation_and_shared_busy(api, monkeypatch):
     monkeypatch.setattr(api._window, "create_confirmation_dialog", confirm)
     monkeypatch.setattr(web_list, "threading", SimpleNamespace(Thread=Thread))
     assert api.list_run(plan, settings, resources, True, True) == {}
-    assert api._busy
-    assert api.poll()[:1] == [["busy", True]]
+    assert (api._gate.state()[0] == "power")
+    assert _legacy_events(api)[:1] == [["busy", True]]
     _, args = jobs[0]
     assert args[0].hold_last and len(args[0].channels[0].segments) == 1
     assert args[3] == ["test"]
@@ -169,8 +174,8 @@ def test_run_snapshot_before_confirmation_and_shared_busy(api, monkeypatch):
 def test_confirm_cancel_and_start_failure_release(api, monkeypatch):
     api._window.confirm = False
     assert api.list_run(_plan(), _settings(), [], True, False) == {"cancelled": True}
-    assert not api._busy
-    assert api.poll() == [["busy", True], ["busy", False]]
+    assert not (api._gate.state()[0] == "power")
+    assert _legacy_events(api) == [["busy", True], ["busy", False]]
     api._window.confirm = True
 
     def fail(*args):
@@ -178,7 +183,7 @@ def test_confirm_cancel_and_start_failure_release(api, monkeypatch):
 
     monkeypatch.setattr(api, "_save_config", fail)
     assert api.list_run(_plan(), _settings(), [], True, False) == {"error": "config failure"}
-    assert not api._busy
+    assert not (api._gate.state()[0] == "power")
 
 
 @pytest.mark.parametrize("failure", [None, "detect", "unsupported", "connect", "run", "unconfirmed", "convert", "close"])
@@ -189,7 +194,7 @@ def test_worker_functions_capture_errors_and_release(api, monkeypatch, failure):
     closed = []
 
     def close():
-        assert api._busy
+        assert (api._gate.state()[0] == "power")
         closed.append(True)
         if failure == "close":
             raise RuntimeError("close failed")
@@ -226,10 +231,11 @@ def test_worker_functions_capture_errors_and_release(api, monkeypatch, failure):
     monkeypatch.setattr(web_list.execute, "connect_group", connect)
     monkeypatch.setattr(synth, "to_functions", convert)
     monkeypatch.setattr(web_list.execute, "run_functions", run)
-    assert api._reserve()
-    api._list_work(plan, compiled, 1, ["test"], False, True)
-    assert not api._busy
-    events = api.poll()
+    token = api._reserve("power")
+    assert token
+    api._list_work(plan, compiled, 1, ["test"], False, True, token)
+    assert not (api._gate.state()[0] == "power")
+    events = _legacy_events(api)
     assert events[-1] == ["busy", False]
     results = [e for e in events if e[0] == "result"]
     if failure:
@@ -268,8 +274,8 @@ def test_demo_plan_end_to_end(api, monkeypatch):
     monkeypatch.setattr(InstrumentGroup, "demo", create)
     monkeypatch.setattr(web_list, "threading", SimpleNamespace(Thread=Thread))
     assert api.list_run(opened["plan"], opened["settings"], [], True, False) == {}
-    assert not api._busy
-    events = api.poll()
+    assert not (api._gate.state()[0] == "power")
+    events = _legacy_events(api)
     assert any(e[0] == "result" and e[1] == "info" and "outputs are off" in e[-1] for e in events)
     assert len(groups) == 1
     for inst in groups[0].instruments:
@@ -288,7 +294,7 @@ def test_open_errors_cancel_and_missing_addresses(api, tmp_path):
     write_json(ListPlan([ChannelList(9)]), path)
     assert "8 channels" in api.list_open_json()["error"]
     assert "addresses" in api.list_run(_plan(), _settings(), [], False, False)["error"]
-    assert not api._busy
+    assert not (api._gate.state()[0] == "power")
 
 
 @pytest.mark.parametrize("text", ["nan", "inf", "-1", "0", "1.5"])
@@ -504,7 +510,7 @@ def test_run_error_titles(api):
                         "title": i18n.tr("missing_address")}
     response = api.list_run(_plan(), {**_settings(), "delay": "bad"}, [], True, False)
     assert response["title"] == i18n.tr("invalid_field")
-    assert not api._busy and not api._window.calls
+    assert not (api._gate.state()[0] == "power") and not api._window.calls
 
 
 def test_open_numbers_use_shortest_repr(api):

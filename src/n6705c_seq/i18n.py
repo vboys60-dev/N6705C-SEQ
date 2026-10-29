@@ -127,6 +127,18 @@ STRINGS = {
     "frequency_phase": ("頻率 {frequency:.4g} Hz   相位 {phase:.4g}°", "Frequency {frequency:.4g} Hz   Phase {phase:.4g}°"),
     "steps_annotation": ("階數 {value:.4g}", "Steps {value:.4g}"),
     "tau_annotation": ("時間常數 {value}", "Tau {value}"),
+    'analysis_tab': ('離線分析報告', 'Offline Analysis'),
+    'analysis_denied_power': ('電源工作進行中（含確認對話框），不能切到分析。', 'Power work (or its confirmation) is in progress; cannot open analysis.'),
+    'power_denied_analysis': ('分析分頁使用中，不能執行電源工作；請先切到其他分頁。', 'Analysis tab is active; switch to another tab before power work.'),
+    'analysis_denied_draining': ('分析正在結束，請稍候再試。', 'Analysis is shutting down; try again shortly.'),
+    'analysis_denied_closing': ('程式正在關閉。', 'The application is closing.'),
+    'analysis_disabled': ('此版本未啟用分析功能。', 'Analysis is not enabled in this build.'),
+    'analysis_stale': ('分析工作階段已過期，請重新操作。', 'Analysis session expired; please retry.'),
+    'analysis_server_failed': ('分析服務啟動失敗：{error}', 'Analysis service failed to start: {error}'),
+    'analysis_crash_note': ('分析與控制程式在同一進程；若程式當掉，儀器輸出可能維持開啟，請手動確認並關閉輸出。', 'Analysis runs in the same process; if the app crashes, outputs may stay on. Check and turn them off manually.'),
+    'fault_title': ('工作卡住', 'Work Stuck'),
+    'fault_body': ('儀器或分析工作未在時限內結束，已停止接受新工作。輸出可能仍開著，請手動確認後關閉程式重開。', 'Instrument or analysis work did not finish in time; new work is blocked. Outputs may be on: check them, then close and restart.'),
+    'closing_wait': ('正在結束背景工作，視窗稍後關閉。', 'Finishing background work; the window will close shortly.'),
 }
 
 lang = "zh"

@@ -12,6 +12,10 @@ import webview
 from n6705c_seq import form, i18n, webgui
 
 
+def _legacy_events(api):
+    return [event for event in api.poll() if event[0] != "state"]
+
+
 class FakeWindow:
     def __init__(self, result=None):
         self.result = result
@@ -45,25 +49,30 @@ def test_reserve_concurrently(core):
 
     def reserve(_):
         barrier.wait()
-        return core._reserve()
+        return core._reserve("power")
 
     with ThreadPoolExecutor(max_workers=16) as pool:
-        assert sum(pool.map(reserve, range(16))) == 1
-    assert core.poll() == [["busy", True]]
-    core._release()
-    assert core.poll() == [["busy", False]]
-    assert core._reserve()
+        tokens = [token for token in pool.map(reserve, range(16)) if token is not None]
+        assert len(tokens) == 1
+        token = tokens[0]
+    assert _legacy_events(core) == [["busy", True]]
+    core._release(token)
+    assert _legacy_events(core) == [["busy", False]]
+    token = core._reserve("power")
+    assert token
 
 
 def test_closing_veto_and_reservation(core):
-    assert core._reserve()
+    token = core._reserve("power")
+    assert token
     assert core._on_closing() is False
-    assert core._closing is False
-    assert core.poll() == [["busy", True], ["result", "warning", i18n.tr("busy_title"), i18n.tr("busy_body")]]
-    core._release()
+    assert (core._gate.state()[0] == "closing") is False
+    assert _legacy_events(core) == [["busy", True], ["result", "warning", i18n.tr("busy_title"), i18n.tr("busy_body")]]
+    core._release(token)
     assert core._on_closing() is True
-    assert core._reserve() is False
-    assert core._busy is False
+    token = core._reserve("power")
+    assert token is None
+    assert core._gate.state()[0] == "closing"
 
 
 @pytest.mark.parametrize("result, expected", [(None, None), ("", None), ((), None), ([], None),
@@ -87,7 +96,7 @@ def test_dialog_extension_and_confirmation(core):
 
 
 def test_config_and_language(core):
-    assert core.config() == {"resources": [], "demo": True, "lang": "zh"}
+    assert core.config() == {"resources": [], "demo": True, "lang": "zh", "analysis_enabled": False}
     core._save_config(["address"], False)
     core.set_lang("en")
     assert core._window.title == i18n.tr("title")
@@ -105,6 +114,7 @@ def test_strings_and_public_surface(core):
     assert translated == {"lang": i18n.lang, "strings": {key: list(pair) for key, pair in i18n.STRINGS.items()}}
     assert {name for name in dir(core) if not name.startswith("_")} == {
         "config", "strings", "set_lang", "poll", "selftest_report",
+        "analysis_enter", "analysis_leave", "analysis_open_path", "analysis_save_path",
         "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "test_connection", "all_off",
         "list_meta", "list_draft", "list_compile", "list_open_json", "list_save_json", "list_run",
     }
@@ -219,7 +229,7 @@ def test_main_with_fake_window(core, monkeypatch, platform, renderer, selftest, 
     assert destroyed == ([True] if selftest else [])
     assert len(window.events.closing) == 1
     assert window.events.closing.set() is False
-    assert core._closing is True
+    assert (core._gate.state()[0] == "closing") is True
     title, url, kwargs = created[0]
     assert title == i18n.tr("title")
     assert url == str(Path(webgui.__file__).parent / "web" / "index.html")
@@ -260,9 +270,10 @@ def test_config_writes_are_serialized_without_blocking_reserve(core, monkeypatch
     with ThreadPoolExecutor(max_workers=9) as pool:
         jobs = [pool.submit(write, index) for index in range(8)]
         assert writing.wait(2)
-        assert pool.submit(core._reserve).result(timeout=0.1)
-        core._release()
+        token = pool.submit(core._reserve, "power").result(timeout=0.1)
+        assert token
+        core._release(token)
         for job in jobs:
             job.result(timeout=3)
     assert maximum == 1
-    assert json.loads(core._config_path.read_text()) == core.config()
+    assert json.loads(core._config_path.read_text()) == {k: v for k, v in core.config().items() if k != "analysis_enabled"}
