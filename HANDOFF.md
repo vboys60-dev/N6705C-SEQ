@@ -2,7 +2,7 @@
 
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。只做時序，不做量測。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-22　狀態：模擬器全過（576 tests）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
+最後更新：2026-10-29　狀態：模擬器全過（576 tests）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
 
 | 區塊 | 狀態 |
 |---|---|
@@ -11,6 +11,7 @@
 | ARB List 模式 | **分頁目前反灰鎖定**（`app.js` `LIST_VERIFIED=false`，未實機驗證）；P0、C、A、D、H 前半、I 前半、D-EN、GUI 美化＋中英切換已 commit；等實機跑 H（§9） |
 | E36441A | 指令產生＋驗證＋實機驗證腳本已 commit（`1cfbe76`、`dca33f1`），未接 CLI／GUI，核心假設未實機驗證（§10） |
 | Codex 審查 | 第 2 輪已核准（§8） |
+| 報告分析升級版 | **只有規劃，未開工，未改任何程式碼**；計畫與素材在 `報告分析升級版/`（§11） |
 
 ## 0. 先讀這幾件事
 
@@ -173,3 +174,16 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 1. 有設備：`python scripts/hw_e36441a_check.py --resource <VISA位址>`，貼回輸出（含 `--csv`）。
 2. 依結果定案 `configure_commands`（§10.3）。同時實機確認執行前檢查的回覆格式：`OUTP:PAIR?` 目前只認 `OFF`（回 `0` 會被拒）、`INIT:CONT? (@n)` 是否接受通道清單（不接受會逾時，但發生在寫入前）。
 3. 不做 driver 抽象基底、不移植 listplan（CDW）。`order_warnings`／`suggest_assignment` 因每台 4 通道可沿用，但 skew 值要重測。
+
+## 11. 報告分析升級版（2026-10-29 規劃，未開工）
+
+**目標**：把 DLOG Viewer（Python server 版）做成 SEQ 第三分頁「離線分析報告」，給超過 1000 萬筆的 `.dlog` 用。**使用者說「開工」前不改 `src/`、`tests/`、`packaging/`。**
+
+- 資料夾 `報告分析升級版/`：`升級報告.md`（定案、技術棧、互斥界線、T0–T8 並行任務表、開放問題）、`來源_DLOG_Viewer/`（Viewer 全套複製，不含舊單檔版與 `.cache`）、`參考_SEQ現況快照/`（唯讀參考）、`測試樣本/`（2.6MB，太小，不能證明千萬筆）。
+- 已定案：用 Python server 版（單檔版 10M 要 800MB、全量 CSV 做不到、負電流校正不完整，已否決）；iframe ＋ 同進程背景 HTTP server（`127.0.0.1` 隨機埠 ＋ token）；開檔走原生對話框拿路徑再 mmap；下載走原生另存；偏好存獨立的 `analysis_prefs.json`（SEQ config 會整檔重寫、丟掉別的區段），不用 localStorage；快取搬到使用者可寫目錄。
+- **互斥（硬性）**：電源控制中不可分析，分析分頁開著時不可有任何電源自動化。Python 端用 `idle | power | analysis | draining | closing | fault` 六態仲裁（帶世代、compare-and-set；`closing` 為終態、`fault` 只能走向 `closing`；逾時不釋鎖）取代 `webgui._busy`，不靠前端灰按鈕。`analysis/*` 禁止 import `n6705c.*`、`pyvisa`、`webgui`、`web_seq`、`web_list`、`execute`、`e36441a`。
+- 先注意：`test_webgui` 會掃 `web/*` 不准有中文，Viewer HTML 要放 `analysis/web/`；`js_api` 有公開方法白名單測試。
+- 未決（Opus 與 Codex 意見不同或需使用者拍板）：分析要不要子進程、`/buckets` 校正全覽是否解除暫緩、互斥是否涵蓋 CLI／多實例、鎖的範圍、效能驗收數字、獨立版 Viewer 是否繼續維護。全文見 `升級報告.md` §6、§9。
+- 施工分工（開工後）：Opus＝契約 T0、SEQ 殼層 T6、審查之一；Codex＝互斥 T2、大檔核心 T3、挑錯與審查之一；Sonnet＝server T4、Viewer 改接 T5；Haiku＝搬檔 T1、打包文件 T7。每個任務獨占輸出檔案。
+- **審查進度**：Opus＋Codex 已複審三輪（皆 NEEDS_CHANGES，必修逐輪減少），三輪意見都已改進 `升級報告.md`，尚未跑第四輪。第三輪修正重點：狀態表轉移與逾時、T1 改重寫 core 層 pytest（原 9 項都要起 server）、T5 用假外殼驗收、`App.powerAllowed` 反灰、`ANALYSIS_ENABLED` 定義在 Python（`config()` 下發，`test_webgui.py:90` 要同步改）。
+- **已定案（使用者指示全採建議值）**：§9 第 1、2、3、4、6 題（進頁即鎖、切頁取消、同進程、單一 GUI 進程、最大檔 10M 起算且 30M 不 OOM）。
