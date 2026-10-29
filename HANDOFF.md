@@ -175,9 +175,17 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 2. 依結果定案 `configure_commands`（§10.3）。同時實機確認執行前檢查的回覆格式：`OUTP:PAIR?` 目前只認 `OFF`（回 `0` 會被拒）、`INIT:CONT? (@n)` 是否接受通道清單（不接受會逾時，但發生在寫入前）。
 3. 不做 driver 抽象基底、不移植 listplan（CDW）。`order_warnings`／`suggest_assignment` 因每台 4 通道可沿用，但 skew 值要重測。
 
-## 11. 報告分析升級版（2026-10-29 規劃，未開工）
+## 11. 報告分析升級版（2026-10-29 開工；T0–T6 完成，T7、T8 未做）
 
-**目標**：把 DLOG Viewer（Python server 版）做成 SEQ 第三分頁「離線分析報告」，給超過 1000 萬筆的 `.dlog` 用。**使用者說「開工」前不改 `src/`、`tests/`、`packaging/`。**
+**目標**：把 DLOG Viewer（Python server 版）做成 SEQ 第三分頁「離線分析報告」，給超過 1000 萬筆的 `.dlog` 用。**使用者已於 2026-10-29 說「開工」，規劃文件在 `報告分析升級版/升級報告.md`，契約在 `docs/analysis-contract.md`（數字與型別以 `src/n6705c_seq/analysis/contracts.py` 為準）。**
+
+**施工進度**（pytest 742 過／7 跳過，JS 13 過）：
+- T0 契約完成（Codex 審兩輪、修訂後定稿；含 `open_handle`／`adopt` 交接規則、已知風險：分析中來源檔被截短 mac/Linux 會 SIGBUS）。
+- T1 搬檔 + core 測試 + parity 工具；T2 六態仲裁器 `analysis/gate.py`（含 `_untimed`／`_finishing` 計時）；T3 `core.py` 路徑＋mmap、`storage.py`；T4 `server.py`；T5 `viewer.html` 改接 postMessage／`/save`／`/prefs` ＋ `shell_stub.html`；T6 殼層 `web/analysis.js`、第三分頁、`App.powerAllowed`、整合測試 `tests/test_analysis_integration.py`。
+- **`contracts.ANALYSIS_ENABLED` 仍為 `False`**（分頁預設隱藏，畫面與舊版相同）；要看到分頁須改成 True。
+- **未做**：T7（打包 `pyproject` package-data、spec datas、README、Windows 實機驗收清單）、T8（Codex＋Opus 獨立審查）。Windows 11 實機未測。
+- **後續修補待派**：Viewer 內 8 處 `alert()`（`viewer.html` 約 1801/1824/1865/2302/2414/3048/3147/3175）改用 Viewer 自己的 `#toast`；`--selftest` 前端只驗分頁初始化，完整 enter→ready→leave 需 `webgui` 提供 selftest 旗標（改契約）；`/open` 無進度回報（進度條 0→50→100）；`run_resources`／`run_plan` 內部 I/O 不在計時保護內（只靠 VISA 10s 逾時，升級路徑為 `on_cleanup` callback，需動 `execute.py`／`e36441a.py`）。
+- 已知取捨：CSV 與原 JS 容許最後一位差 1；契約取代報告 §5 舊的計時說法（報告檔本身未改）。
 
 - 資料夾 `報告分析升級版/`：`升級報告.md`（定案、技術棧、互斥界線、T0–T8 並行任務表、開放問題）、`來源_DLOG_Viewer/`（Viewer 全套複製，不含舊單檔版與 `.cache`）、`參考_SEQ現況快照/`（唯讀參考）、`測試樣本/`（2.6MB，太小，不能證明千萬筆）。
 - 已定案：用 Python server 版（單檔版 10M 要 800MB、全量 CSV 做不到、負電流校正不完整，已否決）；iframe ＋ 同進程背景 HTTP server（`127.0.0.1` 隨機埠 ＋ token）；開檔走原生對話框拿路徑再 mmap；下載走原生另存；偏好存獨立的 `analysis_prefs.json`（SEQ config 會整檔重寫、丟掉別的區段），不用 localStorage；快取搬到使用者可寫目錄。

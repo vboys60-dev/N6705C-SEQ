@@ -2,7 +2,10 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body { margin: 0; padding: 10px; display: flex; flex-direction: column; overflow: hidden; }
-#seq-tab, #list-tab { flex: 1; min-height: 0; overflow: hidden; }
+#seq-tab, #list-tab, #analysis-tab { flex: 1; min-height: 0; overflow: hidden; }
+#analysis-tab { display: flex; flex-direction: column; }
+.analysis-note { margin: 0 0 6px; }
+.analysis-frame { flex: 1; width: 100%; border: 1px solid #ccc; }
 button, input, select, textarea { font: inherit; }
 .btn { border: 1px solid #ccc; border-radius: 4px; padding: 6px 12px; background: #fff; color: inherit; cursor: pointer; }
 .btn:hover { background: #eee; }

@@ -113,7 +113,6 @@
     const status = document.getElementById(`conn-${i}`);
     if (status) status.textContent = text;
   });
-  App.on("busy", busy => { document.getElementById("btn-test").disabled = busy; });
   App.on("measured", tab => { if (tab === "seq" && canvas) preview(); });
   App.register({
     async init() {
@@ -151,7 +150,7 @@
       capture = checkbox(bar, "capture");
       const run = el("button", bar, "run_sequence", "btn btn-accent seq-run");
       run.dataset.action = "run";
-      run.disabled = App.busy;
+      run.disabled = !App.powerAllowed;
       hold.addEventListener("change", preview);
       open.addEventListener("click", async () => {
         const response = result(await App.api.seq_open_csv(rows()), "csv_error");
@@ -167,7 +166,7 @@
       run.addEventListener("click", async () => result(await App.api.seq_run(
         rows(), resources(), demo(), hold.checked, capture.checked), "run_result"));
       document.getElementById("btn-test").addEventListener("click", async () => {
-        if (App.busy) return;
+        if (!App.powerAllowed) return;
         for (let i = 0; i < meta.frames; i++) document.getElementById(`conn-${i}`).textContent = "";
         result(await App.api.test_connection(resources(), demo()), "connection_failed");
       });
