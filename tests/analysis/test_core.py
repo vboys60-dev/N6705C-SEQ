@@ -2,6 +2,7 @@
 import datetime
 import hashlib
 import json
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -46,6 +47,7 @@ def test_paths_maps_refcounts_and_roots(tmp_path, cache_root):
 def test_cache_damage_rebuilt(tmp_path, cache_root, damage):
     path, meta, entry, blob = opened(tmp_path, cache_root)
     core.release_handle(entry)
+    assert core.close_all()  # Windows cannot unlink/truncate files that are still mapped
     directory = cache_root / meta['handle']
     if damage == 'version':
         m = json.loads((directory / 'meta.json').read_text())
@@ -292,7 +294,8 @@ def test_h7_open_skips_busy_directory_and_continues(tmp_path, cache_root, monkey
     assert (cache_root / meta['handle']).exists()
 
 
-@pytest.mark.parametrize('stage', ['hash', 'parse'])
+@pytest.mark.parametrize('stage', ['hash', pytest.param('parse', marks=pytest.mark.skipif(
+    sys.platform == 'win32', reason='cannot truncate a file that is memory-mapped on Windows'))])
 def test_r1_r2_truncation_at_checkpoint(tmp_path, cache_root, stage):
     path = make_big(tmp_path / 'truncate.dlog', 10003)
     changed = False
@@ -352,6 +355,8 @@ def test_r4_hash_read_oserror_restats(tmp_path, cache_root, monkeypatch, change)
 @pytest.mark.parametrize('step', ['memmap', 'parse'])
 @pytest.mark.parametrize('changed', [False, True])
 def test_source_build_oserror_restats(tmp_path, cache_root, monkeypatch, step, changed):
+    if changed and step == 'parse' and sys.platform == 'win32':
+        pytest.skip('cannot delete a file that is memory-mapped on Windows')
     path = make_big(tmp_path / 'build-read.dlog', 100)
     def fail(*args, **kwargs):
         if changed:

@@ -1,0 +1,3 @@
+tests/analysis/parity_tools/original_before_python.html -text
+*.dlog -text
+*.npy -text

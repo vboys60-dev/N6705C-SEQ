@@ -33,7 +33,8 @@ needs_node = pytest.mark.skipif(NODE is None, reason="node 未安裝，略過 JS
 
 
 def _run(args, env=None):
-    r = subprocess.run([str(a) for a in args], capture_output=True, text=True, env=env)
+    env = {**os.environ, **(env or {}), 'PYTHONUTF8': '1'}  # tool prints non-ASCII; Windows default is cp1252
+    r = subprocess.run([str(a) for a in args], capture_output=True, text=True, encoding='utf-8', env=env)
     return r
 
 
