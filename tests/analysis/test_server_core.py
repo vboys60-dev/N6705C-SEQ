@@ -102,7 +102,7 @@ def test_h5_adopt_failure_releases(tmp_path, default_dlog, monkeypatch):
     from n6705c_seq.analysis import server
     e = _real_env(tmp_path)
     try:
-        def boom(self, digest, entry):
+        def boom(self, gen, digest, entry):
             raise RuntimeError("boom")
         monkeypatch.setattr(server._App, "adopt", boom)
         st, _, body = _open_req(e, default_dlog)

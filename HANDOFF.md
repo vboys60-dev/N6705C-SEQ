@@ -196,3 +196,5 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - 施工分工（開工後）：Opus＝契約 T0、SEQ 殼層 T6、審查之一；Codex＝互斥 T2、大檔核心 T3、挑錯與審查之一；Sonnet＝server T4、Viewer 改接 T5；Haiku＝搬檔 T1、打包文件 T7。每個任務獨占輸出檔案。
 - **審查進度**：Opus＋Codex 已複審三輪（皆 NEEDS_CHANGES，必修逐輪減少），三輪意見都已改進 `升級報告.md`，尚未跑第四輪。第三輪修正重點：狀態表轉移與逾時、T1 改重寫 core 層 pytest（原 9 項都要起 server）、T5 用假外殼驗收、`App.powerAllowed` 反灰、`ANALYSIS_ENABLED` 定義在 Python（`config()` 下發，`test_webgui.py:90` 要同步改）。
 - **已定案（使用者指示全採建議值）**：§9 第 1、2、3、4、6 題（進頁即鎖、切頁取消、同進程、單一 GUI 進程、最大檔 10M 起算且 30M 不 OOM）。
+
+- **T8 審查後修補（已 commit）**：舊世代 `/release` 綁 `(gen, digest)`、HTTP socket 逾時與取消、`/save` 取消不覆寫、prefs 目錄先建、`/open` 超限先 release、CSV 24 欄（`MAX_CSV_KEYS`）、tint 驗證、多開快取互踩、補副檔名覆寫確認、對話框加鎖、wheel 只含 viewer.html。審查全文 `docs/analysis-review-codex.md`、`docs/analysis-review-opus.md`。**待決**：覆寫確認文字目前只有英文（`webgui.py` 禁中文，需 `i18n.py` 加 key）；Windows 11 實機驗收（`HANDOFF_WINDOWS.md` §6）、`ANALYSIS_ENABLED` 仍為 False。

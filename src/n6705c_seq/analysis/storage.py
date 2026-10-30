@@ -80,18 +80,41 @@ def ensure_dir(path):
     return path
 
 
+def _pid_is_alive(pid):
+    # os.kill(pid, 0) is a POSIX existence probe. On Windows it can terminate
+    # a process, so conservatively retain residue when we cannot check safely.
+    if sys.platform == 'win32' or pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, OverflowError):
+        return True  # Permission denied or unknown: do not delete live work.
+    return True
+
+
 def sweep_tmp(cache_root):
     root = Path(cache_root)
     if not root.exists():
         return
     with cache_lock:
-        for p in root.rglob('*'):
-            if p.resolve() in _active_tmp or any(a in _active_tmp for a in p.resolve().parents):
-                continue
-            if p.is_dir() and '.tmp-' in p.name:
-                shutil.rmtree(p, ignore_errors=True)
-            elif p.is_file() and p.name.endswith(PART_SUFFIX):
-                p.unlink(missing_ok=True)
+        for parent, dirs, files in os.walk(root):
+            for name in dirs[:]:
+                p = Path(parent) / name
+                match = re.search(r'\.tmp-(\d+)-', name)
+                if p.resolve() in _active_tmp or (match and _pid_is_alive(int(match[1]))):
+                    dirs.remove(name)  # Do not visit or delete its children either.
+                elif '.tmp-' in name or name.startswith('.evicted-'):
+                    dirs.remove(name)
+                    shutil.rmtree(p, ignore_errors=True)
+            for name in files:
+                p = Path(parent) / name
+                if p.resolve() not in _active_tmp and name.endswith(PART_SUFFIX):
+                    try:
+                        p.unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
 
 def evict_lru(cache_root, max_bytes, pinned):
@@ -99,16 +122,23 @@ def evict_lru(cache_root, max_bytes, pinned):
     with cache_lock:
         entries = []
         for p in Path(cache_root).iterdir():
-            if p.is_dir() and re.fullmatch(r'[0-9a-f]{40}', p.name):
-                size = sum(f.stat().st_size for f in p.rglob('*') if f.is_file())
-                meta = p / 'meta.json'
-                entries.append((meta.stat().st_mtime_ns if meta.exists() else 0, p, size))
+            if p.is_dir() and (re.fullmatch(r'[0-9a-f]{40}', p.name) or p.name.startswith('.evicted-')):
+                try:
+                    size = sum(f.stat().st_size for f in p.rglob('*') if f.is_file())
+                    meta = p / 'meta.json'
+                    entries.append((meta.stat().st_mtime_ns if meta.exists() else 0, p, size))
+                except OSError:
+                    continue  # Another process may be moving/deleting this entry.
         total = sum(e[2] for e in entries)
         for _, p, size in sorted(entries):
             if total <= max_bytes:
                 break
             if p.name not in pinned:
                 try:
+                    if not p.name.startswith('.evicted-'):
+                        retired = p.with_name(f'.evicted-{p.name}-{secrets.token_hex(8)}')
+                        p.rename(retired)
+                        p = retired
                     shutil.rmtree(p)
                 except OSError:
                     # Eviction is best effort (e.g. another Windows process has

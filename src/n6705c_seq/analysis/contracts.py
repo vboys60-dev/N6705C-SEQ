@@ -312,7 +312,8 @@ class ErrorBody(TypedDict):
 
 DEFAULT_BUCKETS = 1800
 MAX_BUCKETS = 8192
-MAX_KEYS = 12                         # 4 channels x V/I/P
+MAX_KEYS = 12                         # 4 channels x V/I/P (query endpoints)
+MAX_CSV_KEYS = 24                     # CSV export: main + compare file, 2 x MAX_KEYS
 MAX_SAMPLES_SPAN = 2_000_000          # hi - lo + 1 per /samples request
 MAX_RESPONSE_BYTES = 64 * 1024 ** 2   # any non-streamed response body
 SAMPLE_BYTES = 4                      # every binary payload value is float32 LE (P too)

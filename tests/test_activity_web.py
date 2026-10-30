@@ -151,7 +151,7 @@ def test_native_path_grants(api, save, purpose, ext):
     assert "/private" not in repr(result)
     assert api._gate.consume_grant(result["grant"], gen, "save" if save else "open", purpose) == "/private/sensitive/report.other" + ext
     if save:
-        assert calls == [(webview.FileDialog.SAVE, {"file_types": c.SAVE_FILE_TYPES[purpose], "save_filename": "report"})]
+        assert calls == [(webview.FileDialog.SAVE, {"file_types": c.SAVE_FILE_TYPES[purpose], "save_filename": "report" + ext})]
     else:
         assert calls == [(webview.FileDialog.OPEN, {"file_types": c.OPEN_FILE_TYPES[purpose]})]
 

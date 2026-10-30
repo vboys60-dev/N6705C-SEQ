@@ -90,6 +90,9 @@ class StubStorage:
     def sweep_tmp(self, root):
         pass
 
+    def ensure_dir(self, path):
+        path.mkdir(parents=True, exist_ok=True)
+
     def atomic_write_bytes(self, path, data):
         return self.atomic_write_iter(path, [data])
 
@@ -99,8 +102,12 @@ class StubStorage:
         try:
             with open(tmp, "wb") as f:
                 for ch in chunks:
+                    if cancel is not None and cancel.is_set():
+                        raise c.AnalysisCancelled()
                     f.write(ch)
                     n += len(ch)
+            if cancel is not None and cancel.is_set():
+                raise c.AnalysisCancelled()
             os.replace(tmp, path)
         except BaseException:
             if os.path.exists(tmp):
@@ -127,6 +134,9 @@ class Env:
     def grant(self, mode, purpose, path):
         return self.gate.issue_grant(self.gen, mode, purpose, str(path)).id
 
+    def _connection(self):
+        return http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+
     def req(self, method, path, body=None, headers=None, token=True, gen="auto", raw=None, host=None):
         hdr = {}
         if token:
@@ -139,7 +149,7 @@ class Env:
         data = raw
         if body is not None:
             data = json.dumps(body).encode()
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn = self._connection()
         try:
             conn.putrequest(method, path, skip_host=host is not None)
             if host is not None:

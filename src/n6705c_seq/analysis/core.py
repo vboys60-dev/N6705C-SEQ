@@ -6,6 +6,7 @@ analysis.storage; no instrument or GUI modules are imported here.
 """
 import hashlib
 import json
+import math
 import os
 import secrets
 import shutil
@@ -18,7 +19,7 @@ import numpy as np
 from . import storage
 from .contracts import (CACHE_VERSION, CACHE_MAX_BYTES, CORE_CHUNK_RECORDS,
                         CORE_MAX_VALUES_SPAN, HASH_CHUNK_BYTES, CSV_ROWS_PER_CHUNK,
-                        MAX_BUCKETS, MAX_KEYS, AnalysisCancelled, LimitExceeded,
+                        MAX_BUCKETS, MAX_CSV_KEYS, AnalysisCancelled, LimitExceeded,
                         SourceChanged, CacheWriteError)
 
 _check_cancel = storage.check_cancel
@@ -46,9 +47,13 @@ def parse_dlog(buf, *, _destination=None, cancel=None, progress=None) -> dict:
     if not tint_m:
         raise DlogFormatError("Header 中找不到 <tint> 欄位")
     tint = float(tint_m.group(1))
+    if not math.isfinite(tint) or tint <= 0:
+        raise DlogFormatError("Invalid sampling period")
 
     tm = re.search(r"<time>([^<]+)</time>", header_text)
     declared_time = float(tm.group(1)) if tm else None
+    if declared_time is not None and not math.isfinite(declared_time):
+        declared_time = None
 
     fields = []
     for cm in re.finditer(r'<channel id="(\d+)">([\s\S]*?)</channel>', header_text):
@@ -243,7 +248,10 @@ def acquire_handle(digest: str, cache_root: Path) -> dict:
             except (OSError, ValueError, KeyError, TypeError, EOFError) as exc:
                 raise KeyError(digest) from exc
             _open_cache[key] = entry
-        os.utime(entry["dir"] / "meta.json", None)
+        try:
+            os.utime(entry["dir"] / "meta.json", None)
+        except OSError:
+            pass  # Another process may have evicted this mapped directory.
         entry["_refs"] += 1
         return entry
 
@@ -453,7 +461,6 @@ def open_handle(path, cache_root: Path, *, cancel=None, progress=None) -> tuple:
                             chunks.append(arr.tobytes())
                             cursor += arr.nbytes
             meta["lodLayout"] = layout
-            os.utime(directory / "meta.json", None)
             _evict(cache_root, digest)
             return meta, b"".join(chunks), entry
     except BaseException:
@@ -695,7 +702,7 @@ def iter_csv(primary: dict, columns: list, idx_lo: int, idx_hi: int,
     超出其記錄範圍的儲存格留空——與前端 L2782-2797 的行為一致。
     """
     _check_cancel(cancel)
-    if len(columns) > MAX_KEYS:
+    if len(columns) > MAX_CSV_KEYS:
         raise LimitExceeded("CSV columns")
     idx_lo = max(0, min(primary["meta"]["nRecords"] - 1, idx_lo))
     idx_hi = max(0, min(primary["meta"]["nRecords"] - 1, idx_hi))

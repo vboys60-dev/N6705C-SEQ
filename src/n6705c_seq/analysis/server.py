@@ -12,8 +12,10 @@ import logging
 import math
 import re
 import secrets
+import select
 import struct
 import threading
+import time
 import urllib.parse
 from contextlib import ExitStack, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +31,13 @@ _THEMES = ("dark", "soft-dark", "light")
 _INT_RE = re.compile(r"^-?\d{1,18}$")
 _ROUTE_PATHS = {p for _, p in c.ROUTES}
 _E = c.ErrorCode
+_IO_POLL_S = 0.25
+_IO_DEADLINE_S = 30.0
+_IO_CHUNK_BYTES = 64 * 1024
+
+
+class _IOStopped(Exception):
+    """Abort an interrupted/expired transfer without writing another response."""
 
 
 class _HttpError(Exception):
@@ -39,7 +48,7 @@ class _HttpError(Exception):
 
 def frame_binary(meta, payload):
     """[uint32 LE meta length][JSON meta padded to x4][payload]."""
-    m = json.dumps(meta, default=_json_default).encode("utf-8")
+    m = _json_bytes(meta)
     m += b" " * ((-len(m)) % 4)
     return struct.pack("<I", len(m)) + m + payload
 
@@ -48,6 +57,16 @@ def _json_default(o):
     if hasattr(o, "item"):
         return o.item()
     raise TypeError(type(o).__name__)
+
+
+def _json_bytes(obj):
+    def finite(v):
+        if isinstance(v, dict):
+            return {k: finite(x) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [finite(x) for x in v]
+        return _clean(v)
+    return json.dumps(finite(obj), default=_json_default, allow_nan=False).encode("utf-8")
 
 
 def _bad(text):
@@ -144,20 +163,21 @@ class _App:
         self.static = {"/" + n for n in c.STATIC_FILES + (c.DEV_STATIC_FILES if dev else ())}
         self.lock = threading.Lock()
         self.active = 0
-        self.held = {}  # digest -> [Entry, ...], one per /open
+        self.held = {}  # (gen, digest) -> [Entry, ...], one per /open
         self.progress = {}  # (gen, req) -> (stage, pct) of in-flight /open; guarded by self.lock
 
-    def adopt(self, digest, entry):
+    def adopt(self, gen, digest, entry):
         # takes over the reference open_handle returned; must not call core (contract 6.5)
         with self.lock:
-            self.held.setdefault(digest, []).append(entry)
+            self.held.setdefault((gen, digest), []).append(entry)
 
-    def unhold(self, digest):
+    def unhold(self, gen, digest):
         with self.lock:
-            lst = self.held.get(digest)
+            key = (gen, digest)
+            lst = self.held.get(key)
             e = lst.pop() if lst else None
             if lst is not None and not lst:
-                del self.held[digest]
+                del self.held[key]
         if e is not None:
             self.core.release_handle(e)
 
@@ -186,8 +206,19 @@ class _App:
 
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # No read-ahead: select() below must see every pending body byte on the socket.
+    rbufsize = 0
     app = None
     port = 0
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(_IO_POLL_S)
+
+    def _check_io(self, deadline):
+        job = self._job
+        if (job is not None and job.cancel.is_set()) or time.monotonic() >= deadline:
+            raise _IOStopped()
 
     def log_message(self, *a):
         pass
@@ -196,6 +227,8 @@ class _Handler(BaseHTTPRequestHandler):
     def _send(self, status, ctype, body, extra=()):
         if len(body) > c.MAX_RESPONSE_BYTES:
             return self._error(_HttpError(_E.TOO_LARGE, "response too large"))
+        deadline = time.monotonic() + _IO_DEADLINE_S
+        self._check_io(deadline)
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -206,13 +239,17 @@ class _Handler(BaseHTTPRequestHandler):
         if self.close_connection:
             self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
+        view = memoryview(body)
+        for start in range(0, len(body), _IO_CHUNK_BYTES):
+            self._check_io(deadline)
+            self.wfile.write(view[start:start + _IO_CHUNK_BYTES])
 
     def _json(self, obj, status=200):
         self._send(status, "application/json; charset=utf-8",
-                   json.dumps(obj, default=_json_default).encode("utf-8"))
+                   _json_bytes(obj))
 
     def _error(self, e):
+        self._job = None  # computation cancellation still returns the contract's 409
         if self.command == "POST" and not self._consumed:
             self.close_connection = True  # unread body would corrupt keep-alive
         self._json({"error": e.text, "code": e.code.value}, c.HTTP_STATUS[e.code])
@@ -229,11 +266,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _body_json(self, limit=c.MAX_JSON_BODY_BYTES):
         n = self._length(limit)
-        data = self.rfile.read(n)
-        self._consumed = True
-        if len(data) != n:
-            self.close_connection = True
-            raise _bad("short body")
+        data = b"".join(self._body_parts(n))
         try:
             obj = json.loads(data.decode("utf-8"))
         except ValueError:
@@ -242,15 +275,39 @@ class _Handler(BaseHTTPRequestHandler):
             raise _bad("JSON object expected")
         return obj
 
+    def _body_parts(self, n):
+        deadline = time.monotonic() + _IO_DEADLINE_S
+        left = n
+        while left:
+            self._check_io(deadline)
+            if not select.select([self.connection], [], [], _IO_POLL_S)[0]:
+                continue
+            part = self.rfile.read(min(left, _IO_CHUNK_BYTES))
+            self._check_io(deadline)  # cancellation can arrive during the last read
+            if not part:
+                self.close_connection = True
+                raise _bad("short body")
+            left -= len(part)
+            yield part
+        self._check_io(deadline)
+        self._consumed = True
+
     # ---- dispatch
     def _dispatch(self):
+        try:
+            self._dispatch_request()
+        except (_IOStopped, TimeoutError, BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+
+    def _dispatch_request(self):
         self._consumed = False
+        self._job = None
         try:
             self._route()
         except _HttpError as e:
             self._error(e)
-        except (BrokenPipeError, ConnectionResetError):
-            self.close_connection = True
+        except (_IOStopped, TimeoutError, BrokenPipeError, ConnectionResetError):
+            raise
         except Exception as e:  # noqa: BLE001 - mapped per contract 3.2
             self._error(self._map(e))
 
@@ -308,6 +365,7 @@ class _Handler(BaseHTTPRequestHandler):
         if job is None:
             self._need_session(gen)
             raise _HttpError(_E.STALE_GEN, "stale generation")  # lost a race; treat as stale
+        self._job = job
         with app.lock:
             app.active += 1
             over = app.active > c.MAX_CONCURRENT_JOBS
@@ -369,15 +427,20 @@ class _Handler(BaseHTTPRequestHandler):
                 with app.lock:
                     app.progress.pop(key, None)
         try:
-            app.adopt(meta["handle"], entry)
+            # Validate the complete framed size before handing the reference to app.
+            head = frame_binary(meta, b"")
+            if len(head) + len(blob) > c.MAX_RESPONSE_BYTES:
+                raise _HttpError(_E.TOO_LARGE, "response too large")
+            self._check_io(time.monotonic() + _IO_DEADLINE_S)
+            app.adopt(gen, meta["handle"], entry)
         except BaseException:
             app.core.release_handle(entry)
             raise
-        self._send(200, "application/octet-stream", frame_binary(meta, blob))
+        self._send(200, "application/octet-stream", head + blob)
 
     def _r_release(self, job, qs, gen):
         h = _handle_arg(self._body_json().get("h"))
-        self.app.unhold(h)  # unknown or already released -> still ok
+        self.app.unhold(gen, h)  # unknown or already released -> still ok
         self._json({"ok": True})
 
     def _r_cancel(self, job, qs, gen):
@@ -469,6 +532,8 @@ class _Handler(BaseHTTPRequestHandler):
         cols = b.get("cols")
         if not isinstance(cols, str):
             raise _bad("cols required")
+        if len(cols.split(",")) > c.MAX_CSV_KEYS:
+            raise _bad("cols must have at most %d items" % c.MAX_CSV_KEYS)
         specs = []
         for tok in cols.split(","):
             m = re.match(r"^([pc]):([VIP])([1-4])$", tok)
@@ -503,18 +568,7 @@ class _Handler(BaseHTTPRequestHandler):
             raise _bad("%s must be one of %s" % (c.HEADER_PURPOSE, ", ".join(c.UPLOAD_PURPOSES)))
         n = self._length(c.MAX_UPLOAD_BYTES)
         path = self._grant(self.headers.get(c.HEADER_GRANT), "save", purpose)
-        parts, left = [], n
-        while left:
-            if job.cancel.is_set():
-                raise c.AnalysisCancelled()
-            part = self.rfile.read(min(left, 1 << 20))
-            if not part:
-                self.close_connection = True
-                raise _bad("short body")
-            parts.append(part)
-            left -= len(part)
-        self._consumed = True
-        written = self.app.storage.atomic_write_bytes(path, b"".join(parts))
+        written = self.app.storage.atomic_write_iter(path, self._body_parts(n), job.cancel)
         self._json({"ok": True, "bytes": written, "name": path.name})
 
     def _r_import_markers(self, job, qs, gen):
@@ -538,7 +592,8 @@ class _Handler(BaseHTTPRequestHandler):
         p = self._body_json(c.MAX_PREFS_BYTES)
         if not _prefs_ok(p):
             raise _bad("bad prefs structure")
-        app.storage.atomic_write_bytes(app.prefs_path, json.dumps(p).encode("utf-8"))
+        app.storage.ensure_dir(app.prefs_path.parent)
+        app.storage.atomic_write_bytes(app.prefs_path, _json_bytes(p))
         self._json({"ok": True})
 
     do_GET = do_POST = do_HEAD = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _dispatch

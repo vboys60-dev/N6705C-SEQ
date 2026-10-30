@@ -66,7 +66,8 @@ def test_atomic_bytes_fsync_before_replace(tmp_path, monkeypatch):
     assert calls == ['sync', 'replace']
 
 
-def test_sweep_only_cache_residue_and_live_tmp(tmp_path, cache_root):
+def test_sweep_only_cache_residue_and_live_tmp(tmp_path, cache_root, monkeypatch):
+    monkeypatch.setattr(storage, '_pid_is_alive', lambda pid: False)
     outside = tmp_path / 'user.part'
     outside.write_bytes(b'keep')
     temp = cache_root / 'a.tmp-123-random'
@@ -147,12 +148,81 @@ def test_lru_busy_directory_keeps_bytes_counted(cache_root, monkeypatch):
         path.mkdir()
         (path / 'meta.json').write_bytes(b'x' * 10)
         os.utime(path / 'meta.json', (i + 1, i + 1))
-    remove = storage.shutil.rmtree
-    def busy(path):
+    rename = type(cache_root).rename
+    def busy(path, target):
         if path == paths[0]:
             raise PermissionError('busy')
-        remove(path)
-    monkeypatch.setattr(storage.shutil, 'rmtree', busy)
+        return rename(path, target)
+    monkeypatch.setattr(type(cache_root), 'rename', busy)
     storage.evict_lru(cache_root, 10, set())
     assert paths[0].exists()
     assert not paths[1].exists() and not paths[2].exists()
+
+
+@pytest.mark.parametrize('alive', [False, True])
+def test_sweep_respects_other_process_and_its_children(cache_root, monkeypatch, alive):
+    directory = cache_root / 'a.tmp-4567-random'
+    nested = directory / 'nested.tmp-7654-random'
+    nested.mkdir(parents=True)
+    part = nested / 'data.part'
+    part.write_bytes(b'live data')
+    checked = []
+    def probe(pid):
+        checked.append(pid)
+        return alive
+    monkeypatch.setattr(storage, '_pid_is_alive', probe)
+    storage.sweep_tmp(cache_root)
+    assert directory.exists() is alive
+    assert part.exists() is alive
+    assert checked == [4567]
+
+
+def test_pid_probe_current_process():
+    assert storage._pid_is_alive(os.getpid())
+
+
+@pytest.mark.parametrize('error, alive', [(ProcessLookupError(), False),
+                                          (PermissionError(), True), (OSError(), True)])
+def test_pid_probe_posix_errors(monkeypatch, error, alive):
+    monkeypatch.setattr(storage.sys, 'platform', 'linux')
+    def probe(pid, signal):
+        assert (pid, signal) == (4567, 0)
+        raise error
+    monkeypatch.setattr(storage.os, 'kill', probe)
+    assert storage._pid_is_alive(4567) is alive
+
+
+def test_pid_probe_windows_conservatively_retains(monkeypatch):
+    monkeypatch.setattr(storage.sys, 'platform', 'win32')
+    def unexpected(*args):
+        pytest.fail('Windows must not use os.kill as an existence probe')
+    monkeypatch.setattr(storage.os, 'kill', unexpected)
+    assert storage._pid_is_alive(4567)
+
+
+@pytest.mark.parametrize('retry', ['sweep', 'evict'])
+def test_lru_retires_before_delete_and_retries_residue(cache_root, monkeypatch, retry):
+    directory = cache_root / ('a' * 40)
+    directory.mkdir()
+    (directory / 'meta.json').write_bytes(b'original metadata')
+    remove = storage.shutil.rmtree
+    retired = []
+    def fail(path):
+        assert not directory.exists()
+        assert path.name.startswith('.evicted-')
+        assert (path / 'meta.json').read_bytes() == b'original metadata'
+        retired.append(path)
+        # A new publisher may reuse the digest while the old tree is deleted.
+        directory.mkdir()
+        (directory / 'meta.json').write_bytes(b'new cache')
+        raise PermissionError('still mapped by another process')
+    monkeypatch.setattr(storage.shutil, 'rmtree', fail)
+    storage.evict_lru(cache_root, 0, set())
+    assert len(retired) == 1 and retired[0].exists()
+    monkeypatch.setattr(storage.shutil, 'rmtree', remove)
+    if retry == 'sweep':
+        storage.sweep_tmp(cache_root)
+    else:
+        storage.evict_lru(cache_root, 0, {directory.name})
+    assert not retired[0].exists()
+    assert (directory / 'meta.json').read_bytes() == b'new cache'

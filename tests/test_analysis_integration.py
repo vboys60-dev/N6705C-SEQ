@@ -267,3 +267,36 @@ def test_selftest_fails_when_server_check_fails(api, monkeypatch):
     monkeypatch.setattr(webview, "start", lambda func, **kwargs: (api.selftest_report(True, ""), func()))
     webgui.main()
     assert codes == [1]
+
+
+def test_save_dialog_suffix_overwrite_and_serialized(api, tmp_path):
+    r, _ = enter(api)
+    gen = r["gen"]
+    calls = []
+    existing = tmp_path / "out.csv"
+    existing.write_text("x")
+    answers = iter([False, True])
+    api._window.create_confirmation_dialog = lambda t, x: calls.append(x) or next(answers)
+    api._window.path = str(tmp_path / "out")  # user stripped the extension; out.csv exists
+    assert api.analysis_save_path(gen, "csv", "out")["cancelled"] is True
+    assert api.analysis_save_path(gen, "csv", "out")["ok"] is True and len(calls) == 2
+    # suggested name gets the extension
+    seen = {}
+    api._window.create_file_dialog = lambda kind, **kw: seen.update(kw)
+    api.analysis_save_path(gen, "csv", "plain")
+    assert seen["save_filename"] == "plain.csv"
+    # second concurrent dialog is refused
+    import threading
+    inside, release = threading.Event(), threading.Event()
+
+    def slow(kind, **kw):
+        inside.set()
+        release.wait(5)
+        return None
+    api._window.create_file_dialog = slow
+    t = threading.Thread(target=api.analysis_open_path, args=(gen, "dlog"))
+    t.start()
+    assert inside.wait(5)
+    assert api.analysis_open_path(gen, "dlog") == {"ok": False, "cancelled": True, "gen": gen}
+    release.set()
+    t.join()

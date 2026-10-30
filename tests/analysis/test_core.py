@@ -272,19 +272,19 @@ def test_h7_open_skips_busy_directory_and_continues(tmp_path, cache_root, monkey
     _, _, victim = core.open_handle(paths[1], cache_root)
     core.release_handle(busy)
     core.release_handle(victim)
-    rmtree = core.shutil.rmtree
+    rename = type(cache_root).rename
     attempts = []
 
-    def remove(path, *args, **kwargs):
+    def retire(path, target):
         if path in (busy['dir'], victim['dir']):
             entry = busy if path == busy['dir'] else victim
             assert entry['V'][1]._mmap.closed  # close before Windows deletion
             attempts.append(path)
             if path == busy['dir']:
                 raise PermissionError('in use')
-        return rmtree(path, *args, **kwargs)
+        return rename(path, target)
 
-    monkeypatch.setattr(core.shutil, 'rmtree', remove)
+    monkeypatch.setattr(type(cache_root), 'rename', retire)
     monkeypatch.setattr(core, 'CACHE_MAX_BYTES', 1)
     meta, _ = core.open_dlog(paths[2], cache_root)
     assert set(attempts) == {busy['dir'], victim['dir']}
@@ -364,3 +364,70 @@ def test_source_build_oserror_restats(tmp_path, cache_root, monkeypatch, step, c
     with pytest.raises(SourceChanged if changed else CacheWriteError):
         core.open_handle(path, cache_root)
     assert list(cache_root.iterdir()) == []
+
+
+@pytest.mark.parametrize('value', ['nan', 'inf', '-inf', '0', '-0.001'])
+def test_invalid_tint_rejected(tmp_path, cache_root, value):
+    path = make_big(tmp_path / 'invalid-tint.dlog', 3)
+    data = path.read_bytes().replace(b'<tint>0.001</tint>', f'<tint>{value}</tint>'.encode())
+    path.write_bytes(data)
+    with pytest.raises(core.DlogFormatError):
+        core.parse_dlog(data)
+    with pytest.raises(core.DlogFormatError):
+        core.open_handle(path, cache_root)
+    assert list(cache_root.iterdir()) == []
+
+
+@pytest.mark.parametrize('value, expected', [('nan', None), ('inf', None), ('-inf', None),
+                                             ('0', 0.0), ('1.5', 1.5)])
+def test_declared_time_normalized(tmp_path, cache_root, value, expected):
+    path = make_big(tmp_path / 'declared-time.dlog', 3)
+    path.write_bytes(path.read_bytes().replace(b'<time>1.0</time>', f'<time>{value}</time>'.encode()))
+    assert core.parse_dlog(path.read_bytes())['declaredTime'] == expected
+    meta, _ = core.open_dlog(path, cache_root)
+    assert meta['declaredTime'] == expected
+    json.dumps(meta, allow_nan=False)
+    # Also verify the persisted metadata on a warm open.
+    assert core.close_all()
+    warm, _ = core.open_dlog(path, cache_root)
+    assert warm['declaredTime'] == expected
+
+
+def test_csv_two_four_channel_files_and_column_limit(tmp_path, cache_root):
+    primary_path = make_big(tmp_path / 'primary.dlog', 5, channels=4)
+    compare_path = make_big(tmp_path / 'compare.dlog', 7, channels=4)
+    _, _, primary = core.open_handle(primary_path, cache_root)
+    _, _, compare = core.open_handle(compare_path, cache_root)
+    columns = [dict(entry=entry, kind=kind, ch=ch, label=f'{source}:{kind}{ch}')
+               for source, entry in [('p', primary), ('c', compare)]
+               for ch in range(1, 5) for kind in 'VIP']
+    now = datetime.datetime(2026, 1, 1)
+    lines = b''.join(core.iter_csv(primary, columns, 0, 4, False, 0, now)).decode().splitlines()
+    assert len(columns) == 24 and len(lines) == 9
+    assert lines[3].split(',') == ['Time'] + [c['label'] for c in columns]
+    for index, line in enumerate(lines[4:]):
+        values = [float(cell) for cell in line.split(',')]
+        assert len(values) == 25
+        assert values[0] == pytest.approx(index * .001)
+        for column, value in zip(columns, values[1:]):
+            expected = core.get_values(column['entry'], column['kind'], column['ch'],
+                                       index, index, False, 0)[0]
+            assert value == pytest.approx(float(expected), abs=1e-9)
+    with pytest.raises(LimitExceeded, match='CSV columns'):
+        next(core.iter_csv(primary, columns + [columns[0]], 0, 4, False, 0, now))
+
+
+@pytest.mark.parametrize('warm', [False, True])
+def test_open_ignores_lru_touch_failure(tmp_path, cache_root, monkeypatch, warm):
+    path = make_big(tmp_path / 'touch.dlog', 5)
+    if warm:
+        core.open_dlog(path, cache_root)
+        assert core.close_all()
+    def fail(*args, **kwargs):
+        raise FileNotFoundError('another process moved the directory')
+    monkeypatch.setattr(core.os, 'utime', fail)
+    meta, _, entry = core.open_handle(path, cache_root)
+    assert entry['_refs'] == 1
+    assert core.acquire_handle(meta['handle'], cache_root) is entry
+    assert entry['_refs'] == 2
+    assert core.get_values(entry, 'V', 1, 0, 4, False, 0).size == 5

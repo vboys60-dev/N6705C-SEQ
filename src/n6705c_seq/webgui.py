@@ -27,6 +27,7 @@ class _Core:
         self._config_lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue()
         self._server = None
+        self._dialog_lock = threading.Lock()
         self._server_lock = threading.Lock()
         self._shutdown_done = False
         self._cleanup_done = False
@@ -106,15 +107,24 @@ class _Core:
             return self._analysis_error("bad_purpose")
         if type(gen) is not int or self._gate.state() != (contracts.State.ANALYSIS, gen):
             return self._analysis_error("stale")
-        kwargs = {"file_types": (contracts.SAVE_FILE_TYPES if save else contracts.OPEN_FILE_TYPES)[purpose]}
-        if save:
-            kwargs["save_filename"] = suggested
-        path = self._dialog_path(self._window.create_file_dialog(
-            webview.FileDialog.SAVE if save else webview.FileDialog.OPEN, **kwargs))
-        if not path:
+        if not self._dialog_lock.acquire(blocking=False):  # one native dialog at a time
             return {"ok": False, "cancelled": True, "gen": gen}
-        if save and Path(path).suffix.lower() != contracts.SAVE_EXT[purpose]:
-            path += contracts.SAVE_EXT[purpose]
+        try:
+            kwargs = {"file_types": (contracts.SAVE_FILE_TYPES if save else contracts.OPEN_FILE_TYPES)[purpose]}
+            if save:
+                ext = contracts.SAVE_EXT[purpose]
+                kwargs["save_filename"] = suggested if suggested.lower().endswith(ext) else suggested + ext
+            path = self._dialog_path(self._window.create_file_dialog(
+                webview.FileDialog.SAVE if save else webview.FileDialog.OPEN, **kwargs))
+            if not path:
+                return {"ok": False, "cancelled": True, "gen": gen}
+            if save and Path(path).suffix.lower() != contracts.SAVE_EXT[purpose]:
+                path += contracts.SAVE_EXT[purpose]  # native dialog never saw this name: re-confirm overwrite
+                if Path(path).exists() and not self._confirm(
+                        tr("confirm"), f"{Path(path).name} already exists. Overwrite?"):
+                    return {"ok": False, "cancelled": True, "gen": gen}
+        finally:
+            self._dialog_lock.release()
         grant = self._gate.issue_grant(gen, "save" if save else "open", purpose.value, path)
         if grant is None:
             return self._analysis_error("stale")
