@@ -16,7 +16,7 @@ CONTRACT_VERSION = 1
 # Feature flag: single source of truth. Delivered to JS via config()["analysis_enabled"].
 # False: no analysis tab, analysis_enter always denied, server never started.
 # The arbiter (fault, async closing, generation checks) runs regardless.
-ANALYSIS_ENABLED = False
+ANALYSIS_ENABLED = True
 CONFIG_KEY_ANALYSIS = "analysis_enabled"
 # --selftest flag delivered to JS (doc 1.6, 1.7). Not persisted to the SEQ config file.
 CONFIG_KEY_SELFTEST = "selftest_mode"

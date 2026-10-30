@@ -98,7 +98,7 @@ GUI 的第三分頁「分析」用來開啟 `.dlog` 檔（設計目標為千萬�
 - **與電源控制互斥**：進入分析分頁即鎖住電源控制（執行、全部關閉等反灰），離開分頁才釋放；電源控制執行中無法進入分析。
 - 開檔與匯出使用原生對話框。分析期間請勿移動或覆寫來源 `.dlog`；讀取中若被截短，mac／Linux 可能崩潰（見 `docs/analysis-contract.md` §6.6）。
 - 快取與偏好放在使用者可寫目錄（Windows：`%LOCALAPPDATA%`；其他：`$XDG_CACHE_HOME` 或 `~/.cache`），不寫入安裝資料夾。
-- **開關**：`src/n6705c_seq/analysis/contracts.py` 的 `ANALYSIS_ENABLED`（第 19 行附近）。目前為 `False`，分頁隱藏，畫面與舊版相同；改為 `True` 後重開 GUI 才會出現分頁。
+- **開關**：`src/n6705c_seq/analysis/contracts.py` 的 `ANALYSIS_ENABLED`（第 19 行附近）。目前為 `True`（分頁顯示）；改為 `False` 則隱藏分頁，畫面與舊版相同。
 - 架構與契約：`docs/analysis-contract.md`（數字與型別以 `contracts.py` 為準）。
 - Windows 上的實機驗收尚未完成，見 `HANDOFF_WINDOWS.md` §6。
 

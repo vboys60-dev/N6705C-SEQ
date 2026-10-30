@@ -98,7 +98,7 @@ def test_dialog_extension_and_confirmation(core):
 
 def test_config_and_language(core):
     assert core.config() == {"resources": [], "demo": True, "lang": "zh",
-                             "analysis_enabled": False, "selftest_mode": False}
+                             "analysis_enabled": True, "selftest_mode": False}
     assert set(core.config()) == set(contracts.CONFIG_KEYS)
     core._save_config(["address"], False)
     core.set_lang("en")
@@ -193,6 +193,7 @@ def test_main_with_fake_window(core, monkeypatch, platform, renderer, selftest, 
     destroyed = []
     window.destroy = lambda: destroyed.append(True)
     messages = []
+    monkeypatch.setattr(contracts, "ANALYSIS_ENABLED", False)  # shell-only test: do not start the analysis server
     monkeypatch.setattr(webgui.sys, "argv", ["webgui", "--selftest"] if selftest else ["webgui"])
     monkeypatch.setattr(webgui.sys, "platform", platform)
     monkeypatch.setattr(webgui, "Api", lambda: core)

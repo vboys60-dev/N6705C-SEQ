@@ -182,7 +182,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 **施工進度**（pytest 764 過／7 跳過，`node --test tests/js` 19 過；2026-10-30 驗）：
 - T0 契約完成（Codex 審兩輪、修訂後定稿；含 `open_handle`／`adopt` 交接規則、已知風險：分析中來源檔被截短 mac/Linux 會 SIGBUS）。
 - T1 搬檔 + core 測試 + parity 工具；T2 六態仲裁器 `analysis/gate.py`（含 `_untimed`／`_finishing` 計時）；T3 `core.py` 路徑＋mmap、`storage.py`；T4 `server.py`；T5 `viewer.html` 改接 postMessage／`/save`／`/prefs` ＋ `shell_stub.html`；T6 殼層 `web/analysis.js`、第三分頁、`App.powerAllowed`、整合測試 `tests/test_analysis_integration.py`。
-- **`contracts.ANALYSIS_ENABLED` 仍為 `False`**（分頁預設隱藏，畫面與舊版相同）；要看到分頁須改成 True（位置：`src/n6705c_seq/analysis/contracts.py`）。翻 True 前未在 Windows 驗過，不要直接發版。
+- **`contracts.ANALYSIS_ENABLED` 已為 `True`**（分頁顯示；macOS 已手動點測無問題）。改回 `False` 可隱藏分頁（位置：`src/n6705c_seq/analysis/contracts.py`）。Windows 11 尚未驗，發版前須先驗。
 - **T7（打包與文件，已完成，未實機驗）**：`pyproject.toml` package-data 加 `analysis/web/*`；`packaging/n6705c_seq.spec` datas 逐檔列 `viewer.html`（`shell_stub.html` 不打包）、hiddenimports 收 `n6705c_seq.analysis`；`build.ps1` 加 bundle 內 `viewer.html` 存在檢查；README 補分析分頁、開關位置、測試環境變數、不搬工具清單；`HANDOFF_WINDOWS.md` §6 端到端驗收清單。`original_before_python.html` sha1 `0117e08d…` 搬移前後相同。
 - **未做**：T8（Codex＋Opus 各一份獨立審查，`docs/analysis-review-*.md`，尚未派）。Windows 11 實機未測（見 `HANDOFF_WINDOWS.md` §6）。
 - **後續修補（已 commit：`33f58ce`、`3692f91`、`78f36d6`）**：Viewer 8 處 `alert()` 改 `#toast`；`/open` 進度改 `/progress` 輪詢；`--selftest` 往返（enter→ready→leave→idle）與 `selftest_mode` 旗標；`analysis.js` 補 `csv` 授權；`on_cleanup` 收尾計時（`execute.py`／`e36441a.py`）。
@@ -197,4 +197,4 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - **審查進度**：Opus＋Codex 已複審三輪（皆 NEEDS_CHANGES，必修逐輪減少），三輪意見都已改進 `升級報告.md`，尚未跑第四輪。第三輪修正重點：狀態表轉移與逾時、T1 改重寫 core 層 pytest（原 9 項都要起 server）、T5 用假外殼驗收、`App.powerAllowed` 反灰、`ANALYSIS_ENABLED` 定義在 Python（`config()` 下發，`test_webgui.py:90` 要同步改）。
 - **已定案（使用者指示全採建議值）**：§9 第 1、2、3、4、6 題（進頁即鎖、切頁取消、同進程、單一 GUI 進程、最大檔 10M 起算且 30M 不 OOM）。
 
-- **T8 審查後修補（已 commit）**：舊世代 `/release` 綁 `(gen, digest)`、HTTP socket 逾時與取消、`/save` 取消不覆寫、prefs 目錄先建、`/open` 超限先 release、CSV 24 欄（`MAX_CSV_KEYS`）、tint 驗證、多開快取互踩、補副檔名覆寫確認、對話框加鎖、wheel 只含 viewer.html。審查全文 `docs/analysis-review-codex.md`、`docs/analysis-review-opus.md`。覆寫確認已有中英文（i18n key `overwrite_confirm`）。PR #1（`feat/analysis-tab`→`main`）已開，早期 pywebview 那批已先推到 `origin/main`（`6849055`）。**待決**：Windows 11 實機驗收（`HANDOFF_WINDOWS.md` §6）、`ANALYSIS_ENABLED` 仍為 False。
+- **T8 審查後修補（已 commit）**：舊世代 `/release` 綁 `(gen, digest)`、HTTP socket 逾時與取消、`/save` 取消不覆寫、prefs 目錄先建、`/open` 超限先 release、CSV 24 欄（`MAX_CSV_KEYS`）、tint 驗證、多開快取互踩、補副檔名覆寫確認、對話框加鎖、wheel 只含 viewer.html。審查全文 `docs/analysis-review-codex.md`、`docs/analysis-review-opus.md`。覆寫確認已有中英文（i18n key `overwrite_confirm`）。PR #1（`feat/analysis-tab`→`main`）已開，早期 pywebview 那批已先推到 `origin/main`（`6849055`）。**待決**：Windows 11 實機驗收（`HANDOFF_WINDOWS.md` §6）、`ANALYSIS_ENABLED` 已改 True（macOS 手動點測無問題）。
