@@ -336,3 +336,66 @@ def test_off_resources_checks_all_channels_and_closes(monkeypatch, answer):
             e36441a.off_resources(["fake"])
     assert session.queries == [f"OUTP? (@{ch})" for ch in range(1, 5)]
     assert closed == [True]
+
+
+@pytest.mark.parametrize("mode", ["normal", "failure", "hold_dc"])
+def test_rows_cleanup_callback_only_precedes_restore(monkeypatch, mode):
+    events = []
+    session = _FakeSession()
+    def main(seconds):
+        assert events == []
+        if mode == "failure":
+            raise RuntimeError("main failed")
+    monkeypatch.setattr(e36441a.time, "sleep", main)
+    write = session.write_checked
+    def checked(command):
+        assert events == []
+        write(command)
+    monkeypatch.setattr(session, "write_checked", checked)
+    restore = e36441a._restore
+    def cleanup(*args):
+        assert events == ["callback"]
+        events.append("restore")
+        restore(*args)
+    monkeypatch.setattr(e36441a, "_restore", cleanup)
+    def run():
+        e36441a.run_rows([session], [replace(ROW, channel=1)], hold_dc=mode == "hold_dc",
+                        on_cleanup=lambda: events.append("callback"))
+    if mode == "failure":
+        with pytest.raises(RuntimeError, match="main failed"):
+            run()
+    else:
+        run()
+    assert events == ([] if mode == "hold_dc" else ["callback", "restore"])
+
+
+@pytest.mark.parametrize("mode", ["normal", "failure", "hold_dc"])
+def test_resources_callback_forwarded_and_precedes_close_loop(monkeypatch, mode):
+    from types import SimpleNamespace
+
+    events = []
+    sessions = [_FakeSession(), _FakeSession()]
+    transports = [SimpleNamespace(close=lambda i=i: events.append(f"close{i}")) for i in range(2)]
+    monkeypatch.setattr(e36441a, "_sessions", lambda *a: transports)
+    monkeypatch.setattr(e36441a, "Session", lambda t: sessions[transports.index(t)])
+    def main(seconds):
+        assert events == []
+        if mode == "failure":
+            raise RuntimeError("main failed")
+    monkeypatch.setattr(e36441a.time, "sleep", main)
+    restore = e36441a._restore
+    def cleanup(*args):
+        assert events == ["callback"]
+        events.append("restore")
+        restore(*args)
+    monkeypatch.setattr(e36441a, "_restore", cleanup)
+    def run():
+        e36441a.run_resources(["a", "b"], [replace(ROW, channel=1)],
+                             hold_dc=mode == "hold_dc", on_cleanup=lambda: events.append("callback"))
+    if mode == "failure":
+        with pytest.raises(RuntimeError, match="main failed"):
+            run()
+    else:
+        run()
+    expected = [] if mode == "hold_dc" else ["callback", "restore"]
+    assert events == expected + ["callback", "close0", "close1"]

@@ -27,8 +27,20 @@ CONFIG_KEYS = ("resources", "demo", "lang", CONFIG_KEY_ANALYSIS, CONFIG_KEY_SELF
 # JS gives each step (Viewer ready, back to idle after leave) SELFTEST_STEP_TIMEOUT_MS.
 SELFTEST_REPORT_TIMEOUT_S = 30.0
 SELFTEST_STEP_TIMEOUT_MS = 10_000
-# The only js_api methods JS may call in selftest mode: no instrument work, no native dialogs.
-SELFTEST_JS_API_ALLOWED = ("config", "strings", "poll", "selftest_report", "analysis_enter", "analysis_leave")
+# Selftest deny list (doc 1.7.3). Every public webgui.Api method sits in exactly one tuple
+# (tests/test_selftest_api_classes.py). A NEW public method is denied by default until a human classifies it.
+# Read-only: no instrument I/O, no native dialog, no state beyond the gate / selftest result / in-memory queue.
+SELFTEST_JS_API_ALLOWED_READONLY = (
+    "config", "strings", "poll", "selftest_report", "analysis_enter", "analysis_leave",
+    "seq_meta", "seq_preview", "list_meta", "list_draft", "list_compile",
+)
+# Instrument work, native dialogs, or state outside the gate (config file, loaded plan/measured data).
+SELFTEST_JS_API_DENIED = (
+    "seq_run", "test_connection", "all_off", "list_run",              # instrument
+    "analysis_open_path", "analysis_save_path",                        # native dialog + grant
+    "seq_open_csv", "seq_save_csv", "list_open_json", "list_save_json",  # native dialog + file I/O
+    "set_lang",                                                        # writes the SEQ config file
+)
 
 
 # --------------------------------------------------------------------------- arbiter

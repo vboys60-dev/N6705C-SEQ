@@ -194,3 +194,41 @@ def test_outputs_off_queries_all_channels_together():
     assert [cmd for cmd in sent(inst)[before:] if cmd.startswith("OUTP?")] == [
         "OUTP? (@1,2,3,4)"
     ]
+
+
+@pytest.mark.parametrize("entry", ["plan", "functions"])
+@pytest.mark.parametrize("mode", ["normal", "failure", "keep_on"])
+def test_cleanup_callback_only_precedes_outputs_off(monkeypatch, entry, mode):
+    from n6705c_seq import execute
+    from n6705c_seq.plan import to_functions
+
+    group = demo(1)
+    events = []
+    def main(*args):
+        assert events == []
+        if mode == "failure":
+            raise RuntimeError("main failed")
+    monkeypatch.setattr(execute, "_wait", main)
+    original_apply = execute._apply_levels
+    def apply(*args):
+        assert events == []
+        original_apply(*args)
+    monkeypatch.setattr(execute, "_apply_levels", apply)
+    off = execute.outputs_off
+    def cleanup(group):
+        assert events == ["callback"]
+        events.append("off")
+        off(group)
+    monkeypatch.setattr(execute, "outputs_off", cleanup)
+    kwargs = {"on_cleanup": lambda: events.append("callback")}
+    if entry == "plan":
+        run = lambda: execute.run_plan(group, [row(1)], hold_dc=mode == "keep_on", **kwargs)
+    else:
+        run = lambda: execute.run_functions(group, to_functions([row(1)]),
+                                           keep_on=mode == "keep_on", **kwargs)
+    if mode == "failure":
+        with pytest.raises(RuntimeError, match="main failed"):
+            run()
+    else:
+        run()
+    assert events == ([] if mode == "keep_on" else ["callback", "off"])

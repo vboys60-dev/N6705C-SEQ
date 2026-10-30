@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from typing import Callable
 
 from n6705c.core.arb import ArbState, GroupArbRunner
 from n6705c.core.group import GlobalChannel, InstrumentGroup
@@ -223,6 +224,7 @@ def run_plan(
     wait: bool = True,
     hold_dc: bool = False,
     capture: dict | None = None,
+    on_cleanup: Callable[[], None] | None = None,
 ) -> GroupArbRunner:
     """Run the table. With ``wait`` the outputs are switched off again at the end,
     unless ``hold_dc``: then each rail stops at its high level and stays on.
@@ -238,7 +240,8 @@ def run_plan(
     models = [inst.identity.model.upper() for inst in group.instruments]
     if any("E36441A" in m for m in models):
         raise PlanRejected(f"N6705C runner cannot drive E36441A (or a mix): {models}")
-    return run_functions(group, functions, wait=wait, keep_on=hold_dc, capture=capture)
+    return run_functions(group, functions, wait=wait, keep_on=hold_dc, capture=capture,
+                         on_cleanup=on_cleanup)
 
 
 def run_functions(
@@ -248,6 +251,7 @@ def run_functions(
     wait: bool = True,
     keep_on: bool = False,
     capture: dict | None = None,
+    on_cleanup: Callable[[], None] | None = None,
 ) -> GroupArbRunner:
     """Run the functions. With ``wait`` the outputs are switched off at the end,
     unless ``keep_on``: then each rail stays on at its waveform's final level.
@@ -287,11 +291,15 @@ def run_functions(
                 time.sleep(max(0.0, tint * CAPTURE_POINTS - (time.monotonic() - started)) + 0.05)
                 _fetch(group, functions, tint, capture)
             if not keep_on:
+                if on_cleanup is not None:
+                    on_cleanup()
                 outputs_off(group)
     except OutputsNotConfirmedOff:
         raise
     except BaseException as exc:
         try:
+            if on_cleanup is not None:
+                on_cleanup()
             outputs_off(group)
         except OutputsNotConfirmedOff as off:
             raise OutputsNotConfirmedOff(f"{exc}; also {off}") from exc

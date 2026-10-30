@@ -190,7 +190,8 @@ class SeqApi:
                         if not self._untimed(token):
                             return
                         try:
-                            run_resources(resources, rows, hold_dc=hold_dc)
+                            run_resources(resources, rows, hold_dc=hold_dc,
+                                          on_cleanup=lambda: self._finishing(token))
                         finally:
                             self._finishing(token)
                         self._seq_result("info", tr("sequence_hold_done") if hold_dc else tr("sequence_done"))
@@ -208,7 +209,8 @@ class SeqApi:
                 if not self._untimed(token):
                     return
                 try:
-                    run_plan(group, rows, hold_dc=hold_dc, capture=cap)
+                    run_plan(group, rows, hold_dc=hold_dc, capture=cap,
+                             on_cleanup=lambda: self._finishing(token))
                 finally:
                     self._finishing(token)
                 text = tr("sequence_hold_done") if hold_dc else tr("sequence_done")

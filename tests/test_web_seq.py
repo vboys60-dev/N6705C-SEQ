@@ -182,6 +182,7 @@ def test_snapshot_frozen_before_confirmation(api, threads, monkeypatch):
     assert thread.args[2] == ["first"]
     thread.run()
     assert calls[0][0][0].high_v == 12
+    assert callable(calls[0][1].pop("on_cleanup"))
     assert calls[0][1] == {"hold_dc": True, "capture": {}}
     assert closed == [True] and not (api._gate.state()[0] == "power")
     assert _legacy_events(api)[-1] == ["busy", False]
@@ -220,7 +221,8 @@ def test_connection_failure_and_startup_failure_release(api, threads, monkeypatc
 def test_capture_overlay_and_capture_error(api, threads, monkeypatch):
     _group(api, monkeypatch)
 
-    def run(group, rows, *, capture, hold_dc):
+    def run(group, rows, *, capture, hold_dc, on_cleanup):
+        assert callable(on_cleanup)
         capture.update({1: (0.001, [0, 1, 2]), "error": "partial"})
 
     monkeypatch.setattr(web_seq, "run_plan", run)
@@ -238,7 +240,7 @@ def test_capture_overlay_and_capture_error(api, threads, monkeypatch):
 def test_e36441a_uses_own_runner_and_refuses_capture(api, threads, monkeypatch):
     calls = []
     monkeypatch.setattr(web_seq, "detect_model", lambda resource: "E36441A")
-    monkeypatch.setattr(web_seq, "run_resources", lambda resources, rows, hold_dc: calls.append((resources, hold_dc)))
+    monkeypatch.setattr(web_seq, "run_resources", lambda resources, rows, hold_dc, on_cleanup: calls.append((resources, hold_dc)))
     monkeypatch.setattr(web_seq, "connect_group", lambda *args: pytest.fail("N6705C path used"))
     for capture in (False, True):
         api.seq_run(_raw(), ["x"], False, True, capture)

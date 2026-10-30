@@ -431,3 +431,63 @@ def test_main_entry_timer_race_has_single_winner(api, monkeypatch, power_worker,
     assert api._release(token) is False
     assert api._gate.state()[0] == c.State.FAULT
     assert api._gate.worker_done
+
+
+@pytest.mark.parametrize("kind,blocked_stage", [
+    ("plan", "main"), ("plan", "cleanup"),
+    ("functions", "main"), ("functions", "cleanup"),
+    ("resources", "main"), ("resources", "cleanup"), ("resources", "close"),
+])
+def test_real_runner_main_untimed_and_internal_cleanup_timed(api, monkeypatch, kind, blocked_stage):
+    from n6705c_seq import execute, e36441a
+    from n6705c_seq.plan import SeqRow, to_functions
+    from test_e36441a import _FakeSession
+
+    monkeypatch.setattr(c, "POWER_FINISH_TIMEOUT_S", 0.1)
+    entered, resume = threading.Event(), threading.Event()
+    def blocked(*args):
+        entered.set()
+        assert resume.wait(3)
+    rows = [SeqRow(1, True, "A", 0, 0, 1, 0.01, 0.01, 0.01)]
+    if kind == "resources":
+        session = _FakeSession()
+        monkeypatch.setattr(e36441a, "_sessions", lambda *a: [SimpleNamespace(
+            close=blocked if blocked_stage == "close" else lambda: None)])
+        monkeypatch.setattr(e36441a, "Session", lambda t: session)
+        # Replace the module's time reference, preserving threading's real clock.
+        monkeypatch.setattr(e36441a, "time", SimpleNamespace(
+            sleep=blocked if blocked_stage == "main" else lambda seconds: None))
+        if blocked_stage == "cleanup":
+            monkeypatch.setattr(e36441a, "_restore", blocked)
+        monkeypatch.setattr(web_seq, "detect_model", lambda r: "E36441A")
+    else:
+        group = execute.InstrumentGroup.demo(frames=1, slots=execute.DEMO_SLOTS)
+        monkeypatch.setattr(web_seq, "detect_model", lambda r: "N6705C")
+        monkeypatch.setattr(e36441a, "detect_model", lambda r: "N6705C")
+        monkeypatch.setattr(web_seq, "connect_group", lambda r: group)
+        monkeypatch.setattr(execute, "connect_group", lambda r: group)
+        monkeypatch.setattr(execute, "_wait", blocked if blocked_stage == "main" else lambda runner: None)
+        if blocked_stage == "cleanup":
+            monkeypatch.setattr(execute, "outputs_off", blocked)
+        monkeypatch.setattr(web_list.synth, "to_functions", lambda *a: to_functions(rows))
+    token = api._reserve("power")
+    def run():
+        if kind == "functions":
+            api._list_work(SimpleNamespace(hold_last=False), None, 1, ["x"], False, False, token)
+        else:
+            api._work(rows, 1, ["x"], False, False, False, token)
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(1)
+        if blocked_stage == "main":
+            time.sleep(0.3)
+            assert api._gate.state()[0] == c.State.POWER
+        else:
+            wait_for(lambda: api._gate.state()[0] == c.State.FAULT)
+    finally:
+        resume.set()
+        worker.join(1)
+    assert not worker.is_alive()
+    assert api._gate.state()[0] == (c.State.IDLE if blocked_stage == "main" else c.State.FAULT)
+    assert api._gate.worker_done

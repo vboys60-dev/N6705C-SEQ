@@ -1,6 +1,6 @@
 # 離線分析分頁｜T0 介面契約（v1）
 
-日期：2026-10-29（修訂：Codex 第 7 輪 9 項必修；T1/T2 後 5 項：`_finishing` 範圍、legacy 測試、T4 HTTP 原檢查、CSV 容差、未搬工具；Codex 第 8 輪 5 項：`_untimed` 原子回傳 bool、主工作 try/finally 重新計時、主工作內部 I/O 例外明列、取代報告 §5 計時起點、`/release` 例外；T3/T4 後 2 項：handle 引用交接（§6.5）、來源檔外部截短已知風險（§6.6）；2026-10-30 T0–T6 後 4 項：Viewer `alert()` 改 toast、`--selftest` 分析往返（§1.7）、`/open` 進度 `GET /progress`（§3.3）、主工作內部收尾 `on_cleanup`（§1.3，待使用者拍板））　擁有者：T0　來源：`報告分析升級版/升級報告.md`（§5、§7、§9）
+日期：2026-10-29（修訂：Codex 第 7 輪 9 項必修；T1/T2 後 5 項：`_finishing` 範圍、legacy 測試、T4 HTTP 原檢查、CSV 容差、未搬工具；Codex 第 8 輪 5 項：`_untimed` 原子回傳 bool、主工作 try/finally 重新計時、主工作內部 I/O 例外明列、取代報告 §5 計時起點、`/release` 例外；T3/T4 後 2 項：handle 引用交接（§6.5）、來源檔外部截短已知風險（§6.6）；2026-10-30 T0–T6 後 4 項：Viewer `alert()` 改 toast、`--selftest` 分析往返（§1.7）、`/open` 進度 `GET /progress`（§3.3）、主工作內部收尾 `on_cleanup`（§1.3，待使用者拍板）；同日使用者批准：`--selftest` JS API 白名單改禁止清單（§1.7.3））　擁有者：T0　來源：`報告分析升級版/升級報告.md`（§5、§7、§9）
 
 本文件與 `src/n6705c_seq/analysis/contracts.py` 是**同一份契約的兩半**：數字、列舉、型別以 `contracts.py` 為準（程式直接 import），語意與流程以本文件為準。兩者衝突時，回報 T0 修正，不得各自解讀。
 
@@ -190,7 +190,21 @@ JS（T6）：
    4. 等 `state` 事件 `state === "idle"` 且 `gen ===` 步驟 1 的 gen，逾時同上 → 丟 `"leave timeout"`。
    5. 正常返回 → `app.js` 呼叫 `selftest_report(true, "")`。兩段逾時合計 20 s < 30 s，Python 端不會先逾時。
    6. 步驟 1 成功後任何失敗，丟錯前一律先 `App.selectTab("seq")`（`finally`），不得把仲裁器留在 `analysis`。
-3. **selftest 模式下不得啟動任何真實儀器動作**：JS 只可呼叫 `contracts.SELFTEST_JS_API_ALLOWED`（`config`、`strings`、`poll`、`selftest_report`、`analysis_enter`、`analysis_leave`）；不得呼叫 `seq_run`、`test_connection`、`all_off`、`list_run`、`analysis_open_path`、`analysis_save_path`（後兩者會開原生對話框卡住 selftest）。Viewer 本身不會自行開檔，所以往返中不產生 `/open`；仲裁器在整個往返中只經過 `idle→analysis→draining→idle`，從不進 `power`。
+3. **selftest 模式下不得啟動任何真實儀器動作**（禁止清單制；使用者 2026-10-30 批准取代原白名單 `SELFTEST_JS_API_ALLOWED`）。`webgui.Api`（`_Core`＋`SeqApi`＋`ListApi`）的每個公開方法必須恰好歸入下列兩者之一：
+   - `contracts.SELFTEST_JS_API_DENIED`：selftest 模式下 JS 一次都不得呼叫。凡會動儀器、開原生對話框、或改動仲裁器以外狀態（config 檔、已載入計畫／量測資料、grant）的方法：
+     | 方法 | 所在 | 理由 |
+     |---|---|---|
+     | `seq_run`、`test_connection`、`all_off` | `web_seq.py` | 儀器 I/O（經 `_seq_start` 進 `power`） |
+     | `list_run` | `web_list.py` | 儀器 I/O |
+     | `analysis_open_path`、`analysis_save_path` | `webgui.py` | 原生對話框（卡住 selftest）＋發 grant |
+     | `seq_open_csv`、`seq_save_csv` | `web_seq.py` | 原生對話框＋檔案 I/O |
+     | `list_open_json`、`list_save_json` | `web_list.py` | 原生對話框＋檔案 I/O；`list_open_json` 會清 `_measured["list"]` |
+     | `set_lang` | `webgui.py` | 寫 SEQ config 檔、改視窗標題 |
+   - `contracts.SELFTEST_JS_API_ALLOWED_READONLY`：不碰儀器、不開對話框、只讀或只動仲裁器／selftest 結果／記憶體事件佇列：`config`、`strings`、`poll`、`selftest_report`、`analysis_enter`、`analysis_leave`（只動仲裁器，往返本身所需）、`seq_meta`、`seq_preview`、`list_meta`、`list_draft`、`list_compile`（純計算；SEQ／List 分頁 `init()` 會呼叫）。
+   - **新增公開方法預設視為禁止，須人工歸類**：`tests/test_selftest_api_classes.py` 斷言 `dir(webgui.Api)` 的公開可呼叫方法＝兩清單聯集、兩清單不相交、清單內無已不存在的名稱；漏歸類即測試失敗，歸類前一律當 `DENIED` 處理。
+   - JS 端驗收（`tests/js/analysis.test.js`）：以 Proxy 記錄假 api 被存取的鍵，斷言與 `SELFTEST_JS_API_DENIED` 交集為空；`DENIED` 清單直接從 `contracts.py` 解析，不另抄一份。
+
+   Viewer 本身不會自行開檔，所以往返中不產生 `/open`；仲裁器在整個往返中只經過 `idle→analysis→draining→idle`，從不進 `power`。
 
 ---
 
@@ -625,7 +639,7 @@ RSS 預算算式：`2 × 原始 V/I 位元組（來源 memmap＋快取 memmap �
 - **T6 後續修補（761aef0 後；需 T2 修補 2a 先完成）**：
   - 可改：`web/app.js`、`web/analysis.js`、`tests/js/**`、`tests/test_analysis_integration.py`（皆在原清單內）。
   - **1. `--selftest` 往返（§1.7）**：`app.js` 在 `emit("ready")` 後、`selftest_report(true)` 前呼叫 `App.selftest`（條件見 §1.7）；`analysis.js` 實作 `App.selftest`（enter → 等 `ready` → leave → 等同 gen `idle`，兩段各 `SELFTEST_STEP_TIMEOUT_MS`=10000，JS 內常數，值同 contracts）。
-    驗收（`tests/js/analysis.test.js` 的假 DOM／假 api）：(a) `selftest_mode:true`＋旗標開：依序呼叫 `analysis_enter`、（送 `ready` 後）`analysis_leave`，推送同 gen `idle` 事件後才 `selftest_report(true, "")`；(b) 不送 `ready` → 逾時後 `selftest_report(false, …含 "ready"…)`，且仍有呼叫 `analysis_leave`（不得把仲裁器留在 `analysis`）；(c) enter 被拒 → `selftest_report(false, …)`；(d) 全程假 api 被呼叫的方法 ⊆ `SELFTEST_JS_API_ALLOWED`（以 Proxy 記錄；`seq_run`、`test_connection`、`all_off`、`list_run`、`analysis_open_path`、`analysis_save_path` 一次都沒被呼叫）；(e) `selftest_mode:false` 或旗標關 → 行為與現況相同（只呼叫 `selftest_report(true, "")`）。`tests/test_analysis_integration.py`：真 server、`ANALYSIS_ENABLED` monkeypatch 為 True、argv `--selftest` 時 `config()["selftest_mode"]` 為 True，且以 `analysis_enter`／`analysis_leave` 直接走一次 idle→analysis→draining→idle（Python 端模擬 JS 步驟；state 事件序列中沒有 `power`）。
+    驗收（`tests/js/analysis.test.js` 的假 DOM／假 api）：(a) `selftest_mode:true`＋旗標開：依序呼叫 `analysis_enter`、（送 `ready` 後）`analysis_leave`，推送同 gen `idle` 事件後才 `selftest_report(true, "")`；(b) 不送 `ready` → 逾時後 `selftest_report(false, …含 "ready"…)`，且仍有呼叫 `analysis_leave`（不得把仲裁器留在 `analysis`）；(c) enter 被拒 → `selftest_report(false, …)`；(d) 全程假 api 被存取的方法與 `SELFTEST_JS_API_DENIED` 交集為空（以 Proxy 記錄；清單自 `contracts.py` 解析，見 §1.7.3）；(e) `selftest_mode:false` 或旗標關 → 行為與現況相同（只呼叫 `selftest_report(true, "")`）。`tests/test_analysis_integration.py`：真 server、`ANALYSIS_ENABLED` monkeypatch 為 True、argv `--selftest` 時 `config()["selftest_mode"]` 為 True，且以 `analysis_enter`／`analysis_leave` 直接走一次 idle→analysis→draining→idle（Python 端模擬 JS 步驟；state 事件序列中沒有 `power`）。
   - **2. `analysis.js` CSV 授權漏接（761aef0 實碼缺陷，順手修）**：`SAVE_PURPOSES`（`analysis.js:7`）只有 `png/html/markers`，缺 `csv`；Viewer CSV 匯出送 `save_request{purpose:"csv"}`（`viewer.html:3133`）會被外殼靜默丟棄，Viewer 的 Promise 永遠不回（§4.2 不設逾時）→ CSV 匯出卡死。改為 `["png", "html", "markers", "csv"]`（＝`SavePurpose` 全部）。驗收：`tests/js/analysis.test.js` 加一案 `save_request{purpose:"csv"}` 會呼叫 `analysis_save_path(gen, "csv", suggested)` 並回 `save_result`。
 
 ### T7（Haiku）打包與文件

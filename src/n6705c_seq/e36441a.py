@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import time
+from typing import Callable
 
 from n6705c.core.scpi import format_channel_list
 from n6705c.core.session import Session
@@ -171,7 +172,8 @@ def check_settings(query, channels: list[int]) -> None:
             raise PlanRejected(f"{command} returned {answer!r}; must be {'/'.join(allowed)}")
 
 
-def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = False) -> None:
+def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = False,
+             on_cleanup: Callable[[], None] | None = None) -> None:
     """Run the table on E36441A frames (4 channels each, in frame order).
 
     Outputs are restored (off) at the end unless ``hold_dc``; any failure restores
@@ -225,11 +227,15 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
             session.check_errors("E36441A run")
     except BaseException as exc:
         try:
+            if on_cleanup is not None:
+                on_cleanup()
             _restore(touched, sessions)
         except OutputsNotConfirmedOff as off:
             raise OutputsNotConfirmedOff(f"{exc}; also {off}") from exc
         raise
     if not hold_dc:
+        if on_cleanup is not None:
+            on_cleanup()
         _restore(touched, sessions)
 
 
@@ -277,12 +283,16 @@ def _sessions(resources: list[str], backend: str, timeout_ms: int):
 
 
 def run_resources(resources: list[str], rows: list[SeqRow], *, hold_dc: bool = False,
-                  backend: str = "auto", timeout_ms: int = 10_000) -> None:
+                  backend: str = "auto", timeout_ms: int = 10_000,
+                  on_cleanup: Callable[[], None] | None = None) -> None:
     """Open each resource as an E36441A frame, run the table, close."""
     transports = _sessions(resources, backend, timeout_ms)
     try:
-        run_rows([Session(t) for t in transports], rows, hold_dc=hold_dc)
+        run_rows([Session(t) for t in transports], rows, hold_dc=hold_dc,
+                 on_cleanup=on_cleanup)
     finally:
+        if on_cleanup is not None:
+            on_cleanup()
         for t in transports:
             t.close()
 

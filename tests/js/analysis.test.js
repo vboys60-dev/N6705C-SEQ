@@ -52,7 +52,7 @@ function setup({ enabled = true, selftest = false, api = {} } = {}) {
     analysis_save_path: async (g, purpose, suggested) => { calls.push(['save', g, purpose, suggested]); return { ok: true, gen: g, grant: 'S', name: suggested }; },
     ...api,
   };
-  // Every bridge method the shell touches, to check the selftest allow-list (contract 1.7.3).
+  // Every bridge method the shell touches, to check the selftest deny list (contract 1.7.3).
   const touched = new Set();
   const proxy = new Proxy(bridge, { get(target, key) { touched.add(key); return target[key]; } });
   const winListeners = {};
@@ -224,15 +224,18 @@ test('save_request purpose csv is forwarded to analysis_save_path and answered',
   assert.deepEqual(t.posts, [[{ ok: true, gen: 1, grant: 'S', name: 'out.csv', type: 'save_result', id: 'r9', v: 1 }, VIEWER]]);
 });
 
-const ALLOWED = ['config', 'strings', 'poll', 'selftest_report', 'analysis_enter', 'analysis_leave'];
+// Selftest deny list, read from contracts.SELFTEST_JS_API_DENIED so it cannot drift (contract 1.7.3).
+const DENIED = [...fs.readFileSync(path.join(WEB, '../analysis/contracts.py'), 'utf8')
+  .match(/^SELFTEST_JS_API_DENIED = \(([^)]*)\)/m)[1].matchAll(/"(\w+)"/g)].map(m => m[1]);
+assert.ok(DENIED.includes('seq_run') && DENIED.includes('analysis_open_path'));
 const assertAllowed = t => {
-  const used = [...t.touched].filter(k => typeof k === 'string' && k !== 'then');
-  assert.deepEqual(used.filter(k => !ALLOWED.includes(k)), []);
+  const used = [...t.touched].filter(k => typeof k === 'string');
+  assert.deepEqual(used.filter(k => DENIED.includes(k)), []);
 };
 // Starts without awaiting: the pywebviewready handler blocks inside App.selftest.
 const startSelftest = async t => { const done = t.fire('pywebviewready'); await flush(); return { done }; };
 
-test('selftest: enter, ready, leave, same-gen idle, then report ok; only allowed bridge calls', async () => {
+test('selftest: enter, ready, leave, same-gen idle, then report ok; no denied bridge calls', async () => {
   const t = setup({ selftest: true });
   const { done } = await startSelftest(t);
   await t.poll(state('idle', 0, 0));
