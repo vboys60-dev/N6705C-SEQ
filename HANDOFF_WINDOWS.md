@@ -41,3 +41,31 @@ GUI 需要 Microsoft Edge WebView2 Runtime，不隨 exe 打包；Windows 11 已�
 ## 5. 目前狀態
 - Windows 部分最後一次改動是 `713b47f`（診斷訊息，0.1.3），tags 有 `v0.1.0`～`v0.1.3`。目前 git 狀態和下一步見 `HANDOFF.md`。
 - Windows 待辦：在有 Windows＋儀器的環境按「測試連線」，把錯誤視窗內容回報 → 依 §3.4 判讀；確認 CI Release 產物；在乾淨的 Windows 上驗證 exe 的 GUI。
+
+## 6. Windows 端到端驗收清單（分析分頁，未實機驗）
+
+> **狀態：未實機驗。** 目前只有 macOS 上的 pytest／node 測試與 `build.ps1` 的 bundle 檢查（`viewer.html` 存在）。下列每一項都要在 Windows 11 上實際操作並記錄結果；`ANALYSIS_ENABLED`（`src/n6705c_seq/analysis/contracts.py`）在驗收前維持 `False`，分頁不會出現。
+> 註：分頁的契約與設計見 `docs/analysis-contract.md`，這裡只列人要點的步驟。
+
+先決條件：`ANALYSIS_ENABLED = True` 的建置（本機 `pip install -e ".[build]"` 後 `.\packaging\build.ps1`），或 `python run.py` 在同一份程式碼上跑。
+
+| # | 項目 | 操作 | 通過條件 |
+|---|---|---|---|
+| 1 | iframe 開啟 | 切到「分析」分頁 | Viewer 在 iframe 內載入，無空白、無「連線失敗」；DevTools 無 CSP／混合內容錯誤 |
+| 2 | bridge | 分析分頁切入後看 state | 外殼與 Python 的 `analysis_enter` 成功；離開分頁後 `analysis_leave` 回到 idle |
+| 3 | 原生開檔 | 在 Viewer 點開主檔 | 跳出 Windows 原生檔案對話框；選檔後能讀；取消對話框時不出現錯誤 toast |
+| 4 | 原生另存 | 四類匯出都走另存 | 每一類都跳出原生「另存新檔」，預設檔名正確；取消不留半成品檔 |
+| 5 | 匯出 PNG | 匯出目前波形 | 另存後的 PNG 可用看圖程式開啟，內容與畫面一致 |
+| 6 | 匯出 HTML 報告 | 匯出報告 | 另存後以瀏覽器（Edge）直接開啟可讀 |
+| 7 | 匯出 Marker JSON | 匯出 Marker | 另存的 JSON 可解析；再匯入可還原 Marker |
+| 8 | 匯出 CSV | 匯出全範圍 CSV | 另存後前 4 行為標題、Sampling Period、3 欄標籤，列數正確；匯出中可按取消，取消後無 `.part` 殘留 |
+| 9 | 唯讀安裝位置 | 把 zip 解到唯讀位置（例如 `C:\Program Files\` 或唯讀網路磁碟），以一般使用者執行，開 `examples`／樣本 `.dlog` | 能開樣本、能匯出；不會寫入安裝資料夾（快取與偏好寫到使用者目錄） |
+| 10 | 分析中電源控制反灰 | 分析分頁開著時看「執行」「全部關閉」等按鈕 | 全部反灰；CLI 或其他入口不能啟動電源控制（互斥） |
+| 11 | 切頁 | 分析 → 上電時序 → 分析 來回切 | 每次切換都正確 enter／leave；切回電源分頁後按鈕恢復；無殘留 toast 或卡住的 Promise |
+| 12 | 關窗 | 分析中直接關視窗（另測電源執行中關窗） | 分析中關窗直接關閉（`analysis → closing`），清理在 10 s 內結束，工作管理員沒有殘留 `N6705C-SEQ.exe`；電源執行中關窗被拒並顯示提示 |
+| 13 | 正常退出 | 分析後關窗、再次啟動 | 無錯誤視窗；再次開檔時快取命中 |
+| 14 | 快取位置 | 開檔後檢查目錄 | 快取在 `%LOCALAPPDATA%` 下（非安裝資料夾）；偏好 `analysis_prefs.json` 也在使用者可寫目錄 |
+| 15 | antivirus | 首次開檔、大檔寫快取時 | 防毒沒有隔離 `N6705C-SEQ.exe` 或 `_internal` 內的 DLL／`viewer.html`；若被擋，記錄防毒名稱與事件 |
+| 16 | 刪快取 | 關閉程式後刪除快取目錄，再開同一檔 | 重新建快取成功、不崩潰；分析中若快取被占用（`PermissionError`），該目錄應被跳過而非整個 `/open` 失敗 |
+
+回報格式：每項寫「通過／失敗／未測」＋Windows 版本、Edge WebView2 版本、是否為唯讀安裝、防毒軟體名稱。失敗項附錯誤視窗文字與 `%LOCALAPPDATA%` 下的日誌（若有）。

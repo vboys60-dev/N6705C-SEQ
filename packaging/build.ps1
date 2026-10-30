@@ -9,6 +9,11 @@ $zip = "dist\N6705C-SEQ-$version-windows-x64.zip"
 pyinstaller packaging\n6705c_seq.spec --noconfirm
 if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
 
+# The analysis viewer is served from disk, and the tab is hidden by ANALYSIS_ENABLED, so no
+# self-test exercises it; check the bundle directly.
+$viewer = Get-ChildItem -Path $app -Recurse -Filter viewer.html | Where-Object { $_.DirectoryName -match 'analysis[\\/]web$' }
+if (-not $viewer) { throw "analysis/web/viewer.html missing from bundle" }
+
 # A build can import everything and still miss a backend; run the real path (simulator).
 # Resolve to an absolute path first: the `&` call operator can misresolve a relative
 # exe path when the working directory is a UNC path (e.g. a mapped \\server\share).

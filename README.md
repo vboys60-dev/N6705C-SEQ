@@ -91,6 +91,17 @@ enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a
 - `enabled` 為 0 的列不輸出。
 - 範例見 `examples/powerup.csv`（8 通道）與 `examples/hw_smoke.csv`（單通道實機煙霧測試）。
 
+## 分析分頁（離線 DLOG 報告）
+
+GUI 的第三分頁「分析」用來開啟 `.dlog` 檔（設計目標為千萬筆等級，超過 1000 萬筆的檔案用這裡看），內嵌 Viewer 顯示波形與統計，並可匯出 PNG、HTML 報告、Marker JSON 與 CSV。
+
+- **與電源控制互斥**：進入分析分頁即鎖住電源控制（執行、全部關閉等反灰），離開分頁才釋放；電源控制執行中無法進入分析。
+- 開檔與匯出使用原生對話框。分析期間請勿移動或覆寫來源 `.dlog`；讀取中若被截短，mac／Linux 可能崩潰（見 `docs/analysis-contract.md` §6.6）。
+- 快取與偏好放在使用者可寫目錄（Windows：`%LOCALAPPDATA%`；其他：`$XDG_CACHE_HOME` 或 `~/.cache`），不寫入安裝資料夾。
+- **開關**：`src/n6705c_seq/analysis/contracts.py` 的 `ANALYSIS_ENABLED`（第 19 行附近）。目前為 `False`，分頁隱藏，畫面與舊版相同；改為 `True` 後重開 GUI 才會出現分頁。
+- 架構與契約：`docs/analysis-contract.md`（數字與型別以 `contracts.py` 為準）。
+- Windows 上的實機驗收尚未完成，見 `HANDOFF_WINDOWS.md` §6。
+
 ## Windows 執行檔
 
 **使用者（不需要 Python）：** 從 GitHub Releases 下載 `N6705C-SEQ-<版本>-windows-x64.zip`，解壓縮後執行 `N6705C-SEQ.exe`（GUI）；命令列版是同資料夾的 `n6705c-seq-cli.exe`。
@@ -114,9 +125,29 @@ git tag v0.1.0 && git push origin v0.1.0   # CI 測試 → 建置 → 自動建�
 ## 測試
 
 ```bash
-PYTHONPATH=src python3 -m pytest -q   # 不需儀器、不開 GUI 視窗
-node --test tests/js
+PYTHONPATH=src python3 -m pytest -q          # 不需儀器、不開 GUI 視窗；大檔與 74445 預設 skip
+PYTHONPATH=src python3 -m pytest -q tests/analysis   # 只跑分析模組
+node --test tests/js                          # 需要 node（CI 用 node 20）
 ```
+
+分析模組的選用環境變數（都預設關閉）：
+
+| 變數 | 作用 |
+|---|---|
+| `N6705C_ANALYSIS_BIG=1` | 10M 筆冷／熱開檔與 12 欄全範圍 CSV 預算（`tests/analysis/test_memory.py`）。使用合成檔，需要磁碟空間與時間 |
+| `N6705C_ANALYSIS_BIG=30` | 再加 30M 冷開檔、全範圍統計與分桶的不 OOM 驗證（`test_memory.py`）。需要較多記憶體 |
+| `N6705C_ANALYSIS_REAL_CORE=1` | 啟用 `tests/analysis/test_server_core.py`：HTTP server 接真 core／storage 的整合測試 |
+| `N6705C_PARITY_74445=<1GB .dlog 路徑>` | 跑 `tests/analysis/parity_tools/test_parity.py` 的 74445 分桶對拍；未設則 skip |
+
+**Parity（Python 對拍原版 JS）**：JS 一律從 `tests/analysis/parity_tools/original_before_python.html` 抽取（sha1 須為 `contracts.ORIGINAL_HTML_SHA1`，不得改、不得刪）。從 repo 根目錄可手動執行：
+
+```bash
+python3 tests/analysis/parity_tools/extract_original_js.py [輸出目錄]
+python3 tests/analysis/parity_tools/compare.py <js前綴> <py前綴>
+python3 tests/analysis/parity_tools/compare_buckets.py <dlog路徑> <js輸出前綴> <快取目錄>
+```
+
+**不隨專案搬移的分析工具**（留在 `報告分析升級版/來源_DLOG_Viewer/server/parity_tools/`，不進套件、不進測試）：`dlog_poc.py`、`make_synth.py`、`make_probe.py`（效能對照）、`bench_local.js`，以及該資料夾的 `README.md`。
 
 ## 注意
 
