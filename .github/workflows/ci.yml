@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: "20"
       - run: pip install -e ".[dev]"
-      - run: pytest -q
+      - run: pytest -v -o faulthandler_timeout=120
       - run: node --test tests/js
 
   build-windows:
