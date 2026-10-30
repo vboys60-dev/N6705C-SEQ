@@ -431,3 +431,25 @@ def test_open_ignores_lru_touch_failure(tmp_path, cache_root, monkeypatch, warm)
     assert core.acquire_handle(meta['handle'], cache_root) is entry
     assert entry['_refs'] == 2
     assert core.get_values(entry, 'V', 1, 0, 4, False, 0).size == 5
+
+
+def test_csv_compare_index_rounds_half_up_like_viewer(tmp_path, cache_root):
+    def make(name, tint, n):
+        path = make_big(tmp_path / name, n, channels=1)
+        path.write_bytes(path.read_bytes().replace(b'<tint>0.001</tint>', f'<tint>{tint}</tint>'.encode()))
+        return core.open_handle(path, cache_root)[2]
+    primary, compare = make('p.dlog', 1, 4), make('c.dlog', 2, 3)
+    cols = [dict(entry=compare, kind='V', ch=1, label='c')]
+    lines = b''.join(core.iter_csv(primary, cols, 0, 3, False, 0, datetime.datetime(2026, 1, 1))).decode().splitlines()
+    # time 1 / period 2 = 0.5 -> sample 1 (Math.round), not 0 (half-to-even); time 3 -> 1.5 -> 2
+    assert [float(line.split(',')[1]) for line in lines[4:]] == pytest.approx([1.0, 1.001, 1.001, 1.002])
+
+
+def test_header_search_is_bounded_and_cancellable(monkeypatch):
+    monkeypatch.setattr(core, 'DLOG_MAX_HEADER_BYTES', 64)
+    with pytest.raises(core.DlogFormatError, match='exceeds 64 bytes'):
+        core.parse_dlog(b'x' * 100 + b'</dlog>\n')
+    flag = threading.Event()
+    flag.set()
+    with pytest.raises(AnalysisCancelled):
+        core.parse_dlog(b'<dlog></dlog>\n', cancel=flag)

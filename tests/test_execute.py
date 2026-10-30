@@ -232,3 +232,42 @@ def test_cleanup_callback_only_precedes_outputs_off(monkeypatch, entry, mode):
     else:
         run()
     assert events == ([] if mode == "keep_on" else ["callback", "off"])
+
+
+def test_connect_group_closes_transport_when_wrapping_fails(monkeypatch):
+    from n6705c_seq import execute
+
+    closed = []
+    class FakeTransport:
+        def __init__(self, resource, **kwargs):
+            self.resource, self._inst = resource, type("Inst", (), {})()
+        def close(self):
+            closed.append(self.resource)
+            if self.resource == "a":
+                raise OSError("a stuck")
+    class FakeInstrument:
+        @staticmethod
+        def from_transport(transport):
+            if transport.resource == "c":
+                raise RuntimeError("idn failed")
+            return transport
+    monkeypatch.setattr(execute, "VisaTransport", FakeTransport)
+    monkeypatch.setattr(execute, "N6705C", FakeInstrument)
+    with pytest.raises(RuntimeError, match="idn failed") as info:
+        execute.connect_group(["a", "b", "c"])
+    assert closed == ["a", "b", "c"]
+    assert "frame 1 (a stuck)" in info.value.__notes__[0]
+
+
+def test_run_plan_switches_off_even_if_cleanup_callback_fails(monkeypatch):
+    from n6705c_seq import execute
+
+    offs = []
+    monkeypatch.setattr(execute, "outputs_off", lambda group: offs.append(group))
+    monkeypatch.setattr(execute, "_wait", lambda runner: (_ for _ in ()).throw(RuntimeError("wait failed")))
+    def bad_callback():
+        raise OSError("callback broke")
+    group = demo(1)
+    with pytest.raises(RuntimeError, match="wait failed") as info:
+        run_plan(group, [row(1)], on_cleanup=bad_callback)
+    assert offs == [group] and "callback broke" in info.value.__notes__[0]

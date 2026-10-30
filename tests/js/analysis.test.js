@@ -289,3 +289,196 @@ test('selftest_mode false or flag off: unchanged, only selftest_report(true)', a
     assert.deepEqual(t.calls, [['selftest', true, '']]);
   }
 });
+
+// Viewer logic: run the real code between two markers of viewer.html's inline script in a stub context.
+const VIEWER_HTML = fs.readFileSync(path.join(__dirname, '../../src/n6705c_seq/analysis/web/viewer.html'), 'utf8');
+function viewerSlice(from, to, ctx, expose) {
+  const start = VIEWER_HTML.indexOf(from);
+  const end = VIEWER_HTML.indexOf(to, start);
+  assert.ok(start >= 0 && end > start, `markers not found: ${from} .. ${to}`);
+  vm.createContext(ctx);
+  return vm.runInContext(VIEWER_HTML.slice(start, end) + `\n;({ ${expose} })`, ctx);
+}
+function deferred() {
+  let resolve;
+  const promise = new Promise(r => { resolve = r; });
+  return { promise, resolve };
+}
+
+test('viewer: a job slot is held until the response body is read', async () => {
+  const bodies = [];
+  const ctx = {
+    API: '', shellCtx: { token: 't', gen: 1 },
+    fetch: async () => { const d = deferred(); bodies.push(d); return { ok: true, arrayBuffer: () => d.promise }; },
+  };
+  const v = viewerSlice('const JOB_SLOTS', '// ---- postMessage', ctx, 'apiFetch, active: () => jobActive');
+  const calls = [1, 2, 3, 4].map(() => v.apiFetch('/samples'));
+  await flush();
+  assert.equal(bodies.length, 3);   // headers arrived, bodies not read: all 3 slots still taken
+  assert.equal(v.active(), 3);
+  bodies[0].resolve('B0');
+  assert.equal(await calls[0], 'B0');
+  await flush();
+  assert.equal(bodies.length, 4);   // only now does the 4th request start
+  bodies.slice(1).forEach(d => d.resolve('x'));
+  await Promise.all(calls);
+  assert.equal(v.active(), 0);
+});
+
+test('viewer: a second open/export while one runs is ignored', async () => {
+  const v = viewerSlice('let activeReq = null;', 'function cancelActive(){', {}, 'longOp');
+  const gate = deferred();
+  let runs = 0;
+  const op = v.longOp(async () => { runs++; await gate.promise; });
+  const first = op();
+  await op();
+  assert.equal(runs, 1);
+  gate.resolve();
+  await first;
+  await op();
+  assert.equal(runs, 2);
+});
+
+test('viewer: a response from before a cache invalidation is dropped and keeps the newer pending entry', async () => {
+  const replies = [];
+  const state = { offsetMode: false, offsetMaxLimit: 0, traces: [] };
+  const ctx = {
+    state, console,
+    apiFetch: () => { const d = deferred(); replies.push(d); return d.promise; },
+    splitBinary: x => x, f32View: () => new Float32Array(1),
+    useBuckets: () => false, nKeysOfHandle: () => 2, handleOf: () => 'h',
+    scheduleRedraw: () => {}, lastStatsSig: null,
+  };
+  const v = viewerSlice('function qs(params){', 'function showParseProgress(', ctx,
+    'ensureRawWindow, getPoint, rawWindows, rawPending, pointCache, pointPending');
+  const reply = (i, lo, hi) => replies[i].resolve({ meta: { lo, hi, layout: [] }, payload: null, base: 0 });
+  v.ensureRawWindow('h', 100, 0, 9);                                  // A, settings '0'
+  v.getPoint('h', 50);                                                 // point A, settings '0'
+  state.offsetMode = true; state.offsetMaxLimit = 1;
+  v.ensureRawWindow('h', 100, 0, 9);                                   // invalidates, B
+  state.offsetMode = false;
+  v.ensureRawWindow('h', 100, 0, 9);                                   // invalidates again, C: same settings as A
+  v.getPoint('h', 50);
+  assert.equal(replies.length, 5);
+  reply(0, 0, 19);
+  reply(1, 50, 50);
+  await flush();
+  assert.equal(v.rawWindows.size, 0);                                  // A not cached
+  assert.equal(v.pointCache.size, 0);
+  assert.ok(v.rawPending.has('h') && v.pointPending.has('h:50'));      // C's entries survive
+  reply(3, 0, 19);
+  reply(4, 50, 50);
+  await flush();
+  assert.equal(v.rawWindows.get('h').hi, 19);
+  assert.ok(!v.rawPending.has('h'));
+});
+
+test('viewer: export preparation drops values fetched before an invalidation and fetches again', async () => {
+  const replies = [];
+  const state = { offsetMode: false, offsetMaxLimit: 0, traces: [], markers: [], handle: 'h', nRecords: 10, tint: 1, marker1: 2, marker2: null };
+  const ctx = {
+    state, console,
+    apiFetch: () => { const d = deferred(); replies.push(d); return d.promise; },
+    splitBinary: x => x, f32View: (buf, base, offset) => Float32Array.of(offset),
+    useBuckets: () => false, nKeysOfHandle: () => 2, handleOf: () => 'h',
+    scheduleRedraw: () => {}, lastStatsSig: null, computeViewBuckets: () => {}, N_BUCKETS: 1, refreshStats: async () => true,
+  };
+  const v = viewerSlice('function qs(params){', 'function showParseProgress(', ctx, 'ensureExportData, getPoint, pointCache');
+  const reply = (i, value) => replies[i].resolve({ meta: { lo: 2, hi: 2, layout: [{ key: 'V1', offset: value, length: 1 }] } });
+  const done = v.ensureExportData();
+  await flush();
+  state.offsetMode = true;
+  v.getPoint('h', 7);                         // lazily invalidates the caches mid-export
+  reply(0, 111);                              // old-settings value for index 2
+  await flush(); await flush();
+  assert.equal(replies.length, 3);            // preparation restarted and asked for index 2 again
+  assert.ok(!v.pointCache.has('h:2'));
+  reply(2, 222);
+  reply(1, 0);
+  await done;
+  assert.equal(v.pointCache.get('h:2').V[1], 222);
+});
+
+test('viewer: a settings change during the stats refresh re-prepares, and endless changes abort the export', async () => {
+  const state = { offsetMode: false, offsetMaxLimit: 0, traces: [], markers: [], handle: 'h', nRecords: 10, tint: 1, marker1: 2, marker2: null };
+  let fetches = 0, flips = 0;
+  const flashes = [];
+  const ctx = {
+    state, console,
+    apiFetch: async () => { fetches++; return { meta: { lo: 2, hi: 2, layout: [] } }; },
+    splitBinary: x => x, f32View: () => new Float32Array(1),
+    useBuckets: () => false, nKeysOfHandle: () => 2, handleOf: () => 'h',
+    scheduleRedraw: () => {}, lastStatsSig: null, computeViewBuckets: () => {}, N_BUCKETS: 1,
+    refreshStats: async () => { if (flips > 0) { flips--; state.offsetMode = !state.offsetMode; } return true; },
+    flashMessage: msg => flashes.push(msg), T: key => key,
+  };
+  const v = viewerSlice('function qs(params){', 'function showParseProgress(', ctx, 'ensureExportData');
+  flips = 1;
+  assert.equal(await v.ensureExportData(), true);
+  assert.equal(fetches, 2);                  // the point was fetched again under the new settings
+  flips = 100;
+  assert.equal(await v.ensureExportData(), false);
+  assert.deepEqual(flashes, ['msgExportDataChanged']);
+});
+
+test('viewer: export retries when a background stats refresh supersedes its own (real refreshStats)', async () => {
+  const statsReplies = [];
+  const state = { loaded: true, offsetMode: false, offsetMaxLimit: 0, markers: [], handle: 'h', nRecords: 10, tint: 1,
+    marker1: 2, marker2: 4, view: { t0: 0, t1: 9 }, traces: [{ key: 'p:V1', visible: true, kind: 'V', ch: 1 }] };
+  const ctx = {
+    state, console,
+    apiFetch: path => {
+      if (!path.startsWith('/stats')) return Promise.resolve({ meta: { lo: 2, hi: 2, layout: [] } });
+      const d = deferred(); statsReplies.push(d); return d.promise;
+    },
+    splitBinary: x => x, f32View: () => new Float32Array(1),
+    useBuckets: () => false, nKeysOfHandle: () => 2, handleOf: () => 'h',
+    scheduleRedraw: () => {}, lastStatsSig: null, computeViewBuckets: () => {}, N_BUCKETS: 1,
+    tintOf: () => 1, nRecOfTrace: () => 10, clampIdxTrace: (t, i) => i,
+    flashMessage: () => {}, T: key => key,
+  };
+  const v = viewerSlice('function qs(params){', 'function showParseProgress(', ctx, 'ensureExportData');
+  const s = vm.runInContext(VIEWER_HTML.slice(VIEWER_HTML.indexOf('const statsCache = new Map();'),
+    VIEWER_HTML.indexOf('function currentViewIdxRange(){')) + '\n;({ refreshStats, statsCache })', ctx);
+  const stat = n => ({ V1: { min: n, max: n, avg: n } });
+  let result = null;
+  const done = v.ensureExportData().then(r => { result = r; });
+  await flush();
+  assert.equal(statsReplies.length, 1);       // export's stats request (A)
+  const background = s.refreshStats();         // updateStatsPanel-style refresh (B) supersedes A
+  statsReplies[0].resolve(stat(1));
+  await flush(); await flush();
+  assert.equal(result, null);                  // A was dropped: export must not finish yet
+  assert.equal(statsReplies.length, 3);        // export retried with its own request (C)
+  statsReplies[1].resolve(stat(2));
+  statsReplies[2].resolve(stat(3));
+  await done; await background;
+  assert.equal(result, true);
+  assert.equal(s.statsCache.get('p:V1').avg, 3);
+});
+
+test('viewer: a failing /stats request makes export retry and then abort (real refreshStats)', async () => {
+  let statsCalls = 0;
+  const flashes = [];
+  const state = { loaded: true, offsetMode: false, offsetMaxLimit: 0, markers: [], handle: 'h', nRecords: 10, tint: 1,
+    marker1: 2, marker2: 4, view: { t0: 0, t1: 9 }, traces: [{ key: 'p:V1', visible: true, kind: 'V', ch: 1 }] };
+  const ctx = {
+    state, console: { ...console, error: () => {} },
+    apiFetch: async path => {
+      if (!path.startsWith('/stats')) return { meta: { lo: 2, hi: 2, layout: [] } };
+      statsCalls++;
+      throw Object.assign(new Error('HTTP 503'), { status: 503 });
+    },
+    splitBinary: x => x, f32View: () => new Float32Array(1),
+    useBuckets: () => false, nKeysOfHandle: () => 2, handleOf: () => 'h',
+    scheduleRedraw: () => {}, lastStatsSig: null, computeViewBuckets: () => {}, N_BUCKETS: 1,
+    tintOf: () => 1, nRecOfTrace: () => 10, clampIdxTrace: (t, i) => i,
+    flashMessage: msg => flashes.push(msg), T: key => key,
+  };
+  const v = viewerSlice('function qs(params){', 'function showParseProgress(', ctx, 'ensureExportData');
+  vm.runInContext(VIEWER_HTML.slice(VIEWER_HTML.indexOf('const statsCache = new Map();'),
+    VIEWER_HTML.indexOf('function currentViewIdxRange(){')), ctx);
+  assert.equal(await v.ensureExportData(), false);
+  assert.equal(statsCalls, 5);
+  assert.deepEqual(flashes, ['msgExportDataChanged']);
+});

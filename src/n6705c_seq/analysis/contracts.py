@@ -339,6 +339,7 @@ MAX_CONCURRENT_JOBS = 4               # JOB routes only; beyond -> 503. Below th
 CORE_CHUNK_RECORDS = 1_000_000        # cancel check + materialization granularity in core
 CORE_MAX_VALUES_SPAN = 4_000_000      # get_values() hard cap; larger -> LimitExceeded
 HASH_CHUNK_BYTES = 8 * 1024 ** 2
+DLOG_MAX_HEADER_BYTES = 1024 ** 2     # parse_dlog searches only this prefix for </dlog>; real headers are a few KB
 CSV_ROWS_PER_CHUNK = 20_000           # iter_csv block size (= legacy _CSV_ROWS_PER_CHUNK); cancel check per block
 
 # capacity / performance (numbers marked "pending user" in the doc)

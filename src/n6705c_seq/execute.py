@@ -48,17 +48,55 @@ def connect_group(resources: list[str], *, backend: str = "auto", timeout_ms: in
     The unit tested here (S/N MY66102013) answers with garbage bytes in the model
     field, which the library's default ASCII decoding rejects.  Latin-1 never fails.
     """
-    instruments: list[N6705C] = []
+    opened: list = []  # each entry owns one session: a bare transport until N6705C wraps it
     try:
         for resource in resources:
             transport = VisaTransport(resource, backend=backend, timeout_ms=timeout_ms)
+            opened.append(transport)
             transport._inst.encoding = "latin-1"  # noqa: SLF001 - no public hook
-            instruments.append(N6705C.from_transport(transport))
-    except BaseException:
-        for inst in instruments:
-            inst.close()
+            opened[-1] = N6705C.from_transport(transport)
+    except BaseException as exc:
+        close_all(opened, exc)
         raise
-    return InstrumentGroup(instruments)
+    return InstrumentGroup(opened)
+
+
+def run_callback(callback: Callable[[], None] | None, primary: BaseException | None = None) -> BaseException | None:
+    """Call a cleanup callback so its failure cannot skip the steps after it.
+
+    The failure is attached to ``primary`` as a note when one is propagating;
+    otherwise it is returned for the caller to raise once cleanup is done.
+    """
+    if callback is None:
+        return None
+    try:
+        callback()
+    except BaseException as exc:  # noqa: BLE001 - re-raised or attached by the caller
+        if primary is None:
+            return exc
+        primary.add_note(f"cleanup callback failed ({exc!r})")
+    return None
+
+
+def close_all(items, primary: BaseException | None = None) -> None:
+    """Close every item even if some closes fail; report the failures afterwards.
+
+    With ``primary`` (an exception already propagating) the failures are attached
+    to it as a note so the original error stays the one reported.
+    """
+    problems = []
+    for index, item in enumerate(items, start=1):
+        try:
+            item.close()
+        except Exception as exc:  # noqa: BLE001 - keep closing the rest
+            problems.append(f"frame {index} ({exc})")
+    if not problems:
+        return
+    message = "could not close: " + "; ".join(problems)
+    if primary is not None:
+        primary.add_note(message)
+        return
+    raise RuntimeError(message)
 
 
 class PlanRejected(ValueError):
@@ -297,9 +335,8 @@ def run_functions(
     except OutputsNotConfirmedOff:
         raise
     except BaseException as exc:
+        run_callback(on_cleanup, exc)
         try:
-            if on_cleanup is not None:
-                on_cleanup()
             outputs_off(group)
         except OutputsNotConfirmedOff as off:
             raise OutputsNotConfirmedOff(f"{exc}; also {off}") from exc

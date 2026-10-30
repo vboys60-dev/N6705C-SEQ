@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from . import storage
-from .contracts import (CACHE_VERSION, CACHE_MAX_BYTES, CORE_CHUNK_RECORDS,
+from .contracts import (CACHE_VERSION, CACHE_MAX_BYTES, CORE_CHUNK_RECORDS, DLOG_MAX_HEADER_BYTES,
                         CORE_MAX_VALUES_SPAN, HASH_CHUNK_BYTES, CSV_ROWS_PER_CHUNK,
                         MAX_BUCKETS, MAX_CSV_KEYS, AnalysisCancelled, LimitExceeded,
                         SourceChanged, CacheWriteError)
@@ -34,7 +34,11 @@ class DlogFormatError(ValueError):
 
 def parse_dlog(buf, *, _destination=None, cancel=None, progress=None) -> dict:
     end_marker = b"</dlog>\n"
-    idx = buf.find(end_marker)
+    _check_cancel(cancel)
+    # Search only a bounded prefix: a file without the marker must not be scanned end to end.
+    idx = buf.find(end_marker, 0, DLOG_MAX_HEADER_BYTES)
+    if idx == -1 and len(buf) >= DLOG_MAX_HEADER_BYTES:
+        raise DlogFormatError("Header exceeds %d bytes or has no </dlog> end marker" % DLOG_MAX_HEADER_BYTES)
     if idx == -1:
         raise DlogFormatError("找不到 </dlog> 結束標記，檔案格式不符")
     header_end = idx + len(end_marker)
@@ -734,7 +738,7 @@ def iter_csv(primary: dict, columns: list, idx_lo: int, idx_hi: int,
             # 其他來源：以主檔案的時間點就近取樣（round 到最近索引）
             other_tint = entry["meta"]["tint"]
             other_n = entry["meta"]["nRecords"]
-            kk = np.rint(times / other_tint).astype(np.int64)
+            kk = np.floor(times / other_tint + 0.5).astype(np.int64)  # Math.round, as the viewer
             valid = (kk >= 0) & (kk < other_n)
             vals = np.full(count, np.nan, dtype=np.float64)
             if valid.any():

@@ -615,6 +615,7 @@
       progressCsv: 'CSV 匯出中...',
       errBadParent: '無法與外殼建立連線，開檔與存檔已停用',
       saveFailedPrefix: '儲存失敗：',
+      msgExportDataChanged: '\u6821\u6b63\u8a2d\u5b9a\u5728\u532f\u51fa\u671f\u9593\u8b8a\u66f4\uff0c\u8acb\u518d\u8a66\u4e00\u6b21', // zh, escaped: source stays ASCII
       compareFileBtn: '載入比對檔案',
       compareClearBtn: '移除比對檔',
       compareNoFile: '尚未載入比對檔案',
@@ -737,6 +738,7 @@
       progressCsv: 'Exporting CSV...',
       errBadParent: 'Cannot reach the host shell; open and save are disabled',
       saveFailedPrefix: 'Save failed: ',
+      msgExportDataChanged: 'Correction settings changed during export; please try again',
       compareFileBtn: 'Load Comparison File',
       compareClearBtn: 'Remove Comparison',
       compareNoFile: 'No comparison file loaded',
@@ -877,7 +879,9 @@
     const w = jobWaiters.shift();
     if(w) w();
   }
-  async function apiFetch(path, opt, control){
+  // Resolves with the fully read body (parsed JSON when json, else an ArrayBuffer)
+  // so a JOB slot is held until the response is consumed, not just its headers.
+  async function apiFetch(path, opt, control, json){
     opt = Object.assign({}, opt);
     opt.headers = Object.assign({ 'X-Analysis-Token':shellCtx.token, 'X-Analysis-Gen':String(shellCtx.gen) }, opt.headers||{});
     if(!control) await jobSlot();
@@ -889,15 +893,15 @@
         const e = new Error(msg); e.code = code; e.status = res.status;
         throw e;
       }
-      return res;
+      return await (json ? res.json() : res.arrayBuffer());
     }finally{
       if(!control) jobDone();
     }
   }
-  function postJson(path, body, req, control){
+  function postJson(path, body, req, control, json){
     const headers = { 'Content-Type':'application/json' };
     if(req) headers['X-Analysis-Req'] = req;
-    return apiFetch(path, { method:'POST', headers, body:JSON.stringify(body) }, control);
+    return apiFetch(path, { method:'POST', headers, body:JSON.stringify(body) }, control, json);
   }
 
   // ---- postMessage（契約 §4）：只對 parent 精確 origin 發送；收訊驗 source/origin/v/gen/type
@@ -952,6 +956,17 @@
     if(h) postJson('/release', { h }, null, true).catch(()=>{});
   }
   let activeReq = null;
+  // Opens and the CSV export run one at a time: a second click while one is in
+  // flight is ignored, so Cancel, the progress row and activeReq always belong to
+  // the single running operation and a slow earlier open cannot overwrite a later one.
+  let longOpBusy = false;
+  function longOp(fn){
+    return async ()=>{
+      if(longOpBusy) return;
+      longOpBusy = true;
+      try{ await fn(); }finally{ longOpBusy = false; }
+    };
+  }
   function cancelActive(){
     if(activeReq) postJson('/cancel', { req:activeReq }, null, true).catch(()=>{});
   }
@@ -976,7 +991,7 @@
     // 輪詢 /progress（CONTROL，不佔 slot）；錯誤一律忽略
     const poll = setInterval(async ()=>{
       try{
-        const j = await (await apiFetch('/progress?req='+req, {}, true)).json();
+        const j = await apiFetch('/progress?req='+req, {}, true, true);
         if(j.ok && onProgress && activeReq===req) onProgress(j.stage, j.pct);
       }catch(_){ /* ignore */ }
     }, PROGRESS_POLL_MS);
@@ -986,7 +1001,7 @@
       clearInterval(poll);
       activeReq = null;
     }
-    const { meta, payload, base } = splitBinary(await res.arrayBuffer());
+    const { meta, payload, base } = splitBinary(res);
     const lodObj = {};
     const factors = meta.lodFactors;
     meta.lodLayout.forEach(seg=>{
@@ -1029,8 +1044,7 @@
   }
 
   async function apiSamples(handle, lo, hi){
-    const res = await apiFetch('/samples?'+qs({ h:handle, lo, hi, ...offsetParams() }));
-    const { meta, payload, base } = splitBinary(await res.arrayBuffer());
+    const { meta, payload, base } = splitBinary(await apiFetch('/samples?'+qs({ h:handle, lo, hi, ...offsetParams() })));
     const V = {}, I = {};
     meta.layout.forEach(seg=>{
       const kind = seg.key[0], ch = parseInt(seg.key.slice(1),10);
@@ -1040,14 +1054,12 @@
   }
 
   async function apiStats(handle, keys, lo, hi){
-    const res = await apiFetch('/stats?'+qs({ h:handle, keys:keys.join(','), lo, hi, ...offsetParams() }));
-    return res.json();
+    return apiFetch('/stats?'+qs({ h:handle, keys:keys.join(','), lo, hi, ...offsetParams() }), {}, false, true);
   }
 
   // 範圍過大（useBuckets）時改走 /buckets：每 key 連續 t、min、max 三段
   async function apiBuckets(handle, keys, lo, hi, n){
-    const res = await apiFetch('/buckets?'+qs({ h:handle, keys:keys.join(','), lo, hi, n, ...offsetParams() }));
-    const { meta, payload, base } = splitBinary(await res.arrayBuffer());
+    const { meta, payload, base } = splitBinary(await apiFetch('/buckets?'+qs({ h:handle, keys:keys.join(','), lo, hi, n, ...offsetParams() })));
     const out = {};
     meta.layout.forEach(seg=>{
       out[seg.key] = {
@@ -1075,13 +1087,14 @@
     if(!rawPending.has(pk)){
       const keys = new Set([key]);
       state.traces.filter(t=>t.visible && handleOf(t)===handle).forEach(t=>keys.add(t.kind+t.ch));
+      const ticket = cacheTicket();
       rawPending.set(pk, apiBuckets(handle, Array.from(keys), idxLo, idxHi, nBuckets).then(data=>{
-        rawPending.delete(pk);
-        if(rawWindowSig !== currentDataSig()) return;
+        if(ticket.mine()) rawPending.delete(pk);
+        if(!ticket.fresh()) return;
         srvBuckets.set(handle, { sig, data });
         scheduleRedraw();
       }).catch(err=>{
-        rawPending.delete(pk);
+        if(ticket.mine()) rawPending.delete(pk);
         console.error('buckets 取得失敗：', err);
       }));
     }
@@ -1096,6 +1109,14 @@
   const rawPending = new Map();   // handle -> 進行中的請求標記，避免同一輪重覆送出
   // 校正設定會改變 server 回傳的數值，變更時必須讓所有已快取的樣本失效
   let rawWindowSig = '';
+  // Bumped on every invalidation. A response is kept only if the epoch and the
+  // correction settings captured at request start still hold; it removes its
+  // pending entry only within its own epoch (a newer request may own that key).
+  let cacheEpoch = 0;
+  function cacheTicket(){
+    const epoch = cacheEpoch, sig = currentDataSig();
+    return { mine: ()=>epoch===cacheEpoch, fresh: ()=>epoch===cacheEpoch && sig===currentDataSig() };
+  }
 
   function currentDataSig(){
     return state.offsetMode ? ('1:'+Math.max(0, state.offsetMaxLimit||0)) : '0';
@@ -1108,6 +1129,7 @@
     pointPending.clear();
     lastStatsSig = null;
     rawWindowSig = currentDataSig();
+    cacheEpoch++;
   }
 
   function rawWindowFor(handle){
@@ -1128,13 +1150,14 @@
     if(useBuckets(hi-lo+1, nKeysOfHandle(handle))){ lo = idxLo; hi = idxHi; }  // 邊界放不下就只取視野本身
     // rawPending 存的是「這次取數的 promise」而不是單純的 true——匯出流程
     // （ensureExportData）需要能 await 它，等資料真的到齊再開始畫。
+    const ticket = cacheTicket();
     rawPending.set(handle, apiSamples(handle, lo, hi).then(win=>{
-      rawPending.delete(handle);
-      if(rawWindowSig !== currentDataSig()) return; // 取數期間校正設定變了，這份已過期
+      if(ticket.mine()) rawPending.delete(handle);
+      if(!ticket.fresh()) return; // settings or cache changed while fetching: stale
       rawWindows.set(handle, win);
       scheduleRedraw();
     }).catch(err=>{
-      rawPending.delete(handle);
+      if(ticket.mine()) rawPending.delete(handle);
       console.error('raw 樣本取得失敗：', err);
     }));
     return false;
@@ -1166,9 +1189,10 @@
     if(pointCache.has(key)) return pointCache.get(key);
     if(pointPending.get(key)) return null;
     pointPending.set(key, true);
+    const ticket = cacheTicket();
     apiSamples(handle, idx, idx).then(win=>{
-      pointPending.delete(key);
-      if(rawWindowSig !== currentDataSig()) return;
+      if(ticket.mine()) pointPending.delete(key);
+      if(!ticket.fresh()) return;
       const V = {}, I = {};
       Object.keys(win.V).forEach(ch=>{ V[ch] = win.V[ch][0]; });
       Object.keys(win.I).forEach(ch=>{ I[ch] = win.I[ch][0]; });
@@ -1176,7 +1200,7 @@
       pointCache.set(key, { V, I });
       scheduleRedraw();
     }).catch(err=>{
-      pointPending.delete(key);
+      if(ticket.mine()) pointPending.delete(key);
       console.error('單點取值失敗：', err);
     });
     return null;
@@ -1184,7 +1208,31 @@
 
   // 匯出前呼叫：把「目前視野 + M1/M2 + 全部 marker」需要的資料一次備妥，
   // 之後的渲染流程即可維持同步、與現行版本逐像素一致。
+  // Settings changed while preparing (cache invalidated): prepare again so the
+  // export never draws values fetched under the old correction settings.
+  // Stats are refreshed inside the round so a change during that wait is caught too.
+  // A round is retried when the caches were invalidated, its stats request was
+  // superseded (a newer one is still in flight), or the markers / view / traces it
+  // prepared for moved meanwhile.
+  // Resolves false (after a message) when 5 rounds all went stale: callers must not render.
+  function exportInputsSig(){
+    return JSON.stringify([state.handle, state.compare && state.compare.handle, state.marker1, state.marker2,
+      state.markers.map(m=>m.time), state.view && [state.view.t0, state.view.t1],
+      state.traces.filter(t=>t.visible).map(t=>t.key)]);
+  }
   async function ensureExportData(){
+    for(let attempt=0; attempt<5; attempt++){
+      if(rawWindowSig !== currentDataSig()) invalidateDataCaches();
+      const ticket = cacheTicket();
+      const inputs = exportInputsSig();
+      await prepareExportData(ticket);
+      const statsCommitted = await refreshStats(); // stats panel Max/Min/Avg must be current too
+      if(statsCommitted && ticket.fresh() && inputs===exportInputsSig()) return true;
+    }
+    flashMessage(T('msgExportDataChanged'), 6000);
+    return false;
+  }
+  async function prepareExportData(ticket){
     const jobs = [];
     const sources = [{ handle: state.handle, nRec: state.nRecords, tint: state.tint }];
     if(state.compare) sources.push({ handle: state.compare.handle, nRec: state.compare.nRecords, tint: state.compare.tint });
@@ -1202,6 +1250,7 @@
         if(w && idx>=w.lo && idx<=w.hi) return;
         if(pointCache.has(pointKey(src.handle, idx))) return;
         jobs.push(apiSamples(src.handle, idx, idx).then(win=>{
+          if(!ticket.fresh()) return;
           const V = {}, I = {};
           Object.keys(win.V).forEach(ch=>{ V[ch] = win.V[ch][0]; });
           Object.keys(win.I).forEach(ch=>{ I[ch] = win.I[ch][0]; });
@@ -1223,8 +1272,6 @@
       if(pending.length===0) break;
       await Promise.all(pending);
     }
-
-    await refreshStats(); // 統計面板的 Max/Min/Avg 也要是最新的
   }
 
   function showParseProgress(phase, pct){
@@ -1612,16 +1659,18 @@
 
   // 取得目前 M1↔M2 區間、所有已勾選曲線的統計值。依來源（主檔／比對檔）分組送出，
   // 各自一個請求就涵蓋該來源全部曲線。
+  // Resolves true when this round's results were committed in full; false when a newer
+  // round superseded it or a request failed / came back without a result.
   async function refreshStats(){
     // 每一輪一開始就換新 token：換檔、移動游標、改校正設定都會觸發新一輪，
     // 舊一輪的回應晚到時一律丟棄，不可寫回 statsCache（key 只有 trace.key，分不出新舊資料）
     const token = {};
     statsInFlight = token;
-    if(!state.loaded || state.marker1==null || state.marker2==null) return;
+    if(!state.loaded || state.marker1==null || state.marker2==null) return true;
     const tLo = Math.min(state.marker1, state.marker2);
     const tHi = Math.max(state.marker1, state.marker2);
     const visible = state.traces.filter(t=>t.visible);
-    if(visible.length===0){ statsCache.clear(); return; }
+    if(visible.length===0){ statsCache.clear(); return true; }
 
     const groups = new Map();   // handle -> { traces:[], lo, hi }
     visible.forEach(t=>{
@@ -1637,12 +1686,14 @@
     });
 
     const jobs = [];
+    let filled = 0;   // groups whose request succeeded with a result for every trace
     groups.forEach((g, handle)=>{
       const keys = g.traces.map(t=>t.kind+t.ch);
       jobs.push(apiStats(handle, keys, g.lo, g.hi).then(res=>{
         if(statsInFlight !== token) return;
+        if(res && g.traces.every(t=>res[t.kind+t.ch])) filled++;
         g.traces.forEach(t=>{
-          const r = res[t.kind+t.ch];
+          const r = res && res[t.kind+t.ch];
           if(r) statsCache.set(t.key, {
             min: r.min==null ? NaN : r.min,
             max: r.max==null ? NaN : r.max,
@@ -1655,7 +1706,9 @@
     (await Promise.allSettled(jobs)).forEach(r=>{
       if(r.status==='rejected') console.error('統計取得失敗：', r.reason);
     });
-    if(statsInFlight === token) statsInFlight = null;
+    if(statsInFlight !== token) return false;
+    statsInFlight = null;
+    return filled===jobs.length;   // a failed or partial request is not committed stats
   }
 
   function currentViewIdxRange(){
@@ -1742,7 +1795,7 @@
     el.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); fn(); } });
   }
   document.getElementById('parseCancelBtn').addEventListener('click', cancelActive);
-  onActivate('openMainBtn', async ()=>{
+  onActivate('openMainBtn', longOp(async ()=>{
     try{
       const g = await askPath('open_request', { purpose:'dlog' });
       if(!g) return;
@@ -1813,7 +1866,7 @@
     }finally{
       hideParseProgress();
     }
-  });
+  }));
 
   // ---------------------------------------------------------------
   // 比對檔（MEM）載入／移除：僅供主波形圖疊圖比對，t=0 與主檔案對齊，
@@ -1829,7 +1882,7 @@
       : T('compareNoFile');
   }
 
-  onActivate('openCompareBtn', async ()=>{
+  onActivate('openCompareBtn', longOp(async ()=>{
     if(!state.loaded){
       flashMessage(T('compareNeedMain'), 6000);
       return;
@@ -1877,7 +1930,7 @@
     }finally{
       hideParseProgress();
     }
-  });
+  }));
 
   document.getElementById('compareClearBtn').addEventListener('click', ()=>{
     releaseHandle(state.compare && state.compare.handle);
@@ -2301,7 +2354,7 @@
     if(!state.loaded) return;
     // 先把「目前視野 + M1/M2 + 全部 marker」需要的資料一次備妥，之後的渲染流程
     // 維持同步、與現行版本逐像素一致（渲染程式碼本身完全沒改）
-    await ensureExportData();
+    if(!(await ensureExportData())) return;
     const mode = document.getElementById('imageThemeSelect').value;
     const off = renderExportCanvasFull(mode); // 曲線圖 + 統計值區域，Marker Table 開啟時一併附加
     off.toBlob(async blob=>{
@@ -2412,7 +2465,7 @@
 
   document.getElementById('exportReportBtn').addEventListener('click', async ()=>{
     if(!state.loaded) return;
-    await ensureExportData();
+    if(!(await ensureExportData())) return;
     const mode = document.getElementById('imageThemeSelect').value;
     const theme = EXPORT_THEMES[mode] || EXPORT_THEMES.normal;
     const off = renderChartForExport(mode);
@@ -3037,7 +3090,7 @@
   });
 
   document.getElementById('exportJsonBtn').addEventListener('click', async ()=>{
-    await ensureExportData(); // 先把全部 marker 的數值備妥，避免匯出到 NaN
+    if(!(await ensureExportData())) return; // all marker values ready first, or no NaN-filled export
     const payload = {
       source_file: state.fileName,
       tint: state.tint,
@@ -3115,7 +3168,7 @@
   // 記憶體用量與筆數無關——舊版把整份 CSV 組成一個 JS 字串再包 Blob，千萬筆會直接
   // 撐爆分頁，因此當時需要一個 200 萬筆的確認對話框擋著；現在那個限制已不存在。
   // 電流負值校正由 server 端套用（見 offsetParams()），匯出的檔案不會出現校正前的負值。
-  document.getElementById('exportCsvBtn').addEventListener('click', async ()=>{
+  document.getElementById('exportCsvBtn').addEventListener('click', longOp(async ()=>{
     if(!state.loaded) return;
     const mode = document.getElementById('csvRangeSelect').value;
     const range = csvRangeIdx(mode);
@@ -3156,13 +3209,13 @@
     }catch(err){
       if(err.code!=='cancelled') flashMessage(T('saveFailedPrefix')+err.message, 6000);
     }
-  });
+  }));
 
   onActivate('importJsonBtn', async ()=>{
     try{
       const g = await askPath('open_request', { purpose:'markers' });
       if(!g) return;
-      const json = (await (await postJson('/import/markers', { grant:g.grant })).json()).data || {};
+      const json = (await postJson('/import/markers', { grant:g.grant }, null, false, true)).data || {};
       state.markers = (json.markers||[]).filter(m=>Number.isFinite(m.time_s)).slice(0,10).map((m,i)=>{
         const ch = parseInt(String(m.channel).replace(/\D/g,''), 10) || 1;
         const kind = (m.type==='I' || m.type==='P') ? m.type : 'V';
@@ -3305,7 +3358,7 @@
   async function loadPrefs(){
     if(shellCtx.ok){
       try{
-        const p = await (await apiFetch('/prefs')).json();
+        const p = await apiFetch('/prefs', {}, false, true);
         if(p && typeof p==='object'){
           if(CHART_THEMES[p.theme]){ prefs.theme = p.theme; applyTheme(p.theme, false); }
           if(p.fold && typeof p.fold==='object') prefs.fold = Object.assign({}, p.fold);
