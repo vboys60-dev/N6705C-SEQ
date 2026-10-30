@@ -175,16 +175,16 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 2. 依結果定案 `configure_commands`（§10.3）。同時實機確認執行前檢查的回覆格式：`OUTP:PAIR?` 目前只認 `OFF`（回 `0` 會被拒）、`INIT:CONT? (@n)` 是否接受通道清單（不接受會逾時，但發生在寫入前）。
 3. 不做 driver 抽象基底、不移植 listplan（CDW）。`order_warnings`／`suggest_assignment` 因每台 4 通道可沿用，但 skew 值要重測。
 
-## 11. 報告分析升級版（2026-10-29 開工；T0–T7 完成，T8 待審）
+## 11. 報告分析升級版（2026-10-29 開工；T0–T8 完成，PR #1 已合併 main `913de2d`）
 
 **目標**：把 DLOG Viewer（Python server 版）做成 SEQ 第三分頁「離線分析報告」，給超過 1000 萬筆的 `.dlog` 用。**使用者已於 2026-10-29 說「開工」，規劃文件在 `報告分析升級版/升級報告.md`，契約在 `docs/analysis-contract.md`（數字與型別以 `src/n6705c_seq/analysis/contracts.py` 為準）。**
 
-**施工進度**（pytest 764 過／7 跳過，`node --test tests/js` 19 過；2026-10-30 驗）：
+**施工進度**（pytest 809 過／7 跳過，`node --test tests/js` 26 過，真實核心 145 過；2026-10-30 驗）：
 - T0 契約完成（Codex 審兩輪、修訂後定稿；含 `open_handle`／`adopt` 交接規則、已知風險：分析中來源檔被截短 mac/Linux 會 SIGBUS）。
 - T1 搬檔 + core 測試 + parity 工具；T2 六態仲裁器 `analysis/gate.py`（含 `_untimed`／`_finishing` 計時）；T3 `core.py` 路徑＋mmap、`storage.py`；T4 `server.py`；T5 `viewer.html` 改接 postMessage／`/save`／`/prefs` ＋ `shell_stub.html`；T6 殼層 `web/analysis.js`、第三分頁、`App.powerAllowed`、整合測試 `tests/test_analysis_integration.py`。
 - **`contracts.ANALYSIS_ENABLED` 已為 `True`**（分頁顯示；macOS 已手動點測無問題）。改回 `False` 可隱藏分頁（位置：`src/n6705c_seq/analysis/contracts.py`）。Windows 11 尚未驗，發版前須先驗。
 - **T7（打包與文件，已完成，未實機驗）**：`pyproject.toml` package-data 加 `analysis/web/*`；`packaging/n6705c_seq.spec` datas 逐檔列 `viewer.html`（`shell_stub.html` 不打包）、hiddenimports 收 `n6705c_seq.analysis`；`build.ps1` 加 bundle 內 `viewer.html` 存在檢查；README 補分析分頁、開關位置、測試環境變數、不搬工具清單；`HANDOFF_WINDOWS.md` §6 端到端驗收清單。`original_before_python.html` sha1 `0117e08d…` 搬移前後相同。
-- **未做**：T8（Codex＋Opus 各一份獨立審查，`docs/analysis-review-*.md`，尚未派）。Windows 11 實機未測（見 `HANDOFF_WINDOWS.md` §6）。
+- **未做**：Windows 11 實機未測（見 `HANDOFF_WINDOWS.md` §6，16 項）；**Windows CI 還沒驗證通過**（見下一條）。
 - **後續修補（已 commit：`33f58ce`、`3692f91`、`78f36d6`）**：Viewer 8 處 `alert()` 改 `#toast`；`/open` 進度改 `/progress` 輪詢；`--selftest` 往返（enter→ready→leave→idle）與 `selftest_mode` 旗標；`analysis.js` 補 `csv` 授權；`on_cleanup` 收尾計時（`execute.py`／`e36441a.py`）。
 - 已知取捨：CSV 與原 JS 容許最後一位差 1；契約取代報告 §5 舊的計時說法（報告檔本身未改）。
 
@@ -197,4 +197,12 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - **審查進度**：Opus＋Codex 已複審三輪（皆 NEEDS_CHANGES，必修逐輪減少），三輪意見都已改進 `升級報告.md`，尚未跑第四輪。第三輪修正重點：狀態表轉移與逾時、T1 改重寫 core 層 pytest（原 9 項都要起 server）、T5 用假外殼驗收、`App.powerAllowed` 反灰、`ANALYSIS_ENABLED` 定義在 Python（`config()` 下發，`test_webgui.py:90` 要同步改）。
 - **已定案（使用者指示全採建議值）**：§9 第 1、2、3、4、6 題（進頁即鎖、切頁取消、同進程、單一 GUI 進程、最大檔 10M 起算且 30M 不 OOM）。
 
-- **T8 審查後修補（已 commit）**：舊世代 `/release` 綁 `(gen, digest)`、HTTP socket 逾時與取消、`/save` 取消不覆寫、prefs 目錄先建、`/open` 超限先 release、CSV 24 欄（`MAX_CSV_KEYS`）、tint 驗證、多開快取互踩、補副檔名覆寫確認、對話框加鎖、wheel 只含 viewer.html。審查全文 `docs/analysis-review-codex.md`、`docs/analysis-review-opus.md`。覆寫確認已有中英文（i18n key `overwrite_confirm`）。PR #1（`feat/analysis-tab`→`main`）已開，早期 pywebview 那批已先推到 `origin/main`（`6849055`）。**待決**：Windows 11 實機驗收（`HANDOFF_WINDOWS.md` §6）、`ANALYSIS_ENABLED` 已改 True（macOS 手動點測無問題）。
+- **T8 審查後修補（已 commit）**：舊世代 `/release` 綁 `(gen, digest)`、HTTP socket 逾時與取消、`/save` 取消不覆寫、prefs 目錄先建、`/open` 超限先 release、CSV 24 欄（`MAX_CSV_KEYS`）、tint 驗證、多開快取互踩、補副檔名覆寫確認、對話框加鎖、wheel 只含 viewer.html。審查全文 `docs/analysis-review-codex.md`、`docs/analysis-review-opus.md`。覆寫確認已有中英文（i18n key `overwrite_confirm`）。PR #1 已合併。早期 pywebview 那批已先推到 `origin/main`（`6849055`）。**待決**：Windows 11 實機驗收（`HANDOFF_WINDOWS.md` §6）。
+- **Codex 全專案審查（5 輪，合併前）**：修了 VISA 連線建構失敗沒關（`execute.py` `close_all`／`run_callback`）、關連線失敗或 `on_cleanup` 拋錯時漏關／漏還原、Viewer 校正快取被過期回應覆寫（cache epoch）、並行名額提早釋放、開檔／匯出同時進行錯亂（一次只跑一個）、匯出用到過期統計（最多重試 5 輪後放棄）、CSV 比對取樣進位改 half-up、檔頭搜尋上限 `DLOG_MAX_HEADER_BYTES`（1 MiB）。第 5 輪後剩的一點（統計請求失敗仍匯出）已修但**未再送 Codex 複審**。契約 `analysis-contract.md` 未同步：新常數 `DLOG_MAX_HEADER_BYTES`、`apiFetch` 多第 4 參數且回傳已讀完的 body（第 632 行 `/progress` 寫法）、開檔與 CSV 匯出互斥。
+- **合併後 Windows CI（2026-10-30 夜）**：
+  - `main` 合併後 Windows 兩個組合卡死近 3 小時（已取消）；macOS 3.11/3.13 有一個 gate 時間測試偶發失敗。
+  - 診斷分支 `ci/windows-diagnose`（PR #3，**未合併**）：CI 改 `pytest -v --timeout=120`（dev 加 `pytest-timeout`）；`test_activity_gate.py::test_finishing_rearms_and_fault_never_unlocks` 時間放寬；`test_analysis_integration.py` 兩個 selftest 測試補 `webview.renderer = "edgechromium"`（否則 win32 跳 MessageBox 卡死）；`.gitattributes` 對原版 HTML／`.dlog`／`.npy` 設 `-text`；parity 工具子程序強制 UTF-8；快取損壞測試先 `close_all()`；兩個「截短／刪除被 mmap 的檔案」測試在 win32 skip。最後一版 `25ae1ab`。
+  - 這一版修正**沒在 Windows CI 上驗過**：GitHub Actions 本月額度用完（Windows 750 分鐘、macOS 65 分鐘，換算約 2,228／2,000），新工作啟動即失敗（"recent account payments have failed or your spending limit needs to be increased"）。11/1 重置，或到 Billing 設 spending limit 後 `gh run rerun`。
+  - 上一輪（修前）Windows 的 5 失敗＋6 錯誤都判斷為測試在 Windows 的假設不成立（mmap 不能刪／截短、cp1252、CRLF），**沒看到主流程失敗**，但最後兩項堆疊沒看完，不能完全排除產品問題。
+  - 另有 PR #4（`feat/launchers`）：加 `N6705C-SEQ.bat`（Windows 雙擊，**未在 Windows 測**）；macOS 的 `N6705C-SEQ.command` 原本就有。PR #2 是本份 HANDOFF。
+  - 節省分鐘數的想法：CI 的 Windows 只留 3.13 一個組合。
