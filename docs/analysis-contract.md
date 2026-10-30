@@ -540,7 +540,7 @@ RSS 預算算式：`2 × 原始 V/I 位元組（來源 memmap＋快取 memmap �
 
 ## 9. i18n key
 
-`contracts.I18N_KEYS` 共 12 個（`analysis_tab`、`analysis_denied_power`、`power_denied_analysis`、`analysis_denied_draining`、`analysis_denied_closing`、`analysis_disabled`、`analysis_stale`、`analysis_server_failed`、`analysis_crash_note`、`fault_title`、`fault_body`、`closing_wait`），文字照錄。T2 一次加進 `i18n.STRINGS`（文字相同），並加測試：`I18N_KEYS` 每個鍵都在 `STRINGS` 且文字相等。沿用既有鍵：`busy_title`、`busy_body`、`run_result`。
+`contracts.I18N_KEYS` 共 13 個（`analysis_tab`、`analysis_denied_power`、`power_denied_analysis`、`analysis_denied_draining`、`analysis_denied_closing`、`analysis_disabled`、`analysis_stale`、`analysis_server_failed`、`analysis_crash_note`、`fault_title`、`fault_body`、`overwrite_confirm`、`closing_wait`），文字照錄。T2 一次加進 `i18n.STRINGS`（文字相同），並加測試：`I18N_KEYS` 每個鍵都在 `STRINGS` 且文字相等。沿用既有鍵：`busy_title`、`busy_body`、`run_result`。
 
 `analysis_crash_note` 由 T6 顯示在分析分頁頂端（同進程當掉時輸出可能維持開啟的說明）。Viewer 內部文字用 Viewer 自己的字典（`analysis/web/viewer.html`），不進 `STRINGS`。
 

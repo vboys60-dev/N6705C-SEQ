@@ -138,6 +138,7 @@ STRINGS = {
     'analysis_crash_note': ('分析與控制程式在同一進程；若程式當掉，儀器輸出可能維持開啟，請手動確認並關閉輸出。', 'Analysis runs in the same process; if the app crashes, outputs may stay on. Check and turn them off manually.'),
     'fault_title': ('工作卡住', 'Work Stuck'),
     'fault_body': ('儀器或分析工作未在時限內結束，已停止接受新工作。輸出可能仍開著，請手動確認後關閉程式重開。', 'Instrument or analysis work did not finish in time; new work is blocked. Outputs may be on: check them, then close and restart.'),
+    'overwrite_confirm': ('{name} 已存在，要覆寫嗎？', '{name} already exists. Overwrite?'),
     'closing_wait': ('正在結束背景工作，視窗稍後關閉。', 'Finishing background work; the window will close shortly.'),
 }
 

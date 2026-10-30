@@ -121,7 +121,7 @@ class _Core:
             if save and Path(path).suffix.lower() != contracts.SAVE_EXT[purpose]:
                 path += contracts.SAVE_EXT[purpose]  # native dialog never saw this name: re-confirm overwrite
                 if Path(path).exists() and not self._confirm(
-                        tr("confirm"), f"{Path(path).name} already exists. Overwrite?"):
+                        tr("confirm"), tr("overwrite_confirm", name=Path(path).name)):
                     return {"ok": False, "cancelled": True, "gen": gen}
         finally:
             self._dialog_lock.release()
