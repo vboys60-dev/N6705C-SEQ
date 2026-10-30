@@ -2,7 +2,7 @@
 
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。只做時序，不做量測。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-29　狀態：模擬器全過（576 tests）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
+最後更新：2026-10-31　狀態：模擬器全過（576 tests）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
 
 | 區塊 | 狀態 |
 |---|---|
@@ -184,7 +184,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - T1 搬檔 + core 測試 + parity 工具；T2 六態仲裁器 `analysis/gate.py`（含 `_untimed`／`_finishing` 計時）；T3 `core.py` 路徑＋mmap、`storage.py`；T4 `server.py`；T5 `viewer.html` 改接 postMessage／`/save`／`/prefs` ＋ `shell_stub.html`；T6 殼層 `web/analysis.js`、第三分頁、`App.powerAllowed`、整合測試 `tests/test_analysis_integration.py`。
 - **`contracts.ANALYSIS_ENABLED` 已為 `True`**（分頁顯示；macOS 已手動點測無問題）。改回 `False` 可隱藏分頁（位置：`src/n6705c_seq/analysis/contracts.py`）。Windows 11 尚未驗，發版前須先驗。
 - **T7（打包與文件，已完成，未實機驗）**：`pyproject.toml` package-data 加 `analysis/web/*`；`packaging/n6705c_seq.spec` datas 逐檔列 `viewer.html`（`shell_stub.html` 不打包）、hiddenimports 收 `n6705c_seq.analysis`；`build.ps1` 加 bundle 內 `viewer.html` 存在檢查；README 補分析分頁、開關位置、測試環境變數、不搬工具清單；`HANDOFF_WINDOWS.md` §6 端到端驗收清單。`original_before_python.html` sha1 `0117e08d…` 搬移前後相同。
-- **未做**：Windows 11 實機未測（見 `HANDOFF_WINDOWS.md` §6，16 項）；**Windows CI 還沒驗證通過**（見下一條）。
+- **未做**：Windows 11 實機未測（見 `HANDOFF_WINDOWS.md` §6，16 項）；Windows CI 已通過（見末條）。
 - **後續修補（已 commit：`33f58ce`、`3692f91`、`78f36d6`）**：Viewer 8 處 `alert()` 改 `#toast`；`/open` 進度改 `/progress` 輪詢；`--selftest` 往返（enter→ready→leave→idle）與 `selftest_mode` 旗標；`analysis.js` 補 `csv` 授權；`on_cleanup` 收尾計時（`execute.py`／`e36441a.py`）。
 - 已知取捨：CSV 與原 JS 容許最後一位差 1；契約取代報告 §5 舊的計時說法（報告檔本身未改）。
 
@@ -199,10 +199,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 
 - **T8 審查後修補（已 commit）**：舊世代 `/release` 綁 `(gen, digest)`、HTTP socket 逾時與取消、`/save` 取消不覆寫、prefs 目錄先建、`/open` 超限先 release、CSV 24 欄（`MAX_CSV_KEYS`）、tint 驗證、多開快取互踩、補副檔名覆寫確認、對話框加鎖、wheel 只含 viewer.html。審查全文 `docs/analysis-review-codex.md`、`docs/analysis-review-opus.md`。覆寫確認已有中英文（i18n key `overwrite_confirm`）。PR #1 已合併。早期 pywebview 那批已先推到 `origin/main`（`6849055`）。**待決**：Windows 11 實機驗收（`HANDOFF_WINDOWS.md` §6）。
 - **Codex 全專案審查（5 輪，合併前）**：修了 VISA 連線建構失敗沒關（`execute.py` `close_all`／`run_callback`）、關連線失敗或 `on_cleanup` 拋錯時漏關／漏還原、Viewer 校正快取被過期回應覆寫（cache epoch）、並行名額提早釋放、開檔／匯出同時進行錯亂（一次只跑一個）、匯出用到過期統計（最多重試 5 輪後放棄）、CSV 比對取樣進位改 half-up、檔頭搜尋上限 `DLOG_MAX_HEADER_BYTES`（1 MiB）。第 5 輪後剩的一點（統計請求失敗仍匯出）已修但**未再送 Codex 複審**。契約 `analysis-contract.md` 未同步：新常數 `DLOG_MAX_HEADER_BYTES`、`apiFetch` 多第 4 參數且回傳已讀完的 body（第 632 行 `/progress` 寫法）、開檔與 CSV 匯出互斥。
-- **合併後 Windows CI（2026-10-30 夜）**：
-  - `main` 合併後 Windows 兩個組合卡死近 3 小時（已取消）；macOS 3.11/3.13 有一個 gate 時間測試偶發失敗。
-  - 診斷分支 `ci/windows-diagnose`（PR #3，**未合併**）：CI 改 `pytest -v --timeout=120`（dev 加 `pytest-timeout`）；`test_activity_gate.py::test_finishing_rearms_and_fault_never_unlocks` 時間放寬；`test_analysis_integration.py` 兩個 selftest 測試補 `webview.renderer = "edgechromium"`（否則 win32 跳 MessageBox 卡死）；`.gitattributes` 對原版 HTML／`.dlog`／`.npy` 設 `-text`；parity 工具子程序強制 UTF-8；快取損壞測試先 `close_all()`；兩個「截短／刪除被 mmap 的檔案」測試在 win32 skip。最後一版 `25ae1ab`。
-  - 這一版修正**沒在 Windows CI 上驗過**：GitHub Actions 本月額度用完（Windows 750 分鐘、macOS 65 分鐘，換算約 2,228／2,000），新工作啟動即失敗（"recent account payments have failed or your spending limit needs to be increased"）。11/1 重置，或到 Billing 設 spending limit 後 `gh run rerun`。
-  - 上一輪（修前）Windows 的 5 失敗＋6 錯誤都判斷為測試在 Windows 的假設不成立（mmap 不能刪／截短、cp1252、CRLF），**沒看到主流程失敗**，但最後兩項堆疊沒看完，不能完全排除產品問題。
-  - 另有 PR #4（`feat/launchers`）：加 `N6705C-SEQ.bat`（Windows 雙擊，**未在 Windows 測**）；macOS 的 `N6705C-SEQ.command` 原本就有。PR #2 是本份 HANDOFF。
-  - 節省分鐘數的想法：CI 的 Windows 只留 3.13 一個組合。
+- **合併後 Windows CI（2026-10-31 已解決）**：
+  - 合併後 Windows 卡死、gate 時間測試偶發失敗，原因是測試在 Windows 的假設不成立（mmap 不能刪／截短、cp1252、CRLF、win32 MessageBox），沒有產品問題。PR #3 已修：CI 加 `pytest-timeout`、`.gitattributes` `-text`、selftest 補 `webview.renderer = "edgechromium"`、gate 時間測試放寬、兩個截短／刪除 mmap 檔的測試在 win32 skip。
+  - 專案改為公開 repo，Actions 不再受額度限制。PR #1–#4 全部合併（#4 加 `N6705C-SEQ.bat`），六個測試組合與 `build-windows` 全過。
+  - 仍待：Windows 11 實機驗收（`HANDOFF_WINDOWS.md` §6）、`N6705C-SEQ.bat` 在 Windows 實測。
