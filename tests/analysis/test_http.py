@@ -240,6 +240,83 @@ def test_stale_gen_409_and_after_leave_423(live):
     assert live.j("GET", "/prefs")[0] == 423
 
 
+def test_progress(live, tmp_path):
+    core, started, go = live.core, threading.Event(), threading.Event()
+    orig = core.open_handle
+
+    def slow(path, cache_root, *, cancel=None, progress=None):
+        for st, pct in (("parse", 42.7), ("parse", -1), ("parse", 150)):
+            progress(st, pct)
+            if pct == 42.7:
+                started.set()
+                assert go.wait(5)
+        if str(path).endswith("fail.dlog"):
+            raise core.DlogFormatError("x")
+        return orig(path, cache_root, cancel=cancel)
+
+    core.open_handle = slow
+    p = tmp_path / "a.dlog"
+    p.write_bytes(b"x")
+    g = live.grant("open", "dlog", p)
+    out = []
+    t = threading.Thread(target=lambda: out.append(live.req(
+        "POST", "/open", {"grant": g}, headers={c.HEADER_REQ: "op1"})[0]))
+    t.start()
+    assert started.wait(5)
+    # fill all JOB slots is not needed: /progress is CONTROL (see 503 test); check values here
+    assert live.j("GET", "/progress?req=op1") == (200, {"ok": True, "stage": "parse", "pct": 42})
+    assert live.j("GET", "/progress?req=nosuch") == (200, {"ok": False})
+    assert live.j("GET", "/progress?req=op1", gen=live.gen + 1)[0] == 409
+    assert live.j("GET", "/progress")[0] == 400
+    assert live.j("GET", "/progress?req=bad%20id")[0] == 400
+    assert live.j("GET", "/progress?req=op1", token=False)[0] == 403
+    go.set()
+    t.join(5)
+    assert out == [200]
+    assert live.j("GET", "/progress?req=op1") == (200, {"ok": False})
+    # failure leaves no residue; open without req never registers
+    p2 = tmp_path / "fail.dlog"
+    p2.write_bytes(b"x")
+    assert live.req("POST", "/open", {"grant": live.grant("open", "dlog", p2)},
+                    headers={c.HEADER_REQ: "op2"})[0] == 422
+    assert live.j("GET", "/progress?req=op2") == (200, {"ok": False})
+    core.open_handle = orig
+
+
+def test_progress_clamp_and_not_job_limited(live, tmp_path):
+    seen, stop, n = {}, threading.Event(), c.MAX_CONCURRENT_JOBS
+    orig = live.core.open_handle
+
+    def blk(path, cache_root, *, cancel=None, progress=None):
+        r = os.path.basename(str(path))[0]
+        for pct in (-1, 150):
+            progress("lod", pct)
+            seen.setdefault(r, []).append(live.j("GET", "/progress?req=op" + r)[1]["pct"])
+        assert stop.wait(10)
+        return orig(path, cache_root, cancel=cancel)
+
+    live.core.open_handle = blk
+    ts = []
+    for i in range(n):
+        p = tmp_path / ("%d.dlog" % i)
+        p.write_bytes(b"x")
+        g = live.grant("open", "dlog", p)
+        ts.append(threading.Thread(target=lambda g=g, i=i: live.req(
+            "POST", "/open", {"grant": g}, headers={c.HEADER_REQ: "op%d" % i})))
+        ts[-1].start()
+    for _ in range(250):
+        if len(seen) == n and all(len(v) == 2 for v in seen.values()):
+            break
+        time.sleep(0.02)
+    assert all(v == [0, 100] for v in seen.values()) and len(seen) == n
+    assert live.j("GET", "/prefs")[0] == 503
+    assert live.j("GET", "/progress?req=op0") == (200, {"ok": True, "stage": "lod", "pct": 100})
+    stop.set()
+    for t in ts:
+        t.join(5)
+    live.core.open_handle = orig
+
+
 # ---------------------------------------------------------------- handles and params
 
 def test_open_release_and_resources(live):

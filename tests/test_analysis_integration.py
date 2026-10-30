@@ -231,13 +231,24 @@ def test_selftest_with_real_server(api, monkeypatch):
     codes = []
     monkeypatch.setattr(webgui.os, "_exit", codes.append)
 
+    states = []
+
     def start(func, **kwargs):
+        # What App.selftest does (contract 1.7): enter -> (Viewer ready) -> leave -> same-gen idle.
+        assert api.config()[contracts.CONFIG_KEY_SELFTEST] is True
+        r, viewer = enter(api)
+        assert viewer.req("GET", "/viewer.html")[0] == 200
+        assert api.analysis_leave(r["gen"]) == {"ok": True, "gen": r["gen"]}
+        wait_state(api, "idle")
+        states.extend(e[1]["state"] for e in api.poll() if e[0] == "state")
         api.selftest_report(True, "")
         func()
 
     monkeypatch.setattr(webview, "start", start)
     webgui.main()
     assert codes == [0] and window.destroyed == 1
+    assert states[0] == "idle" and states[1] == "analysis" and states[-1] == "idle" and "power" not in states
+    assert set(states) <= {"idle", "analysis", "draining"}
     assert api._server is not None and api._shutdown_done
 
 

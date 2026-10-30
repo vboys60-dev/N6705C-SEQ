@@ -10,6 +10,7 @@ import pytest
 import webview
 
 from n6705c_seq import form, i18n, webgui
+from n6705c_seq.analysis import contracts
 
 
 def _legacy_events(api):
@@ -96,7 +97,9 @@ def test_dialog_extension_and_confirmation(core):
 
 
 def test_config_and_language(core):
-    assert core.config() == {"resources": [], "demo": True, "lang": "zh", "analysis_enabled": False}
+    assert core.config() == {"resources": [], "demo": True, "lang": "zh",
+                             "analysis_enabled": False, "selftest_mode": False}
+    assert set(core.config()) == set(contracts.CONFIG_KEYS)
     core._save_config(["address"], False)
     core.set_lang("en")
     assert core._window.title == i18n.tr("title")
@@ -105,6 +108,10 @@ def test_config_and_language(core):
     config = core.config()
     config["resources"].append("other")
     assert core.config()["resources"] == ["address"]
+    core._selftest = True
+    assert core.config()[contracts.CONFIG_KEY_SELFTEST] is True
+    core._save_config(["address"], False)
+    assert json.loads(core._config_path.read_text()) == {"resources": ["address"], "demo": False, "lang": "en"}
     with pytest.raises(TypeError):
         core.set_lang(None)
 
@@ -210,6 +217,8 @@ def test_main_with_fake_window(core, monkeypatch, platform, renderer, selftest, 
     monkeypatch.setattr(webgui.os, "_exit", exit_process)
 
     def create_window(title, url, **kwargs):
+        assert kwargs["js_api"].config()[contracts.CONFIG_KEY_SELFTEST] is selftest
+        assert set(kwargs["js_api"].config()) == set(contracts.CONFIG_KEYS)
         created.append((title, url, kwargs))
         return window
 
@@ -276,4 +285,5 @@ def test_config_writes_are_serialized_without_blocking_reserve(core, monkeypatch
         for job in jobs:
             job.result(timeout=3)
     assert maximum == 1
-    assert json.loads(core._config_path.read_text()) == {k: v for k, v in core.config().items() if k != "analysis_enabled"}
+    assert json.loads(core._config_path.read_text()) == {
+        k: v for k, v in core.config().items() if k not in ("analysis_enabled", "selftest_mode")}

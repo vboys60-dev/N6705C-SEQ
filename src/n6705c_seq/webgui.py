@@ -228,7 +228,8 @@ class _Core:
 
     def config(self) -> dict:
         return {**self._config, "resources": list(self._config["resources"]),
-                contracts.CONFIG_KEY_ANALYSIS: contracts.ANALYSIS_ENABLED}
+                contracts.CONFIG_KEY_ANALYSIS: contracts.ANALYSIS_ENABLED,
+                contracts.CONFIG_KEY_SELFTEST: self._selftest}
 
     def strings(self) -> dict:
         return {"lang": i18n.lang, "strings": {key: list(pair) for key, pair in i18n.STRINGS.items()}}
@@ -293,7 +294,7 @@ def main() -> int:
                     server_ok = False
             else:
                 server_ok = True
-            api._selftest_done.wait(30)
+            api._selftest_done.wait(contracts.SELFTEST_REPORT_TIMEOUT_S)
             api._selftest_ok = api._selftest_ok and server_ok
             api._window.destroy()
 

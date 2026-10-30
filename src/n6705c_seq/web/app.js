@@ -142,6 +142,7 @@
       ready = true;
       for (const tab of tabs) await tab.init();
       emit("ready");
+      if (config.selftest_mode === true && App.selftest) await App.selftest();
       await App.api.selftest_report(true, "");
     } catch (error) {
       await App.api.selftest_report(false, String(error?.message ?? error));

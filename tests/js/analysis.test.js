@@ -22,7 +22,7 @@ class El {
   click() { return Promise.all((this.listeners.click || []).map(fn => fn())); }
 }
 
-function setup({ enabled = true, api = {} } = {}) {
+function setup({ enabled = true, selftest = false, api = {} } = {}) {
   const els = {};
   const add = (id, props) => (els[id] = new El(id, props));
   for (const id of ['result-title', 'result-text', 'btn-lang', 'btn-off', 'btn-test', 'res-0', 'res-1', 'chk-demo',
@@ -43,7 +43,7 @@ function setup({ enabled = true, api = {} } = {}) {
   const bridge = {
     poll: async () => queue.splice(0),
     strings: async () => ({ lang: 'en', strings: {} }),
-    config: async () => ({ resources: ['', ''], demo: false, lang: 'en', analysis_enabled: enabled }),
+    config: async () => ({ resources: ['', ''], demo: false, lang: 'en', analysis_enabled: enabled, selftest_mode: selftest }),
     selftest_report: async (ok, detail) => calls.push(['selftest', ok, detail]),
     set_lang: async () => {},
     analysis_enter: async () => { calls.push(['enter']); gen += 1; return { ok: true, gen, url: `${VIEWER}/viewer.html#t=tok&gen=${gen}&lang=en` }; },
@@ -52,8 +52,12 @@ function setup({ enabled = true, api = {} } = {}) {
     analysis_save_path: async (g, purpose, suggested) => { calls.push(['save', g, purpose, suggested]); return { ok: true, gen: g, grant: 'S', name: suggested }; },
     ...api,
   };
+  // Every bridge method the shell touches, to check the selftest allow-list (contract 1.7.3).
+  const touched = new Set();
+  const proxy = new Proxy(bridge, { get(target, key) { touched.add(key); return target[key]; } });
   const winListeners = {};
   const timers = [];
+  let timerId = 0;
   const ctx = {
     console, URL, Promise, setImmediate,
     location: { origin: SHELL },
@@ -64,19 +68,22 @@ function setup({ enabled = true, api = {} } = {}) {
         s.startsWith('#') ? [els[s.slice(1)]].filter(Boolean) : s === "[data-action='run']" ? [run] : []),
     },
     addEventListener: (type, fn) => (winListeners[type] ||= []).push(fn),
-    setTimeout: fn => timers.push(fn),
-    clearTimeout: () => {},
-    pywebview: { api: bridge },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, id: ++timerId }); return timerId; },
+    clearTimeout: id => { const i = timers.findIndex(x => x.id === id); if (i >= 0) timers.splice(i, 1); },
+    pywebview: { api: proxy },
   };
   ctx.window = ctx;
   vm.createContext(ctx);
   for (const name of ['app.js', 'analysis.js']) vm.runInContext(fs.readFileSync(path.join(WEB, name), 'utf8'), ctx, { filename: name });
+  const take = async ms => { const i = timers.findIndex(x => x.ms === ms); timers.splice(i, 1)[0].fn(); await flush(); };
   const fire = (type, event) => Promise.all((winListeners[type] || []).map(fn => fn(event)));
   return {
-    ctx, els, run, results, posts, calls, queue, viewerWindow,
+    ctx, els, run, results, posts, calls, queue, viewerWindow, touched,
+    fire, timers,
     App: ctx.App,
     async start() { await fire('pywebviewready'); await flush(); },
-    async poll(...events) { queue.push(...events); timers.shift()(); await flush(); },
+    async poll(...events) { queue.push(...events); await take(100); },
+    async timeout() { await take(10000); },
     async message(data, { source = viewerWindow, origin = VIEWER } = {}) { fire('message', { data, source, origin }); await flush(); },
   };
 }
@@ -206,4 +213,76 @@ test('lang change is forwarded to the loaded viewer only', async () => {
   await t.els['tab-analysis'].click();
   await t.els['btn-lang'].click();
   assert.deepEqual(t.posts, [[{ type: 'lang', lang: 'en', v: 1, gen: 1 }, VIEWER]]);
+});
+
+test('save_request purpose csv is forwarded to analysis_save_path and answered', async () => {
+  const t = setup();
+  await t.start();
+  await t.els['tab-analysis'].click();
+  await t.message({ v: 1, gen: 1, type: 'save_request', id: 'r9', purpose: 'csv', suggested: 'out.csv' });
+  assert.deepEqual(t.calls.at(-1), ['save', 1, 'csv', 'out.csv']);
+  assert.deepEqual(t.posts, [[{ ok: true, gen: 1, grant: 'S', name: 'out.csv', type: 'save_result', id: 'r9', v: 1 }, VIEWER]]);
+});
+
+const ALLOWED = ['config', 'strings', 'poll', 'selftest_report', 'analysis_enter', 'analysis_leave'];
+const assertAllowed = t => {
+  const used = [...t.touched].filter(k => typeof k === 'string' && k !== 'then');
+  assert.deepEqual(used.filter(k => !ALLOWED.includes(k)), []);
+};
+// Starts without awaiting: the pywebviewready handler blocks inside App.selftest.
+const startSelftest = async t => { const done = t.fire('pywebviewready'); await flush(); return { done }; };
+
+test('selftest: enter, ready, leave, same-gen idle, then report ok; only allowed bridge calls', async () => {
+  const t = setup({ selftest: true });
+  const { done } = await startSelftest(t);
+  await t.poll(state('idle', 0, 0));
+  assert.deepEqual(t.calls, [['enter']]);
+  await t.message({ v: 1, gen: 1, type: 'ready' });
+  assert.deepEqual(t.calls, [['enter'], ['leave', 1]]);
+  await t.poll(state('analysis', 1, 1), state('draining', 1, 2), state('idle', 0, 1)); // stale seq dropped
+  assert.equal(t.calls.length, 2);
+  await t.poll(state('idle', 1, 3));
+  await done;
+  assert.deepEqual(t.calls, [['enter'], ['leave', 1], ['selftest', true, '']]);
+  assert.equal(t.App.currentTab, 'seq');
+  assertAllowed(t);
+});
+
+test('selftest: no ready -> timeout report, and leave was still called', async () => {
+  const t = setup({ selftest: true });
+  const { done } = await startSelftest(t);
+  await t.timeout();
+  await done;
+  assert.deepEqual(t.calls.slice(0, 2), [['enter'], ['leave', 1]]);
+  const [, ok, detail] = t.calls.at(-1);
+  assert.equal(ok, false);
+  assert.match(detail, /ready/);
+  assert.equal(t.App.currentTab, 'seq');
+  assertAllowed(t);
+});
+
+test('selftest: leave never reaches idle -> leave timeout report', async () => {
+  const t = setup({ selftest: true });
+  const { done } = await startSelftest(t);
+  await t.message({ v: 1, gen: 1, type: 'ready' });
+  await t.timeout();
+  await done;
+  assert.deepEqual(t.calls.at(-1), ['selftest', false, 'leave timeout']);
+});
+
+test('selftest: denied enter -> report failure with the code', async () => {
+  const t = setup({ selftest: true, api: { analysis_enter: async () => ({ ok: false, code: 'power', error: 'busy' }) } });
+  await (await startSelftest(t)).done;
+  const [, ok, detail] = t.calls.at(-1);
+  assert.equal(ok, false);
+  assert.match(detail, /power/);
+  assertAllowed(t);
+});
+
+test('selftest_mode false or flag off: unchanged, only selftest_report(true)', async () => {
+  for (const opts of [{ selftest: false }, { selftest: true, enabled: false }]) {
+    const t = setup(opts);
+    await t.start();
+    assert.deepEqual(t.calls, [['selftest', true, '']]);
+  }
 });
