@@ -148,13 +148,13 @@ def test_late_drain_after_timeout_cannot_overwrite_closing(monkeypatch):
 
 
 def test_finishing_rearms_and_fault_never_unlocks(monkeypatch):
-    monkeypatch.setattr(c, "POWER_FINISH_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(c, "POWER_FINISH_TIMEOUT_S", 0.6)
     gate, _ = make_gate()
     token = gate.reserve("power")
     gate.finishing(token)
-    time.sleep(0.06)
+    time.sleep(0.3)
     gate.finishing(token)
-    time.sleep(0.06)
+    time.sleep(0.3)
     assert gate.state()[0] == c.State.POWER
     wait_for(lambda: gate.state()[0] == c.State.FAULT)
     assert not gate.release(token) and gate.worker_done

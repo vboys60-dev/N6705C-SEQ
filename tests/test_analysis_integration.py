@@ -226,6 +226,7 @@ def test_selftest_with_real_server(api, monkeypatch):
     monkeypatch.setattr(webgui.sys, "argv", ["webgui", "--selftest"])
     monkeypatch.setattr(webgui, "Api", lambda: api)
     monkeypatch.setattr(webview, "screens", [])
+    monkeypatch.setattr(webview, "renderer", "edgechromium")  # else win32 shows a blocking MessageBox
     monkeypatch.setattr(webview, "create_window", lambda *a, **k: window)
     monkeypatch.setattr(api._selftest_done, "wait", lambda seconds: True)
     codes = []
@@ -258,6 +259,7 @@ def test_selftest_fails_when_server_check_fails(api, monkeypatch):
     monkeypatch.setattr(webgui.sys, "argv", ["webgui", "--selftest"])
     monkeypatch.setattr(webgui, "Api", lambda: api)
     monkeypatch.setattr(webview, "screens", [])
+    monkeypatch.setattr(webview, "renderer", "edgechromium")  # else win32 shows a blocking MessageBox
     monkeypatch.setattr(webview, "create_window", lambda *a, **k: window)
     monkeypatch.setattr(api._selftest_done, "wait", lambda seconds: True)
     api._ensure_analysis_server()
