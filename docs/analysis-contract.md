@@ -1,6 +1,6 @@
 # 離線分析分頁｜T0 介面契約（v1）
 
-日期：2026-10-29（修訂：Codex 第 7 輪 9 項必修；T1/T2 後 5 項：`_finishing` 範圍、legacy 測試、T4 HTTP 原檢查、CSV 容差、未搬工具；Codex 第 8 輪 5 項：`_untimed` 原子回傳 bool、主工作 try/finally 重新計時、主工作內部 I/O 例外明列、取代報告 §5 計時起點、`/release` 例外；T3/T4 後 2 項：handle 引用交接（§6.5）、來源檔外部截短已知風險（§6.6））　擁有者：T0　來源：`報告分析升級版/升級報告.md`（§5、§7、§9）
+日期：2026-10-29（修訂：Codex 第 7 輪 9 項必修；T1/T2 後 5 項：`_finishing` 範圍、legacy 測試、T4 HTTP 原檢查、CSV 容差、未搬工具；Codex 第 8 輪 5 項：`_untimed` 原子回傳 bool、主工作 try/finally 重新計時、主工作內部 I/O 例外明列、取代報告 §5 計時起點、`/release` 例外；T3/T4 後 2 項：handle 引用交接（§6.5）、來源檔外部截短已知風險（§6.6）；2026-10-30 T0–T6 後 4 項：Viewer `alert()` 改 toast、`--selftest` 分析往返（§1.7）、`/open` 進度 `GET /progress`（§3.3）、主工作內部收尾 `on_cleanup`（§1.3，待使用者拍板））　擁有者：T0　來源：`報告分析升級版/升級報告.md`（§5、§7、§9）
 
 本文件與 `src/n6705c_seq/analysis/contracts.py` 是**同一份契約的兩半**：數字、列舉、型別以 `contracts.py` 為準（程式直接 import），語意與流程以本文件為準。兩者衝突時，回報 T0 修正，不得各自解讀。
 
@@ -72,12 +72,27 @@ v1 電源工作沒有外部停止訊號。計時範圍以 §1.4 呼叫點表為�
       self._finishing(token)        # 正常返回或拋例外，離開即重新計時
   ```
   之後的結果處理、`except` 分支、`finally` 清理全部在計時內。
-- **主工作內部的 I/O 一併不計時（明列例外）**：這三個函式在 `execute.py`／`e36441a.py` 內自己做的連線、強制關輸出、關連線，worker 無法插入 `_finishing`，所以和主工作一起停表：
+- **主工作內部的 I/O 一併不計時（明列例外；T2 後續修補 2b 完成後，其中的收尾部分改由下方 `on_cleanup` 計時）**：這三個函式在 `execute.py`／`e36441a.py` 內自己做的連線、強制關輸出、關連線，worker 無法插入 `_finishing`，所以和主工作一起停表：
   - `run_resources`：內部 `_sessions`（開 VISA 連線，`e36441a.py:282`）、`run_rows` 內的 `_restore`（關輸出，`e36441a.py:228、233`）、`finally` 內 `t.close()`（`e36441a.py:285–287`）。
   - `run_plan`／`run_functions`：內部 `outputs_off(group)`（`execute.py:290、295`）。
-  - 依據：這些模組不在 T2 可改清單，且屬待硬體驗證的路徑，v1 不改；每次儀器 I/O 仍受 VISA 逾時 `timeout_ms=10_000` 限制。卡在 VISA 逾時之外（驅動層無回應）時會停在 `power`，此為已知上限。
+  - 依據（現況）：每次儀器 I/O 受 VISA 逾時 `timeout_ms=10_000` 限制。卡在 VISA 逾時之外（驅動層無回應）時會停在 `power`，此為已知上限。
   - 主工作之外、由 worker 自己做的收尾（`_work` 的 `_seq_close(group)`、`_list_work` 的 `inst.close()` 迴圈）都在計時內，由 worker 的 `finally` 呼叫 `_finishing`（§1.4 表）。
-  - ponytail: 升級路徑＝三個主工作加 keyword-only `on_cleanup: Callable[[], None] | None = None`，在內部收尾前呼叫，worker 傳 `lambda: self._finishing(token)`；要做時回報 T0 改契約。
+- **`on_cleanup` 升級（T2 後續修補 2；T0 建議做，〔待使用者拍板〕）**：把上一點的「內部收尾」納入計時，主工作本體仍不計時。
+  - 簽名（全部 keyword-only、預設 `None`；`None` 時行為與現況逐位相同，`cli.py`、`scripts/hw_list_check.py`、既有測試不用改）：
+    `e36441a.run_rows(..., on_cleanup=None)`、`e36441a.run_resources(..., on_cleanup=None)`、`execute.run_functions(..., on_cleanup=None)`、`execute.run_plan(..., on_cleanup=None)`（原樣轉給 `run_functions`）。型別 `Callable[[], None] | None`。
+  - 呼叫點（只在收尾區間；呼叫一次即重新起算 60 s，重複呼叫無害）：
+    | 函式 | 位置（761aef0） | 在此之前呼叫 `on_cleanup()` |
+    |---|---|---|
+    | `run_functions` | `if not keep_on:` 內 `outputs_off(group)`（`execute.py:290`） | 正常結束關輸出 |
+    | `run_functions` | `except BaseException` 內 `outputs_off(group)`（`execute.py:295`） | 例外關輸出 |
+    | `run_rows` | `except BaseException` 內 `_restore`（`e36441a.py:228`） | 例外關輸出 |
+    | `run_rows` | `if not hold_dc:` 的 `_restore`（`e36441a.py:233`） | 正常結束關輸出 |
+    | `run_resources` | `finally` 的 `t.close()` 迴圈（`e36441a.py:285–287`）；同時把 `on_cleanup` 轉給 `run_rows` | 關 VISA 連線 |
+  - 規則：`on_cleanup` 不得丟例外、不得阻塞（worker 傳的 `_finishing` 只拿 gate 鎖）；函式內部不得在其他位置呼叫它（主工作期間不得重新計時，否則 60 s 會誤判長序列）。
+  - worker（`web_seq._work` 兩分支、`web_list._list_work`）一律傳 `on_cleanup=lambda: self._finishing(token)`；§1.3 固定寫法（`_untimed` → `try/finally: _finishing`）不變。
+  - 升級後仍不計時、維持已知上限：主工作本體（寫入設定、觸發、`_wait`、`time.sleep`、擷取 `_fetch`）、`run_resources` 開頭的 `_sessions`（開 VISA，`e36441a.py:282`；在主工作前、無收尾可掛）。皆受 VISA 逾時保護，驅動層無回應時停在 `power`。
+  - 風險評估：純加 keyword 參數＋5 個呼叫點，`None` 路徑無行為變化；最壞情況是收尾在儀器無回應時多個 10 s VISA 逾時累積超過 60 s → `fault`（保守方向：輸出無法確認已關，本來就該要求重開）。收益是消除「收尾卡住永遠停在 `power`」。結論：建議做。
+  - 使用者不同意時的回退：本段整段不做，`execute.py`／`e36441a.py` 不改，上一點「主工作內部 I/O 不計時」即 v1 已知上限。
 - 確認對話框（worker 啟動前，在 js_api 執行緒）不計時。
 - 其餘 worker 段落（偵測 `detect_model`、連線 `connect_group`、`synth.to_functions`、結果處理、`_seq_close`／`inst.close()`）都在計時內，卡住最多 60 s 後進 `fault`，不會永久停在 `power`（報告 §5「收尾逾時」）。
 
@@ -156,9 +171,26 @@ App.state = "idle"; App.gen = 0; App.stateSeq = -1; App.busy = false; App.powerA
 
 ### 1.6 `config()`
 
-回傳 `{"resources", "demo", "lang", "analysis_enabled": contracts.ANALYSIS_ENABLED}`（鍵名 `CONFIG_KEY_ANALYSIS`）。不寫入 SEQ config 檔；`form.load/save_config` 不動。JS 只讀不定義。`tests/test_webgui.py:90` 由 T2 改為四鍵。
+回傳 `{"resources", "demo", "lang", "analysis_enabled": contracts.ANALYSIS_ENABLED, "selftest_mode": <bool>}`，鍵集合＝`contracts.CONFIG_KEYS`（鍵名常數 `CONFIG_KEY_ANALYSIS`、`CONFIG_KEY_SELFTEST`）。`selftest_mode`＝`self._selftest`（`--selftest` 時 True，否則 False）。後兩鍵都不寫入 SEQ config 檔；`form.load/save_config` 不動。JS 只讀不定義。`tests/test_webgui.py` 的 config 斷言（`:99` 精確 dict、`:279` 存檔排除鍵）由 T2 改為五鍵／排除 `analysis_enabled`、`selftest_mode` 兩鍵，並加一案 `set(config()) == set(CONFIG_KEYS)`。
 
 `ANALYSIS_ENABLED=False` 時：分頁不顯示、`analysis_enter` 回 `{ok:false, code:"disabled"}`、server 不啟動；仲裁器其餘行為照常。
+
+### 1.7 `--selftest` 往返
+
+目的：打包後一次 `--selftest` 就證明「外殼→`analysis_enter`→Viewer 載入並送 `ready`→`analysis_leave`→回 `idle`」整條真的通（現況 JS 一初始化完就回報成功，Python 端只做 `server.self_check()`）。
+
+Python（T2，`webgui.py`）：`config()` 帶 `selftest_mode`（§1.6）；`started()` 的等待秒數改用 `contracts.SELFTEST_REPORT_TIMEOUT_S`（30 s，值不變）；`server.self_check()` 併入結果的現況保留。其餘不變。
+
+JS（T6）：
+1. `app.js`：所有分頁 `init()` 完、`emit("ready")` 之後、`selftest_report` 之前：`if (config.selftest_mode === true && App.selftest) await App.selftest()`；其拋出的錯誤走既有 `catch` → `selftest_report(false, 訊息)`。`selftest_mode` 不為 true 時流程與現況完全相同。
+2. `analysis.js` 定義 `App.selftest`（只在 `analysis_enabled === true` 時定義；旗標關則不定義，selftest 等同現況）：
+   1. `App.selectTab("analysis")`（走正常 `enter`）；enter 失敗 → 丟錯（訊息含 `code`）。
+   2. 等本世代 Viewer 的 `ready`（通過 §4.2 驗證的那一則），逾時 `SELFTEST_STEP_TIMEOUT_MS`（10 s）→ 丟 `"viewer ready timeout"`。
+   3. `App.selectTab("seq")`（走正常 `leave`）。
+   4. 等 `state` 事件 `state === "idle"` 且 `gen ===` 步驟 1 的 gen，逾時同上 → 丟 `"leave timeout"`。
+   5. 正常返回 → `app.js` 呼叫 `selftest_report(true, "")`。兩段逾時合計 20 s < 30 s，Python 端不會先逾時。
+   6. 步驟 1 成功後任何失敗，丟錯前一律先 `App.selectTab("seq")`（`finally`），不得把仲裁器留在 `analysis`。
+3. **selftest 模式下不得啟動任何真實儀器動作**：JS 只可呼叫 `contracts.SELFTEST_JS_API_ALLOWED`（`config`、`strings`、`poll`、`selftest_report`、`analysis_enter`、`analysis_leave`）；不得呼叫 `seq_run`、`test_connection`、`all_off`、`list_run`、`analysis_open_path`、`analysis_save_path`（後兩者會開原生對話框卡住 selftest）。Viewer 本身不會自行開檔，所以往返中不產生 `/open`；仲裁器在整個往返中只經過 `idle→analysis→draining→idle`，從不進 `power`。
 
 ---
 
@@ -198,7 +230,7 @@ def start_server(gate: GateForServer, *, cache_root: Path | None = None,
 - `token = secrets.token_urlsafe(32)`，每次啟動新產生；`origin = f"http://127.0.0.1:{port}"`。
 - `cache_root`/`prefs_path` 缺省用 `storage.default_cache_root()`／`storage.default_prefs_path()`；啟動時 `storage.sweep_tmp(cache_root)`。
 - `ServerHandle`：`origin`、`token`、`url(gen, lang)`、`release_resources() -> bool`、`self_check() -> bool`（真 HTTP `GET /health`）、`shutdown(timeout)`。
-- webgui 接線（T2）：`gate.set_release_resources(server.release_resources)`；`--selftest` 時若旗標開，呼叫 `server.self_check()` 併入結果（T2 用假 server 測，真 server 整合驗收在 T6）。
+- webgui 接線（T2）：`gate.set_release_resources(server.release_resources)`；`--selftest` 時若旗標開，呼叫 `server.self_check()` 併入結果（T2 用假 server 測，真 server 整合驗收在 T6）；JS 端分析往返見 §1.7。
 
 ### 3.2 檢查順序（每個請求）
 
@@ -209,7 +241,7 @@ def start_server(gate: GateForServer, *, cache_root: Path | None = None,
 5. `X-Analysis-Gen` 缺或非整數 → 400 `bad_request`；`X-Analysis-Req`（選填）不符 `REQ_ID_PATTERN` → 400。
 6. 依 `ROUTES` 的 `RouteKind`：
    - `JOB`：`job = gate.job_begin(gen, req)`；`None` 時：`gate.state()[0] != analysis` → 423 `locked`，否則 409 `stale_gen`。進行中 JOB 超過 `MAX_CONCURRENT_JOBS`=4 → 503 `overloaded`（立刻 `job_end`）。
-   - `CONTROL`（`/cancel`、`/release`）：**不呼叫 `job_begin`、不計入上限、永不回 503**；以 `gate.state()` 驗 `(analysis, gen)`，不符同樣 423／409。處理只做 `gate.cancel_req` 或 `core.release_handle`，不得做 I/O 或等待 job。保留容量的依據：JOB 上限 4 < 瀏覽器每 host 連線上限 6（Chromium／WebView2／WKWebView），所以 4 個長工作占滿時 `/cancel` 仍有連線可用；`ThreadingHTTPServer` 每連線一條執行緒，伺服端無執行緒上限。
+   - `CONTROL`（`/cancel`、`/release`、`/progress`）：**不呼叫 `job_begin`、不計入上限、永不回 503**；以 `gate.state()` 驗 `(analysis, gen)`，不符同樣 423／409。處理只做 `gate.cancel_req`、`core.release_handle` 或讀進度表（`/progress`），不得做 I/O 或等待 job。保留容量的依據：JOB 上限 4 < 瀏覽器每 host 連線上限 6（Chromium／WebView2／WKWebView），所以 4 個長工作占滿時 `/cancel` 仍有連線可用；`ThreadingHTTPServer` 每連線一條執行緒，伺服端無執行緒上限。
 7. 參數檢查 → 400 / 413。
 8. 執行；JOB 路由 `finally: gate.job_end(job)`。例外對應：`AnalysisCancelled`→409 `cancelled`；`LimitExceeded`→413；`DlogFormatError`→422 `format`；未知 handle (`KeyError`)→404 `handle`；`SourceChanged`→409 `source_changed`；`CacheWriteError`→507 `storage`；其他→500 `internal`（記 log，不回 traceback）。
 
@@ -235,6 +267,12 @@ def start_server(gate: GateForServer, *, cache_root: Path | None = None,
 | GET `/prefs` | — | prefs 物件（缺檔或損壞回 `PREFS_DEFAULT`） | — |
 | POST `/prefs` | JSON 完整 prefs（≤64 KiB） | `{ok:true}` | 結構不符 → 400 |
 | POST `/cancel` | JSON `{req}`（CONTROL，不受 job 上限） | `{ok: <是否找到>}` | — |
+| GET `/progress` | `req`（CONTROL；＝進行中 `/open` 的 `X-Analysis-Req`） | `ProgressResult`：`{ok:true, stage, pct}`；不認得 → 200 `{ok:false}` | `req` 缺或不符 `REQ_ID_PATTERN` → 400 |
+
+**`/open` 進度（`GET /progress`）**：沿用 `X-Analysis-Req`，不新增標頭、不改 `/open` 回應格式、不新增錯誤碼。
+- server（T4）：`/open` 帶 `X-Analysis-Req` 時，開始前在程序內表 `progress[(gen, req)] = ("hash", 0)`，以 `progress=` 回呼（`core.open_handle` 現有參數）更新 `(stage, int(clamp(pct, 0, 100)))`；`/open` 的 `finally`（`job_end` 之前）刪除該鍵。沒帶 `req` 的 `/open` 不登記。表與回呼只用一把程序內小鎖、不做 I/O（回呼不得丟例外，否則會打斷 core）。
+- `GET /progress?req=…`：以請求的 `X-Analysis-Gen` 與 `req` 查表，回 `{ok:true, stage, pct}`；查不到（尚未開始、已結束、別的世代、不是 `/open`）→ `{ok:false}`，**不回 404**（輪詢與 `/open` 結束本來就會競態）。`stage ∈ PROGRESS_STAGES`（`hash`→`parse`→`lod`，快取命中時只有 `hash`），`pct` 是該 stage 內的 0–100。
+- Viewer（T5）：`/open` 送出後每 `PROGRESS_POLL_MS`（300 ms）以 CONTROL 方式（不佔 `JOB_SLOTS`）`GET /progress?req=<同一 id>`，`ok:true` 時更新進度列（stage 標籤＋pct；`hash` 用新增的 Viewer 字典鍵）；`/open` 一結束（成功、失敗、取消）立即停止輪詢並隱藏進度列。輪詢本身的錯誤一律忽略（不 toast）。
 
 - JSON body 上限 `MAX_JSON_BODY_BYTES`=64 KiB，超過 413。
 - CSV 欄位標題、格式、行尾、聲道缺欄留空規則與舊 `dlog_server._handle_export_csv` 完全相同（常數 `CSV_TITLE_LINE`、`CSV_LABEL_FMT`、`CSV_KIND_WORD`；欄位物件 `CsvColumn`：`missing` 預設 False，該來源 `meta.fields` 沒記錄此欄（P 需 V、I 都有）即為 True、整欄留空）；`cols` 有 `c:` 但缺 `hc` → 400；`name` 參數取消（檔名由對話框決定）。
@@ -528,6 +566,16 @@ RSS 預算算式：`2 × 原始 V/I 位元組（來源 memmap＋快取 memmap �
     4. **競態**：計時器先到期轉 `fault` 後 worker 才呼叫 `_untimed` → 回 False，且主工作（以假函式計數）**未被呼叫**、清理（關連線假物件）仍執行、`_release` 回 False、狀態維持 `fault`。反向：`_untimed` 成功後舊計時器到期不轉 `fault`。
     5. **返回後重新計時**：主工作正常返回後，結果處理卡住（以 monkeypatch 讓 `_seq_result`／`_emit` 或 `_seq_close`／`inst.close()` 阻塞）→ 收尾逾時後進 `fault`；主工作**拋例外**後 `except` 分支卡住 → 同樣進 `fault`。三個主工作各一案（E36441A 分支沒有 `_seq_close`，以結果處理卡住驗）。
     6. 主工作後的 `_finishing` 重新計時仍生效；`_finishing` 在 `fault`／非持有者時無作用。
+- **T2 後續修補 2（761aef0 後；2a 可直接做，2b 待使用者拍板）**：
+  - 可改（在上列之外加）：2a 無新增檔；2b 加 `src/n6705c_seq/execute.py`、`src/n6705c_seq/e36441a.py`、`tests/test_execute.py`、`tests/test_e36441a.py`。`cli.py`、`scripts/**` 不改。
+  - **2a `--selftest` 旗標（§1.6、§1.7）**：`config()` 加 `contracts.CONFIG_KEY_SELFTEST: self._selftest`；`main()` 的 `api._selftest_done.wait(30)` 改 `wait(contracts.SELFTEST_REPORT_TIMEOUT_S)`。改 `tests/test_webgui.py`：`:99` 精確 dict 加 `"selftest_mode": False`；`:279` 排除鍵加 `selftest_mode`；`test_main_with_fake_window` 的 `waits` 期望值仍為 `[30]`。
+    驗收：`set(api.config()) == set(contracts.CONFIG_KEYS)`；`--selftest` 時 `config()["selftest_mode"] is True`、否則 False；存檔 JSON 不含 `selftest_mode`、`analysis_enabled`；既有 selftest 測試全綠。
+  - **2b `on_cleanup`（§1.3）**：照 §1.3「`on_cleanup` 升級」的簽名與 5 個呼叫點改 `execute.py`、`e36441a.py`；`web_seq._work` 兩分支、`web_list._list_work` 傳 `on_cleanup=lambda: self._finishing(token)`。
+    做法要點：只加參數與呼叫，不搬動既有語句順序；`run_plan` 只轉傳；`on_cleanup is None` 時不呼叫。
+    驗收：
+    1. `tests/test_execute.py`、`tests/test_e36441a.py`：以計數假函式驗 `on_cleanup` 恰在 `outputs_off`／`_restore`／`t.close()` 之前被呼叫（正常、例外兩路徑各一）；主工作期間（`_wait`、`time.sleep`、寫入命令）**未**被呼叫；`hold_dc`／`keep_on` 正常結束時 `run_rows`／`run_functions` 不呼叫（沒有收尾），`run_resources` 仍在關連線前呼叫一次。不傳 `on_cleanup` 時既有測試不改、全綠。
+    2. `tests/test_activity_web.py`（或 `test_web_seq.py`／`test_web_list.py`）以真 gate、`POWER_FINISH_TIMEOUT_S` monkeypatch 縮短：(a) 主工作本體（假 `_wait`／`time.sleep`）跑超過逾時 → **不**進 `fault`；(b) 主工作內部收尾卡住（monkeypatch `execute.outputs_off`、`e36441a._restore` 或 transport `close` 阻塞）→ 逾時後進 `fault`；三個主工作各一案。(b) 在 2b 之前應失敗（停在 `power`），就是本項要補的缺口。
+    3. `python -m pytest` 全綠；`tests/test_hw_*` 照舊需硬體才跑。
 
 ### T3（Codex）大檔核心
 - 可改：`src/n6705c_seq/analysis/core.py`（接手）、`src/n6705c_seq/analysis/storage.py`（新建）、`tests/analysis/test_core_legacy.py`（接手）、`tests/analysis/parity_tools/adapter.py`（接手）、`tests/analysis/parity_tools/test_parity.py`（接手，只改 CSV 比對為 §8 容差）、`tests/analysis/test_core.py`、`tests/analysis/test_storage.py`、`tests/analysis/test_memory.py`。
@@ -554,16 +602,31 @@ RSS 預算算式：`2 × 原始 V/I 位元組（來源 memmap＋快取 memmap �
   2. `_App` 加 `adopt(digest, entry)`：只在 `self.lock` 內 `held.setdefault(digest, []).append(entry)`，不呼叫 core。`hold` 不再有呼叫端，刪除。`unhold`／`release_all` 不變（現況已符 §6.5 規則 5、9）。
   3. `tests/analysis/test_http.py` 的 `StubCore` 補 `open_handle`（回 `(meta, blob, entry)` 且計數 +1）。
   4. 測試：§6.5 H4、H5、H6。
+- **T4 後續修補 2（761aef0 後：`/open` 進度）**：
+  - 可改：同上清單（`server.py`、`tests/analysis/test_server*.py`、`tests/analysis/test_http.py`）。T3 不需改（`open_handle` 已有 `progress=`，stage 名與 `PROGRESS_STAGES` 相同）。
+  - 做法：§3.3「`/open` 進度」。`_App` 加 `progress: dict[tuple[int, str], tuple[str, int]]` 與小鎖；`_r_open` 以 `job.req` 登記、把回呼傳給 `open_handle(..., progress=cb)`、`finally` 刪鍵；新路由 `_r_progress` 依 `ROUTES` 為 CONTROL。
+  - 驗收：(1) 包裝 `core.open_handle`（或用 `progress` 回呼阻塞的真 core）在 `parse` 階段停住時，同 gen `GET /progress?req=<id>` 回 `{ok:true, stage:"parse", pct∈0..100}`；放行並完成後同 req 回 `{ok:false}`；(2) 別的 gen 的 `X-Analysis-Gen` 查同 req → 409 `stale_gen`（CONTROL 的 gen 檢查）；未知 req → 200 `{ok:false}`；`req` 缺／含非法字元 → 400；無 token → 403；(3) 4 個 JOB 占滿時 `/progress` 仍 200（不回 503）；(4) `/open` 失敗或取消後表內無殘留鍵；(5) 回呼給 pct = -1、150、42.7 → 回應依序 0、100、42 或 43（`int` 夾值，整數即可）。
 
 ### T5（Sonnet）Viewer 改接
 - 可改：`src/n6705c_seq/analysis/web/viewer.html`（接手）、`src/n6705c_seq/analysis/web/shell_stub.html`（新建，`dev=True` 才送出）。
 - 依據：§3.3、§4、§6.4、§6.6（開檔進度旁的「請勿動來源檔」提示，Viewer 自己的字典）、§7.1。開檔（主檔、比對檔、Marker）改 `open_request`＋`/open`／`/import/markers`；PNG、HTML 報告、Marker JSON 改 `save_request`＋`/save`（帶 `X-Analysis-Purpose`＝該 `purpose`）；`/samples`／`/buckets` 依 §7.1 `use_buckets` 算式切換；CSV 改 `save_request`＋`/export/csv`（不再 `location.href`，可按取消呼叫 `/cancel`）；`localStorage` 全換 `/prefs`；語言只聽外殼。
 - 驗收：人眼確認清單 §1–3；四類匯出可存檔；`lang` 訊息即時切換；在 `shell_stub.html` 下 targetOrigin、source、gen 及 §4.2 類型層驗證生效（無 id 的 `lang` 被接受、錯型或錯方向訊息被丟）。
+- **T5 後續修補（761aef0 後）**：
+  - 可改：只有 `src/n6705c_seq/analysis/web/viewer.html`、`src/n6705c_seq/analysis/web/shell_stub.html`。
+  - **1. `alert()` 改 Viewer 自己的 `#toast`**。依據：pywebview 的 iframe 內原生 `alert()` 會阻塞或被 WebView 擋掉，且樣式與 SEQ 不一致。761aef0 共 8 處（`viewer.html:1801、1824、1865、2302、2414、3048、3147、3175`；動工前以 `grep -n "alert(" viewer.html` 重新確認，以 grep 結果為準）。做法：沿用既有 `flashMessage(msg)`（`viewer.html:3179`，寫 `#toast`），加選填第二參數 `ms`（預設 2200，行為不變）；8 處一律改 `flashMessage(<原訊息字串>, TOAST_ERROR_MS)`，`TOAST_ERROR_MS = 6000`（Viewer 內常數）。訊息文字、`T(...)` 鍵與 `err.code!=='cancelled'` 判斷原樣保留；不新增字典鍵、不新增 DOM。錯誤 toast 可加 `.toast.error` 樣式（同檔 CSS，非必要）。`shell_stub.html` 若有 `alert(` 一併改為頁內文字。
+    驗收：`grep -c "alert(" viewer.html shell_stub.html` 皆為 0（`confirm(`、`prompt(` 現況亦為 0，維持）；在 `shell_stub.html` 下觸發「未開主檔就開比對檔」（原 1824）與一次開檔失敗（例：給損壞 .dlog → 422），畫面出現 toast 約 6 s 後消失，頁面不阻塞；成功類訊息仍 2.2 s。
+  - **2. `/open` 進度條（§3.3「`/open` 進度」）**：`apiOpen` 移除現在寫死的 `onProgress('lod', 50)`／`('lod', 100)`，改為：送 `/open` 後以 `setInterval(PROGRESS_POLL_MS=300)` 對同一 `req` 呼叫 `apiFetch('/progress?req='+req, {}, true)`（CONTROL，不佔 slot），`ok:true` 時 `showParseProgress(stage, pct)`；`finally` 清掉 interval。`showParseProgress` 加 `hash` 的標籤（Viewer 字典新鍵，例 `progressHash`：「計算檔案指紋」／"Hashing"）；§6.6「請勿動來源檔」提示在 `hash`／`parse`／`lod` 三階段都顯示。輪詢錯誤靜默忽略。
+    驗收：在 `shell_stub.html`＋真 server 開 10M 合成檔（`make_big`，冷快取）時進度列依序顯示 hash→parse→lod 且數字遞增；快取命中時只見 hash 後即完成；按取消後輪詢停止（DevTools Network 不再有 `/progress`）；開檔完成後不再有 `/progress` 請求。
 
 ### T6（Opus）SEQ 外殼
 - 可改：`web/index.html`、`web/app.js`、`web/seq.js`、`web/list.js`、`web/style.css`、`web/seq.css`、`web/list.css`、`web/analysis.js`（新建，不得含中文）、`tests/js/**`、`tests/test_analysis_integration.py`。
 - 依據：§1.5、§1.6、§2、§4、§9。分頁清單改資料驅動（`analysis_enabled` 為真才出現 `analysis`）；`App.state/gen/powerAllowed`；按鈕改看 `powerAllowed`；缺 i18n key 回報 T0。
 - 驗收：切頁、關窗、故障、直接呼叫 bridge 都守互斥；晚到的初始 `idle` 或舊世代 `draining` 不清掉新 Viewer（§1.5 `seq`、§4.2 `gen`）；`ready` 不帶 id 仍被接受；旗標關閉時畫面與現況相同；`node --test tests/js` 全綠；真 server 的 `--selftest` 整合在此驗。
+- **T6 後續修補（761aef0 後；需 T2 修補 2a 先完成）**：
+  - 可改：`web/app.js`、`web/analysis.js`、`tests/js/**`、`tests/test_analysis_integration.py`（皆在原清單內）。
+  - **1. `--selftest` 往返（§1.7）**：`app.js` 在 `emit("ready")` 後、`selftest_report(true)` 前呼叫 `App.selftest`（條件見 §1.7）；`analysis.js` 實作 `App.selftest`（enter → 等 `ready` → leave → 等同 gen `idle`，兩段各 `SELFTEST_STEP_TIMEOUT_MS`=10000，JS 內常數，值同 contracts）。
+    驗收（`tests/js/analysis.test.js` 的假 DOM／假 api）：(a) `selftest_mode:true`＋旗標開：依序呼叫 `analysis_enter`、（送 `ready` 後）`analysis_leave`，推送同 gen `idle` 事件後才 `selftest_report(true, "")`；(b) 不送 `ready` → 逾時後 `selftest_report(false, …含 "ready"…)`，且仍有呼叫 `analysis_leave`（不得把仲裁器留在 `analysis`）；(c) enter 被拒 → `selftest_report(false, …)`；(d) 全程假 api 被呼叫的方法 ⊆ `SELFTEST_JS_API_ALLOWED`（以 Proxy 記錄；`seq_run`、`test_connection`、`all_off`、`list_run`、`analysis_open_path`、`analysis_save_path` 一次都沒被呼叫）；(e) `selftest_mode:false` 或旗標關 → 行為與現況相同（只呼叫 `selftest_report(true, "")`）。`tests/test_analysis_integration.py`：真 server、`ANALYSIS_ENABLED` monkeypatch 為 True、argv `--selftest` 時 `config()["selftest_mode"]` 為 True，且以 `analysis_enter`／`analysis_leave` 直接走一次 idle→analysis→draining→idle（Python 端模擬 JS 步驟；state 事件序列中沒有 `power`）。
+  - **2. `analysis.js` CSV 授權漏接（761aef0 實碼缺陷，順手修）**：`SAVE_PURPOSES`（`analysis.js:7`）只有 `png/html/markers`，缺 `csv`；Viewer CSV 匯出送 `save_request{purpose:"csv"}`（`viewer.html:3133`）會被外殼靜默丟棄，Viewer 的 Promise 永遠不回（§4.2 不設逾時）→ CSV 匯出卡死。改為 `["png", "html", "markers", "csv"]`（＝`SavePurpose` 全部）。驗收：`tests/js/analysis.test.js` 加一案 `save_request{purpose:"csv"}` 會呼叫 `analysis_save_path(gen, "csv", suggested)` 並回 `save_result`。
 
 ### T7（Haiku）打包與文件
 - 可改：`pyproject.toml`（package-data 加 `analysis/web/*`）、`packaging/**`（spec datas 逐檔列 `analysis/web` 內容；`shell_stub.html` 不打包）、`README.md`、`HANDOFF.md`、`HANDOFF_WINDOWS.md`（完成後）。

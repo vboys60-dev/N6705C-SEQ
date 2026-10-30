@@ -145,6 +145,7 @@ class _App:
         self.lock = threading.Lock()
         self.active = 0
         self.held = {}  # digest -> [Entry, ...], one per /open
+        self.progress = {}  # (gen, req) -> (stage, pct) of in-flight /open; guarded by self.lock
 
     def adopt(self, digest, entry):
         # takes over the reference open_handle returned; must not call core (contract 6.5)
@@ -350,7 +351,23 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._body_json()
         path = self._grant(body.get("grant"), "open", "dlog")
         app = self.app
-        meta, blob, entry = app.core.open_handle(path, app.cache_root, cancel=job.cancel)
+        key = (gen, job.req) if job.req else None
+        cb = None
+        if key:
+            def cb(stage, pct):  # never raises: would abort core
+                try:
+                    v = (str(stage), int(min(100, max(0, pct))))
+                except (TypeError, ValueError, OverflowError):
+                    return
+                with app.lock:
+                    app.progress[key] = v
+            cb("hash", 0)
+        try:
+            meta, blob, entry = app.core.open_handle(path, app.cache_root, cancel=job.cancel, progress=cb)
+        finally:
+            if key:
+                with app.lock:
+                    app.progress.pop(key, None)
         try:
             app.adopt(meta["handle"], entry)
         except BaseException:
@@ -368,6 +385,14 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(req, str) or not re.match(c.REQ_ID_PATTERN, req):
             raise _bad("req required")
         self._json({"ok": bool(self.app.gate.cancel_req(gen, req))})
+
+    def _r_progress(self, job, qs, gen):
+        req = _qs(qs, "req")
+        if req is None or not re.match(c.REQ_ID_PATTERN, req):
+            raise _bad("req required")
+        with self.app.lock:
+            v = self.app.progress.get((gen, req))
+        self._json({"ok": True, "stage": v[0], "pct": v[1]} if v else {"ok": False})
 
     def _r_samples(self, job, qs, gen):
         h = _handle_arg(_qs(qs, "h"))

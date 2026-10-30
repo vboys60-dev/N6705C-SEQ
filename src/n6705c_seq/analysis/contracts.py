@@ -18,6 +18,17 @@ CONTRACT_VERSION = 1
 # The arbiter (fault, async closing, generation checks) runs regardless.
 ANALYSIS_ENABLED = False
 CONFIG_KEY_ANALYSIS = "analysis_enabled"
+# --selftest flag delivered to JS (doc 1.6, 1.7). Not persisted to the SEQ config file.
+CONFIG_KEY_SELFTEST = "selftest_mode"
+# Exact key set of webgui config(); tests/test_webgui.py asserts against this.
+CONFIG_KEYS = ("resources", "demo", "lang", CONFIG_KEY_ANALYSIS, CONFIG_KEY_SELFTEST)
+
+# --selftest round trip (doc 1.7): webgui waits SELFTEST_REPORT_TIMEOUT_S for selftest_report;
+# JS gives each step (Viewer ready, back to idle after leave) SELFTEST_STEP_TIMEOUT_MS.
+SELFTEST_REPORT_TIMEOUT_S = 30.0
+SELFTEST_STEP_TIMEOUT_MS = 10_000
+# The only js_api methods JS may call in selftest mode: no instrument work, no native dialogs.
+SELFTEST_JS_API_ALLOWED = ("config", "strings", "poll", "selftest_report", "analysis_enter", "analysis_leave")
 
 
 # --------------------------------------------------------------------------- arbiter
@@ -53,6 +64,9 @@ POWER_FINISH_TIMEOUT_S = 60.0     # from latest _finishing(token) (re-armable) -
 # False (timer already faulted, stale/released token) -> worker skips the main work and goes to cleanup.
 # Main work is wrapped in try/finally whose finally calls _finishing(token) (re-arm on return or raise).
 # Supersedes report section 5 "timed from stop/finish signal": timing starts at each _finishing call.
+# T2 follow-up 2 (doc 1.3, pending user sign-off): run_resources / run_rows / run_plan / run_functions
+# take keyword-only on_cleanup: Callable[[], None] | None = None, called (never raising) right before
+# their own cleanup I/O; the worker passes lambda: self._finishing(token). None = old behaviour.
 CLOSING_CLEANUP_TIMEOUT_S = 10.0  # from background cleanup start -> server shut down; then os._exit
 CANCEL_LATENCY_S = 2.0            # cancel flag set -> long job raises AnalysisCancelled (10M x 4ch)
 GRANT_TTL_S = 300.0               # path grant lifetime after the dialog returns
@@ -218,7 +232,19 @@ ROUTES: dict[tuple[str, str], RouteKind] = {
     ("GET", "/prefs"): RouteKind.JOB,
     ("POST", "/prefs"): RouteKind.JOB,
     ("POST", "/cancel"): RouteKind.CONTROL,
+    ("GET", "/progress"): RouteKind.CONTROL,  # ?req=<X-Analysis-Req of an in-flight /open>
 }
+
+# GET /progress (doc 3.3): Viewer polls while its /open is in flight. Only /open registers progress,
+# keyed by (gen, X-Analysis-Req); removed when /open ends. Unknown/finished req -> 200 {ok: false}.
+PROGRESS_STAGES = ("hash", "parse", "lod")  # = core progress(stage, pct) stages, in order
+PROGRESS_POLL_MS = 300
+
+
+class ProgressResult(TypedDict):
+    ok: bool                 # False: req not (or no longer) an in-flight /open of this gen
+    stage: NotRequired[str]  # PROGRESS_STAGES value; present when ok
+    pct: NotRequired[int]    # 0..100 within that stage (int, clamped); present when ok
 
 # path -> (grant mode, allowed purposes). /save takes its purpose from HEADER_PURPOSE;
 # the others have exactly one purpose. Passed verbatim to gate.consume_grant.

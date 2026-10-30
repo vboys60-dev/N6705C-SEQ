@@ -609,6 +609,7 @@
       noFileLoaded: '尚未載入檔案',
       srcWarn: '分析中請勿移動、覆寫或編輯來源檔',
       cancelBtn: '取消',
+      progressHash: '驗證檔案',
       progressParse: '解析中',
       progressLod: '建立摘要',
       progressCsv: 'CSV 匯出中...',
@@ -730,6 +731,7 @@
       noFileLoaded: 'No file loaded',
       srcWarn: 'Do not move, overwrite or edit the source file while it is being analyzed',
       cancelBtn: 'Cancel',
+      progressHash: 'Verifying file',
       progressParse: 'Parsing',
       progressLod: 'Building overview',
       progressCsv: 'Exporting CSV...',
@@ -965,17 +967,25 @@
     return new Float32Array(buf, base + offset, length);
   }
 
+  const PROGRESS_POLL_MS = 300;
   async function apiOpen(grant, onProgress){
-    if(onProgress) onProgress('parse', 0);
+    if(onProgress) onProgress('hash', 0);
     const req = nextId();
     activeReq = req;
     let res;
+    // 輪詢 /progress（CONTROL，不佔 slot）；錯誤一律忽略
+    const poll = setInterval(async ()=>{
+      try{
+        const j = await (await apiFetch('/progress?req='+req, {}, true)).json();
+        if(j.ok && onProgress && activeReq===req) onProgress(j.stage, j.pct);
+      }catch(_){ /* ignore */ }
+    }, PROGRESS_POLL_MS);
     try{
       res = await postJson('/open', { grant }, req);
     }finally{
+      clearInterval(poll);
       activeReq = null;
     }
-    if(onProgress) onProgress('lod', 50);
     const { meta, payload, base } = splitBinary(await res.arrayBuffer());
     const lodObj = {};
     const factors = meta.lodFactors;
@@ -1224,7 +1234,7 @@
     row.style.display = '';
     const warn = document.getElementById('srcWarn');
     if(warn) warn.style.display = phase==='csv' ? 'none' : '';
-    txt.textContent = phase==='csv' ? T('progressCsv') : (phase==='lod' ? T('progressLod') : T('progressParse')) + ' ' + pct + '%';
+    txt.textContent = phase==='csv' ? T('progressCsv') : (phase==='lod' ? T('progressLod') : phase==='hash' ? T('progressHash') : T('progressParse')) + ' ' + pct + '%';
   }
   function hideParseProgress(){
     const row = document.getElementById('parseProgressRow');
@@ -1798,7 +1808,7 @@
       setPanelFoldOpen('exportFold', false); // 檔案載入成功＝設定階段結束、進入分析階段，收起用不到的匯出區
       scheduleRedraw();
     }catch(err){
-      if(err.code!=='cancelled') alert(T('parseFailedPrefix')+err.message);
+      if(err.code!=='cancelled') flashMessage(T('parseFailedPrefix')+err.message, 6000);
       console.error(err);
     }finally{
       hideParseProgress();
@@ -1821,7 +1831,7 @@
 
   onActivate('openCompareBtn', async ()=>{
     if(!state.loaded){
-      alert(T('compareNeedMain'));
+      flashMessage(T('compareNeedMain'), 6000);
       return;
     }
     try{
@@ -1862,7 +1872,7 @@
       scheduleRedraw();
       flashMessage(T('compareLoaded', meta.fileName));
     }catch(err){
-      if(err.code!=='cancelled') alert(T('compareLoadFailed')+err.message);
+      if(err.code!=='cancelled') flashMessage(T('compareLoadFailed')+err.message, 6000);
       console.error(err);
     }finally{
       hideParseProgress();
@@ -2299,7 +2309,7 @@
       const tag = mode==='light' ? '_print' : (mode==='negative' ? '_negative' : '');
       try{
         if(await saveBlob('png', exportBaseName()+tag+'.png', blob)) flashMessage(T('msgImageExported'));
-      }catch(err){ alert(T('saveFailedPrefix')+err.message); }
+      }catch(err){ flashMessage(T('saveFailedPrefix')+err.message, 6000); }
     }, 'image/png');
   });
 
@@ -2411,7 +2421,7 @@
     const blob = new Blob([html], { type:'text/html;charset=utf-8;' });
     try{
       if(await saveBlob('html', exportBaseName()+'_report.html', blob)) flashMessage(T('msgReportExported'));
-    }catch(err){ alert(T('saveFailedPrefix')+err.message); }
+    }catch(err){ flashMessage(T('saveFailedPrefix')+err.message, 6000); }
   });
 
   // 滑鼠停留在左／右軸邊界時，游標改為上下拖曳樣式，提示可拖曳調整 Ref
@@ -3045,7 +3055,7 @@
     const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
     try{
       await saveBlob('markers', exportBaseName()+'.markers.json', blob);
-    }catch(err){ alert(T('saveFailedPrefix')+err.message); }
+    }catch(err){ flashMessage(T('saveFailedPrefix')+err.message, 6000); }
   });
 
   // ---------------------------------------------------------------
@@ -3144,7 +3154,7 @@
       }
       flashMessage(T('msgCsvExported', (idxHi-idxLo+1).toLocaleString()));
     }catch(err){
-      if(err.code!=='cancelled') alert(T('saveFailedPrefix')+err.message);
+      if(err.code!=='cancelled') flashMessage(T('saveFailedPrefix')+err.message, 6000);
     }
   });
 
@@ -3172,16 +3182,16 @@
       scheduleRedraw();
       flashMessage(T('msgMarkersLoaded', state.markers.length));
     }catch(err){
-      alert(T('msgJsonLoadFailed')+err.message);
+      flashMessage(T('msgJsonLoadFailed')+err.message, 6000);
     }
   });
 
-  function flashMessage(msg){
+  function flashMessage(msg, ms){
     const el = document.getElementById('toast');
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(flashMessage._t);
-    flashMessage._t = setTimeout(()=>el.classList.remove('show'), 2200);
+    flashMessage._t = setTimeout(()=>el.classList.remove('show'), ms||2200);
   }
 
   // ---------------------------------------------------------------
