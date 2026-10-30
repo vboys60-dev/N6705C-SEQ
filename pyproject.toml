@@ -30,7 +30,7 @@ n6705c-seq-gui = "n6705c_seq.webgui:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-n6705c_seq = ["web/*"]
+n6705c_seq = ["web/*", "analysis/web/viewer.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -4,6 +4,9 @@
   const LIST_VERIFIED = false; // List mode awaits hardware verification; flip to true to enable the tab
   const listeners = new Map();
   const tabs = [];
+  const BUSY_STATES = ["power", "draining", "closing", "fault"];
+  const panes = new Map([["seq", {}], ["list", {}]]); // analysis.js adds "analysis" when config enables it
+  let currentTab = "seq", switching = false;
   const results = [];
   let strings = {};
   let ready = false;
@@ -12,7 +15,8 @@
   };
   const App = window.App = {
     api: null,
-    lang: "zh", busy: false, kind: null,
+    lang: "zh", busy: false, kind: null, config: {},
+    state: "idle", gen: 0, stateSeq: -1, powerAllowed: true,
     t(key) { return strings[key]?.[this.lang === "en" ? 1 : 0] ?? key; },
     on(type, fn) {
       if (!listeners.has(type)) listeners.set(type, []);
@@ -30,6 +34,12 @@
       document.getElementById("result-text").textContent = text;
       if (!dialog.open) dialog.showModal();
     },
+    addTab(name, hooks) {
+      panes.set(name, hooks);
+      document.getElementById(`tab-${name}`).addEventListener("click", () => selectTab(name));
+    },
+    selectTab: name => selectTab(name),
+    get currentTab() { return currentTab; },
     relabel(root = document) {
       const elements = [...root.querySelectorAll("[data-i18n]")];
       if (root.matches?.("[data-i18n]")) elements.unshift(root);
@@ -52,23 +62,44 @@
     event.preventDefault();
     showError(event.reason);
   });
-  function selectTab(name) {
-    if (name === "list" && App.kind === "E36441A") return;
-    for (const tab of ["seq", "list"]) {
-      document.getElementById(`${tab}-tab`).hidden = tab !== name;
-      document.getElementById(`tab-${tab}`).setAttribute("aria-selected", String(tab === name));
+  // A pane's enter() may refuse (returns false): the previous tab stays shown.
+  async function selectTab(name) {
+    if (switching || !panes.has(name)) return false;
+    if (name === "list" && App.kind === "E36441A") return false;
+    switching = true;
+    try {
+      if (name !== currentTab) {
+        if (panes.get(name).enter && !(await panes.get(name).enter())) return false;
+        await panes.get(currentTab).leave?.();
+      }
+      currentTab = name;
+      for (const tab of panes.keys()) {
+        document.getElementById(`${tab}-tab`).hidden = tab !== name;
+        document.getElementById(`tab-${tab}`).setAttribute("aria-selected", String(tab === name));
+      }
+      return true;
+    } finally {
+      switching = false;
     }
   }
   function busyButtons() {
     document.querySelectorAll("#btn-off, [data-action='run']")
-      .forEach(button => { button.disabled = App.busy; });
+      .forEach(button => { button.disabled = !App.powerAllowed; });
+    document.getElementById("btn-test").disabled = !App.powerAllowed;
+    for (const id of ["res-0", "res-1", "chk-demo"]) document.getElementById(id).disabled = App.state === "analysis";
   }
   async function poll() {
     try {
       for (const [type, ...args] of await App.api.poll()) {
-        if (type === "busy") {
-          App.busy = args[0];
+        if (type === "state") {
+          const p = args[0];
+          if (p.seq <= App.stateSeq) continue; // late event from an interleaved poll: drop, do not emit
+          App.stateSeq = p.seq; App.state = p.state; App.gen = p.gen;
+          App.busy = BUSY_STATES.includes(p.state);
+          App.powerAllowed = p.state === "idle";
           busyButtons();
+        } else if (type === "busy") {
+          if (App.stateSeq < 0) { App.busy = args[0]; App.powerAllowed = !args[0]; busyButtons(); }
         } else if (type === "kind") {
           App.kind = args[0];
           document.getElementById("tab-list").disabled = !LIST_VERIFIED || App.kind === "E36441A";
@@ -100,7 +131,7 @@
     poll();
     try {
       const translated = await App.api.strings();
-      const config = await App.api.config();
+      const config = App.config = await App.api.config();
       strings = translated.strings;
       App.lang = translated.lang;
       document.documentElement.lang = App.lang === "en" ? "en" : "zh-Hant";
@@ -111,6 +142,7 @@
       ready = true;
       for (const tab of tabs) await tab.init();
       emit("ready");
+      if (config.selftest_mode === true && App.selftest) await App.selftest();
       await App.api.selftest_report(true, "");
     } catch (error) {
       await App.api.selftest_report(false, String(error?.message ?? error));

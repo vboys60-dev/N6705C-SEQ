@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import math
 import time
+from typing import Callable
 
 from n6705c.core.scpi import format_channel_list
 from n6705c.core.session import Session
 from n6705c.core.transport import VisaTransport
 
-from .execute import OutputsNotConfirmedOff, PlanRejected, fire_together
+from .execute import OutputsNotConfirmedOff, PlanRejected, close_all, fire_together, run_callback
 from .plan import SeqRow
 
 #: Wait for the output to reach the low level before the list is armed.
@@ -171,7 +172,8 @@ def check_settings(query, channels: list[int]) -> None:
             raise PlanRejected(f"{command} returned {answer!r}; must be {'/'.join(allowed)}")
 
 
-def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = False) -> None:
+def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = False,
+             on_cleanup: Callable[[], None] | None = None) -> None:
     """Run the table on E36441A frames (4 channels each, in frame order).
 
     Outputs are restored (off) at the end unless ``hold_dc``; any failure restores
@@ -224,13 +226,22 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
         for session, _ in frames.values():
             session.check_errors("E36441A run")
     except BaseException as exc:
+        run_callback(on_cleanup, exc)
         try:
             _restore(touched, sessions)
         except OutputsNotConfirmedOff as off:
             raise OutputsNotConfirmedOff(f"{exc}; also {off}") from exc
         raise
     if not hold_dc:
-        _restore(touched, sessions)
+        failed = run_callback(on_cleanup)
+        try:
+            _restore(touched, sessions)
+        except BaseException as off:
+            if failed is not None:
+                off.add_note(f"cleanup callback failed ({failed!r})")
+            raise
+        if failed is not None:
+            raise failed
 
 
 def _restore(touched: list[tuple[Session, int]], sessions: list[Session]) -> None:
@@ -267,24 +278,30 @@ def _sessions(resources: list[str], backend: str, timeout_ms: int):
     try:
         for resource in resources:
             t = VisaTransport(resource, backend=backend, timeout_ms=timeout_ms)
-            t._inst.encoding = "latin-1"  # noqa: SLF001
             transports.append(t)
-    except BaseException:
-        for t in transports:
-            t.close()
+            t._inst.encoding = "latin-1"  # noqa: SLF001
+    except BaseException as exc:
+        close_all(transports, exc)
         raise
     return transports
 
 
 def run_resources(resources: list[str], rows: list[SeqRow], *, hold_dc: bool = False,
-                  backend: str = "auto", timeout_ms: int = 10_000) -> None:
+                  backend: str = "auto", timeout_ms: int = 10_000,
+                  on_cleanup: Callable[[], None] | None = None) -> None:
     """Open each resource as an E36441A frame, run the table, close."""
     transports = _sessions(resources, backend, timeout_ms)
     try:
-        run_rows([Session(t) for t in transports], rows, hold_dc=hold_dc)
-    finally:
-        for t in transports:
-            t.close()
+        run_rows([Session(t) for t in transports], rows, hold_dc=hold_dc,
+                 on_cleanup=on_cleanup)
+    except BaseException as exc:
+        run_callback(on_cleanup, exc)
+        close_all(transports, exc)
+        raise
+    failed = run_callback(on_cleanup)
+    close_all(transports, failed)
+    if failed is not None:
+        raise failed
 
 
 def off_resources(resources: list[str], *, backend: str = "auto", timeout_ms: int = 10_000) -> None:
@@ -293,6 +310,7 @@ def off_resources(resources: list[str], *, backend: str = "auto", timeout_ms: in
     try:
         sessions = [Session(t) for t in transports]
         _restore([(s, ch) for s in sessions for ch in range(1, 5)], sessions)
-    finally:
-        for t in transports:
-            t.close()
+    except BaseException as exc:
+        close_all(transports, exc)
+        raise
+    close_all(transports)

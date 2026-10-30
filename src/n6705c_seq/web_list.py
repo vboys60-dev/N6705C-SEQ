@@ -117,27 +117,29 @@ class ListApi:
                 return {"error": tr("address_required", frames=frames), "title": tr("missing_address")}
         except ValueError as exc:
             return {"error": str(exc), "title": tr("invalid_field")}
-        if not self._reserve():
-            return {"error": tr("busy_body")}
+        token = self._reserve("power")
+        if token is None:
+            return self._power_denied()
         try:
             text = (tr("demo_prefix") if demo else tr("hardware_prefix")) + tr("list_start")
             if plan.hold_last:
                 text += tr("list_keep")
             if not self._confirm(tr("confirm"), text + tr("continue")):
-                self._release()
+                self._release(token)
                 return {"cancelled": True}
             self._save_config(saved_resources, demo)
             self._measured["list"] = {}
             self._emit(["measured", "list"])
-            threading.Thread(target=self._list_work, args=(plan, compiled, frames, resources, demo, capture), daemon=True).start()
+            threading.Thread(target=self._list_work, args=(plan, compiled, frames, resources, demo, capture, token), daemon=True).start()
         except Exception as exc:
-            self._release()
+            self._release(token)
             return {"error": str(exc)}
         return {}
 
-    def _list_work(self, plan, compiled, frames, resources, demo, capture):
+    def _list_work(self, plan, compiled, frames, resources, demo, capture, token):
         group = None
         try:
+            self._finishing(token)
             try:
                 if not demo and e36441a.kind_of([e36441a.detect_model(r) for r in resources]) == "E36441A":
                     raise ValueError(tr("e36441a_no_list"))
@@ -154,7 +156,13 @@ class ListApi:
             except ValueError as exc:
                 raise execute.PlanRejected(str(exc)) from exc
             cap = {} if capture else None
-            execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap)
+            if not self._untimed(token):
+                return
+            try:
+                execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap,
+                                      on_cleanup=lambda: self._finishing(token))
+            finally:
+                self._finishing(token)
             text = tr("list_hold_done") if plan.hold_last else tr("list_done")
             if cap and "error" in cap:
                 text += tr("capture_error", error=cap.pop("error"))
@@ -169,6 +177,7 @@ class ListApi:
             self._emit(["result", "error", tr("run_result"), f"{exc}{note}"])
         finally:
             try:
+                self._finishing(token)
                 if group is not None:
                     for inst in group.instruments:
                         try:
@@ -176,4 +185,4 @@ class ListApi:
                         except Exception as exc:
                             self._emit(["result", "error", tr("run_result"), str(exc)])
             finally:
-                self._release()
+                self._release(token)

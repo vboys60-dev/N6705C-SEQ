@@ -12,6 +12,10 @@ from n6705c_seq.execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected
 from n6705c_seq.web_seq import SeqApi
 
 
+def _legacy_events(api):
+    return [event for event in api.poll() if event[0] != "state"]
+
+
 class _Api(SeqApi, webgui._Core):
     pass
 
@@ -56,7 +60,7 @@ def threads(monkeypatch):
         def run(self):
             self.target(*self.args)
 
-    monkeypatch.setattr(web_seq.threading, "Thread", Thread)
+    monkeypatch.setattr(web_seq, "threading", SimpleNamespace(Thread=Thread))
     return pending
 
 
@@ -65,12 +69,12 @@ def _raw(count=1):
 
 
 def _results(api):
-    return [event for event in api.poll() if event[0] == "result"]
+    return [event for event in _legacy_events(api) if event[0] == "result"]
 
 
 def _group(api, monkeypatch):
     closed = []
-    group = SimpleNamespace(instruments=[SimpleNamespace(close=lambda: closed.append(api._busy))])
+    group = SimpleNamespace(instruments=[SimpleNamespace(close=lambda: closed.append((api._gate.state()[0] == "power")))])
     monkeypatch.setattr(web_seq, "connect_group", lambda resources: group)
     return group, closed
 
@@ -88,7 +92,7 @@ def test_meta_preview_and_invalid_fields(api):
     assert preview["rev"] == 13 and preview["lanes"] == [] and preview["ticks"] == []
     assert preview["t_end"] == 1.0 and "Rise" in preview["message"]
     assert api.seq_run(raw, [], True, False, False) == {"error": preview["message"], "title": i18n.tr("invalid_field")}
-    assert not api._busy and not api._window.calls
+    assert not (api._gate.state()[0] == "power") and not api._window.calls
 
 
 def test_csv_roundtrip_cancel_capacity_and_invalid_current(api, tmp_path):
@@ -131,7 +135,7 @@ def test_csv_roundtrip_cancel_capacity_and_invalid_current(api, tmp_path):
 def test_bridge_types_raise_typeerror(api, method, args):
     with pytest.raises(TypeError):
         getattr(api, method)(*args)
-    assert not api._busy
+    assert not (api._gate.state()[0] == "power")
 
 
 def test_no_channel_missing_addresses_and_busy(api, threads):
@@ -140,7 +144,8 @@ def test_no_channel_missing_addresses_and_busy(api, threads):
     assert api.seq_run(raw, [], True, False, False) == {"error": i18n.tr("enable_channel"), "title": i18n.tr("no_channel")}
     for addresses in ([], ["x"], ["x", " "]):
         assert api.seq_run(_raw(8), addresses, False, False, False) == {"error": i18n.tr("address_required", frames=2), "title": i18n.tr("missing_address")}
-    assert api._reserve()
+    token = api._reserve("power")
+    assert token
     assert api.seq_run(_raw(), [], True, False, False) == {"error": i18n.tr("busy_body")}
     assert api.test_connection([], True) == {"error": i18n.tr("busy_body")}
     assert api.all_off(["x"], False) == {"error": i18n.tr("busy_body")}
@@ -153,8 +158,8 @@ def test_confirmation_cancel_releases(api, threads, operation):
     result = (api.seq_run(_raw(), ["x"], False, False, False) if operation == "run"
               else api.all_off(["x"], False))
     assert result == {"cancelled": True}
-    assert api.poll() == [["busy", True], ["busy", False]]
-    assert not api._busy and not threads and not api._config_path.exists()
+    assert _legacy_events(api) == [["busy", True], ["busy", False]]
+    assert not (api._gate.state()[0] == "power") and not threads and not api._config_path.exists()
 
 
 def test_snapshot_frozen_before_confirmation(api, threads, monkeypatch):
@@ -163,7 +168,7 @@ def test_snapshot_frozen_before_confirmation(api, threads, monkeypatch):
     _, closed = _group(api, monkeypatch)
 
     def confirm(title, text):
-        assert api._busy
+        assert (api._gate.state()[0] == "power")
         raw[0]["high"] = "99"
         addresses[:] = ["later"]
         return True
@@ -171,15 +176,16 @@ def test_snapshot_frozen_before_confirmation(api, threads, monkeypatch):
     api._window.create_confirmation_dialog = confirm
     monkeypatch.setattr(web_seq, "run_plan", lambda group, rows, **kw: calls.append((rows, kw)))
     assert api.seq_run(raw, addresses, False, True, True) == {}
-    assert api._busy
+    assert (api._gate.state()[0] == "power")
     assert api.config()["resources"] == [" first ", "second"]
     thread = threads.pop()
     assert thread.args[2] == ["first"]
     thread.run()
     assert calls[0][0][0].high_v == 12
+    assert callable(calls[0][1].pop("on_cleanup"))
     assert calls[0][1] == {"hold_dc": True, "capture": {}}
-    assert closed == [True] and not api._busy
-    assert api.poll()[-1] == ["busy", False]
+    assert closed == [True] and not (api._gate.state()[0] == "power")
+    assert _legacy_events(api)[-1] == ["busy", False]
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("boom"), PlanRejected("bad plan"), OutputsNotConfirmedOff("unknown")])
@@ -195,7 +201,7 @@ def test_worker_failure_notes_and_close_before_release(api, threads, monkeypatch
     expected = ("" if isinstance(failure, OutputsNotConfirmedOff) else i18n.tr("rejected")
                 if isinstance(failure, PlanRejected) else i18n.tr("forced_off"))
     assert _results(api) == [["result", "error", i18n.tr("run_result"), str(failure) + expected]]
-    assert closed == [True] and not api._busy
+    assert closed == [True] and not (api._gate.state()[0] == "power")
 
 
 def test_connection_failure_and_startup_failure_release(api, threads, monkeypatch):
@@ -206,16 +212,17 @@ def test_connection_failure_and_startup_failure_release(api, threads, monkeypatc
     assert api.seq_run(_raw(), ["x"], False, False, False) == {}
     threads.pop().run()
     assert _results(api)[0][3] == i18n.tr("connection_error", error="unavailable")
-    assert not api._busy
+    assert not (api._gate.state()[0] == "power")
     monkeypatch.setattr(api, "_save_config", fail)
     assert api.seq_run(_raw(), ["x"], False, False, False) == {"error": "unavailable"}
-    assert not api._busy and not threads
+    assert not (api._gate.state()[0] == "power") and not threads
 
 
 def test_capture_overlay_and_capture_error(api, threads, monkeypatch):
     _group(api, monkeypatch)
 
-    def run(group, rows, *, capture, hold_dc):
+    def run(group, rows, *, capture, hold_dc, on_cleanup):
+        assert callable(on_cleanup)
         capture.update({1: (0.001, [0, 1, 2]), "error": "partial"})
 
     monkeypatch.setattr(web_seq, "run_plan", run)
@@ -223,7 +230,7 @@ def test_capture_overlay_and_capture_error(api, threads, monkeypatch):
     assert api.seq_run(_raw(), ["x"], False, False, True) == {}
     assert api._measured["seq"] == {}
     threads.pop().run()
-    events = api.poll()
+    events = _legacy_events(api)
     assert ["measured", "seq"] in events
     assert api._measured["seq"] == {1: (0.001, [0, 1, 2])}
     assert "partial" in next(e[3] for e in events if e[0] == "result")
@@ -233,7 +240,7 @@ def test_capture_overlay_and_capture_error(api, threads, monkeypatch):
 def test_e36441a_uses_own_runner_and_refuses_capture(api, threads, monkeypatch):
     calls = []
     monkeypatch.setattr(web_seq, "detect_model", lambda resource: "E36441A")
-    monkeypatch.setattr(web_seq, "run_resources", lambda resources, rows, hold_dc: calls.append((resources, hold_dc)))
+    monkeypatch.setattr(web_seq, "run_resources", lambda resources, rows, hold_dc, on_cleanup: calls.append((resources, hold_dc)))
     monkeypatch.setattr(web_seq, "connect_group", lambda *args: pytest.fail("N6705C path used"))
     for capture in (False, True):
         api.seq_run(_raw(), ["x"], False, True, capture)
@@ -241,7 +248,7 @@ def test_e36441a_uses_own_runner_and_refuses_capture(api, threads, monkeypatch):
         results = _results(api)
         assert results == [["result", "error" if capture else "info", i18n.tr("run_result"),
                             i18n.tr("e36441a_no_capture" if capture else "sequence_hold_done")]]
-        assert not api._busy
+        assert not (api._gate.state()[0] == "power")
     assert calls == [(["x"], True)]
 
 
@@ -252,11 +259,11 @@ def test_mixed_models_rejected_before_runners(api, threads, monkeypatch):
     api.seq_run(_raw(8), ["first", "second"], False, False, False)
     threads.pop().run()
     assert "mixed instrument models" in _results(api)[0][3]
-    assert not api._busy
+    assert not (api._gate.state()[0] == "power")
     api.all_off(["first", "second"], False)
     threads.pop().run()
     assert "mixed instrument models" in _results(api)[0][3]
-    assert not api._busy
+    assert not (api._gate.state()[0] == "power")
 
 
 @pytest.mark.parametrize("model", ["N6705C", "E36441A"])
@@ -267,7 +274,7 @@ def test_all_off_routes_and_closes(api, threads, monkeypatch, model):
     original_close = group.instruments[0].close
 
     def close():
-        assert api._busy
+        assert (api._gate.state()[0] == "power")
         calls.append("close")
         original_close()
 
@@ -278,13 +285,13 @@ def test_all_off_routes_and_closes(api, threads, monkeypatch, model):
     threads.pop().run()
     assert calls == (["close"] if model == "N6705C" else [["x"]])
     assert _results(api) == [["result", "info", i18n.tr("run_result"), i18n.tr("off_done")]]
-    assert not api._busy
+    assert not (api._gate.state()[0] == "power")
 
 
 def test_all_off_demo_or_empty_is_immediate(api, threads):
     for addresses, demo in [(["x"], True), ([" "], False)]:
         assert api.all_off(addresses, demo) == {"info": i18n.tr("off_demo")}
-    assert not threads and not api._busy and not api._window.calls and not api.poll()
+    assert not threads and not (api._gate.state()[0] == "power") and not api._window.calls and not _legacy_events(api)
 
 
 @pytest.mark.parametrize("model", ["N6705C", "E36441A"])
@@ -292,17 +299,17 @@ def test_connection_status_kind_and_no_confirmation(api, threads, monkeypatch, m
     monkeypatch.setattr(web_seq, "detect_model", lambda resource: model)
     group = InstrumentGroup.demo(frames=1, slots=DEMO_SLOTS)
     closed = []
-    monkeypatch.setattr(group.instruments[0], "close", lambda: closed.append(api._busy))
+    monkeypatch.setattr(group.instruments[0], "close", lambda: closed.append((api._gate.state()[0] == "power")))
     monkeypatch.setattr(web_seq, "connect_group", lambda resources: group)
     assert api.test_connection(["x", ""], False) == {}
     assert not api._window.calls
     threads.pop().run()
-    events = api.poll()
+    events = _legacy_events(api)
     assert ["status", 1, i18n.tr("not_set")] in events
     assert any(e[:2] == ["status", 0] and e[2].startswith("✔ ") for e in events)
     assert ["kind", model] in events and api._kind == model
     assert closed == ([True] if model == "N6705C" else [])
-    assert events[-1] == ["busy", False] and not api._busy
+    assert events[-1] == ["busy", False] and not (api._gate.state()[0] == "power")
 
 
 def test_connection_errors_and_demo(api, threads, monkeypatch):
@@ -312,15 +319,15 @@ def test_connection_errors_and_demo(api, threads, monkeypatch):
     monkeypatch.setattr(web_seq, "detect_model", fail)
     api.test_connection(["x"], False)
     threads.pop().run()
-    events = api.poll()
+    events = _legacy_events(api)
     assert ["status", 0, "✘ offline"] in events
     assert ["result", "error", i18n.tr("connection_failed"),
             i18n.tr("frame_connection_error", number=1, error="offline\nmore details")] in events
-    assert not api._busy
+    assert not (api._gate.state()[0] == "power")
     api.test_connection(["", ""], True)
     threads.pop().run()
-    assert api._kind == "N6705C" and not api._busy
-    assert sum(e[0] == "status" and e[2].startswith("✔ ") for e in api.poll()) == 2
+    assert api._kind == "N6705C" and not (api._gate.state()[0] == "power")
+    assert sum(e[0] == "status" and e[2].startswith("✔ ") for e in _legacy_events(api)) == 2
 
 
 def test_public_surface():
@@ -356,8 +363,8 @@ def test_dialog_exception_releases(api, threads, monkeypatch, operation):
     response = (api.seq_run(_raw(), ["x"], False, False, False) if operation == "run"
                 else api.all_off(["x"], False))
     assert response == {"error": "dialog failed"}
-    assert not api._busy and not threads
-    assert api.poll() == [["busy", True], ["busy", False]]
+    assert not (api._gate.state()[0] == "power") and not threads
+    assert _legacy_events(api) == [["busy", True], ["busy", False]]
 
 
 def test_thread_start_failure_releases(api, monkeypatch):
@@ -367,8 +374,8 @@ def test_thread_start_failure_releases(api, monkeypatch):
 
     monkeypatch.setattr(web_seq.threading, "Thread", fail)
     assert api.seq_run(_raw(), [], True, False, False) == {"error": "thread failed"}
-    assert not api._busy
-    assert api.poll()[-1] == ["busy", False]
+    assert not (api._gate.state()[0] == "power")
+    assert _legacy_events(api)[-1] == ["busy", False]
 
 
 @pytest.mark.parametrize("stage", ["detect", "connect", "off", "close"])
@@ -386,7 +393,7 @@ def test_all_off_failures_release(api, threads, monkeypatch, stage):
         monkeypatch.setattr(web_seq, "outputs_off", fail)
     else:
         def close():
-            assert api._busy
+            assert (api._gate.state()[0] == "power")
             closed.append(True)
             raise RuntimeError("close failed")
 
@@ -396,10 +403,10 @@ def test_all_off_failures_release(api, threads, monkeypatch, stage):
         monkeypatch.setattr(web_seq, "outputs_off", lambda group: None)
     api.all_off(["x"], False)
     threads.pop().run()
-    events = api.poll()
+    events = _legacy_events(api)
     assert any(e[:2] == ["result", "error"] and "failed" in e[3] for e in events)
     assert closed == ([True] if stage in ("off", "close") else [])
-    assert events[-1] == ["busy", False] and not api._busy
+    assert events[-1] == ["busy", False] and not (api._gate.state()[0] == "power")
 
 
 def test_demo_run_uses_group_and_releases(api, threads, monkeypatch):
@@ -416,7 +423,7 @@ def test_demo_run_uses_group_and_releases(api, threads, monkeypatch):
     threads.pop().run()
     assert calls == [(2, DEMO_SLOTS)] and closed == [True]
     assert _results(api) == [["result", "info", i18n.tr("run_result"), i18n.tr("sequence_done")]]
-    assert not api._busy
+    assert not (api._gate.state()[0] == "power")
 
 
 @pytest.mark.parametrize("method", ["seq_run", "test_connection", "all_off"])

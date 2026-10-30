@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analysis shell stub</title>
+<style>
+  body{ margin:0; font:13px/1.4 system-ui,sans-serif; background:#1a1a1f; color:#e9e9ec; display:flex; flex-direction:column; height:100vh; }
+  #bar{ padding:8px 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; background:#26262c; }
+  button{ background:#33333b; color:inherit; border:1px solid #4a4a54; border-radius:6px; padding:4px 10px; cursor:pointer; }
+  input{ background:#111; color:inherit; border:1px solid #4a4a54; border-radius:6px; padding:4px 8px; width:18em; }
+  #main{ flex:1; display:flex; min-height:0; }
+  iframe{ flex:1; border:0; background:#fff; }
+  #log{ width:340px; margin:0; padding:8px; overflow:auto; background:#111; font:11px/1.35 ui-monospace,Menlo,monospace; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span>Fake shell. Open as shell_stub.html#t=TOKEN&amp;gen=N&amp;lang=zh (dev server).</span>
+  <input id="grant" placeholder="grant to return (blank = stub-grant-N)">
+  <label><input type="checkbox" id="cancel" style="width:auto"> reply cancelled</label>
+  <label><input type="checkbox" id="deny" style="width:auto"> reply denied</label>
+  <button data-lang="zh">lang zh</button><button data-lang="en">lang en</button>
+  <button id="badGen">send lang (wrong gen)</button>
+  <button id="badType">send open_request to iframe</button>
+</div>
+<div id="main"><iframe id="f" title="viewer"></iframe><pre id="log"></pre></div>
+<script>
+(function(){
+  'use strict';
+  const h = new URLSearchParams(location.hash.slice(1));
+  const gen = parseInt(h.get('gen') || '1', 10);
+  const lang = h.get('lang') === 'en' ? 'en' : 'zh';
+  const f = document.getElementById('f');
+  const log = document.getElementById('log');
+  const say = (s) => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
+  const src = 'viewer.html#t=' + encodeURIComponent(h.get('t') || '') + '&gen=' + gen + '&lang=' + lang +
+              '&parent=' + encodeURIComponent(location.origin);
+  const analysisOrigin = new URL(src, location.href).origin;
+  f.src = src;
+  const TO_SHELL = ['ready', 'open_request', 'save_request'];
+  let n = 0;
+  function post(msg){ f.contentWindow.postMessage(Object.assign({ v: 1, gen: gen }, msg), analysisOrigin); }
+  window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (ev.source !== f.contentWindow || ev.origin !== analysisOrigin) return;
+    if (!d || typeof d !== 'object' || d.v !== 1 || d.gen !== gen || TO_SHELL.indexOf(d.type) < 0) { say('dropped ' + JSON.stringify(d)); return; }
+    say('<- ' + JSON.stringify(d));
+    if (d.type === 'ready') { post({ type: 'lang', lang: lang }); return; }
+    if (typeof d.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(d.id)) { say('dropped (bad id)'); return; }
+    const type = d.type === 'open_request' ? 'open_result' : 'save_result';
+    let r;
+    if (document.getElementById('cancel').checked) r = { ok: false, cancelled: true };
+    else if (document.getElementById('deny').checked) r = { ok: false, error: 'denied by stub', code: 'stub' };
+    else r = { ok: true, grant: document.getElementById('grant').value || ('stub-grant-' + (++n)), name: d.suggested || 'stub.dlog' };
+    post(Object.assign({ type: type, id: d.id }, r));
+    say('-> ' + type + ' ' + JSON.stringify(r));
+  });
+  document.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => post({ type: 'lang', lang: b.dataset.lang })));
+  document.getElementById('badGen').addEventListener('click', () => f.contentWindow.postMessage({ v: 1, gen: gen + 1, type: 'lang', lang: 'en' }, analysisOrigin));
+  document.getElementById('badType').addEventListener('click', () => post({ type: 'open_request', id: 'x', purpose: 'dlog' }));
+})();
+</script>
+</body>
+</html>

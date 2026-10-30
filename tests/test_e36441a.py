@@ -336,3 +336,124 @@ def test_off_resources_checks_all_channels_and_closes(monkeypatch, answer):
             e36441a.off_resources(["fake"])
     assert session.queries == [f"OUTP? (@{ch})" for ch in range(1, 5)]
     assert closed == [True]
+
+
+@pytest.mark.parametrize("mode", ["normal", "failure", "hold_dc"])
+def test_rows_cleanup_callback_only_precedes_restore(monkeypatch, mode):
+    events = []
+    session = _FakeSession()
+    def main(seconds):
+        assert events == []
+        if mode == "failure":
+            raise RuntimeError("main failed")
+    monkeypatch.setattr(e36441a.time, "sleep", main)
+    write = session.write_checked
+    def checked(command):
+        assert events == []
+        write(command)
+    monkeypatch.setattr(session, "write_checked", checked)
+    restore = e36441a._restore
+    def cleanup(*args):
+        assert events == ["callback"]
+        events.append("restore")
+        restore(*args)
+    monkeypatch.setattr(e36441a, "_restore", cleanup)
+    def run():
+        e36441a.run_rows([session], [replace(ROW, channel=1)], hold_dc=mode == "hold_dc",
+                        on_cleanup=lambda: events.append("callback"))
+    if mode == "failure":
+        with pytest.raises(RuntimeError, match="main failed"):
+            run()
+    else:
+        run()
+    assert events == ([] if mode == "hold_dc" else ["callback", "restore"])
+
+
+@pytest.mark.parametrize("mode", ["normal", "failure", "hold_dc"])
+def test_resources_callback_forwarded_and_precedes_close_loop(monkeypatch, mode):
+    from types import SimpleNamespace
+
+    events = []
+    sessions = [_FakeSession(), _FakeSession()]
+    transports = [SimpleNamespace(close=lambda i=i: events.append(f"close{i}")) for i in range(2)]
+    monkeypatch.setattr(e36441a, "_sessions", lambda *a: transports)
+    monkeypatch.setattr(e36441a, "Session", lambda t: sessions[transports.index(t)])
+    def main(seconds):
+        assert events == []
+        if mode == "failure":
+            raise RuntimeError("main failed")
+    monkeypatch.setattr(e36441a.time, "sleep", main)
+    restore = e36441a._restore
+    def cleanup(*args):
+        assert events == ["callback"]
+        events.append("restore")
+        restore(*args)
+    monkeypatch.setattr(e36441a, "_restore", cleanup)
+    def run():
+        e36441a.run_resources(["a", "b"], [replace(ROW, channel=1)],
+                             hold_dc=mode == "hold_dc", on_cleanup=lambda: events.append("callback"))
+    if mode == "failure":
+        with pytest.raises(RuntimeError, match="main failed"):
+            run()
+    else:
+        run()
+    expected = [] if mode == "hold_dc" else ["callback", "restore"]
+    assert events == expected + ["callback", "close0", "close1"]
+
+
+def test_every_transport_closed_even_if_one_close_fails(monkeypatch):
+    from types import SimpleNamespace
+
+    closed = []
+    def close(i):
+        closed.append(i)
+        if i == 0:
+            raise OSError("stuck")
+    transports = [SimpleNamespace(close=lambda i=i: close(i)) for i in range(3)]
+    monkeypatch.setattr(e36441a, "_sessions", lambda *a: transports)
+    monkeypatch.setattr(e36441a, "Session", lambda t: _FakeSession())
+    with pytest.raises(RuntimeError, match="could not close: frame 1 \\(stuck\\)"):
+        e36441a.off_resources(["a", "b", "c"])
+    assert closed == [0, 1, 2]
+    # A run failure stays the reported error; the close failure rides along as a note.
+    closed.clear()
+    monkeypatch.setattr(e36441a, "run_rows", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+    with pytest.raises(ValueError, match="boom") as info:
+        e36441a.run_resources(["a", "b", "c"], [ROW])
+    assert closed == [0, 1, 2] and "frame 1 (stuck)" in info.value.__notes__[0]
+
+
+def test_failing_cleanup_callback_never_skips_closes_or_restore(monkeypatch):
+    from types import SimpleNamespace
+
+    closed = []
+    transports = [SimpleNamespace(close=lambda i=i: closed.append(i)) for i in range(2)]
+    monkeypatch.setattr(e36441a, "_sessions", lambda *a: transports)
+    monkeypatch.setattr(e36441a, "Session", lambda t: _FakeSession())
+    def bad_callback():
+        raise OSError("callback broke")
+    # run failure: still the reported error, every transport closed, callback failure noted
+    monkeypatch.setattr(e36441a, "run_rows", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+    with pytest.raises(ValueError, match="boom") as info:
+        e36441a.run_resources(["a", "b"], [ROW], on_cleanup=bad_callback)
+    assert closed == [0, 1] and "callback broke" in info.value.__notes__[0]
+    # normal path: closes still run, then the callback failure is raised
+    closed.clear()
+    monkeypatch.setattr(e36441a, "run_rows", lambda *a, **k: None)
+    with pytest.raises(OSError, match="callback broke"):
+        e36441a.run_resources(["a", "b"], [ROW], on_cleanup=bad_callback)
+    assert closed == [0, 1]
+
+
+@pytest.mark.parametrize("fail_main", [False, True])
+def test_run_rows_restores_even_if_cleanup_callback_fails(monkeypatch, fail_main):
+    def sleep(seconds):
+        if fail_main:
+            raise RuntimeError("main failed")
+    monkeypatch.setattr(e36441a.time, "sleep", sleep)
+    session = _FakeSession()
+    def bad_callback():
+        raise OSError("callback broke")
+    with pytest.raises(RuntimeError if fail_main else OSError):
+        e36441a.run_rows([session], [replace(ROW, channel=1)], on_cleanup=bad_callback)
+    assert "OUTP OFF,(@1)" in session.sent

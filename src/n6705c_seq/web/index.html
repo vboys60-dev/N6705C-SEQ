@@ -11,6 +11,7 @@
   <script defer src="layout.js"></script>
   <script defer src="seq.js"></script>
   <script defer src="list.js"></script>
+  <script defer src="analysis.js"></script>
 </head>
 <body>
   <fieldset class="connection">
@@ -33,9 +34,14 @@
   <nav class="row tabs" role="tablist">
     <button id="tab-seq" class="btn" role="tab" aria-controls="seq-tab" aria-selected="true" data-i18n="sequence_tab"></button>
     <button id="tab-list" class="btn" role="tab" aria-controls="list-tab" aria-selected="false" disabled data-i18n="list_tab"></button>
+    <button id="tab-analysis" class="btn" role="tab" aria-controls="analysis-tab" aria-selected="false" hidden data-i18n="analysis_tab"></button>
   </nav>
   <section id="seq-tab" role="tabpanel" aria-labelledby="tab-seq"></section>
   <section id="list-tab" role="tabpanel" aria-labelledby="tab-list" hidden></section>
+  <section id="analysis-tab" role="tabpanel" aria-labelledby="tab-analysis" hidden>
+    <p class="warn analysis-note" data-i18n="analysis_crash_note"></p>
+    <iframe id="analysis-frame" class="analysis-frame" aria-labelledby="tab-analysis"></iframe>
+  </section>
   <dialog id="result-dialog">
     <h2 id="result-title"></h2>
     <p id="result-text"></p>

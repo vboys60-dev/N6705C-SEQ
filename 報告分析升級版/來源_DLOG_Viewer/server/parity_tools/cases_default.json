@@ -1,0 +1,11 @@
+[
+ {"ch":1,"kind":"V","idxLo":0,"idxHi":81379,"nBuckets":1800},
+ {"ch":2,"kind":"I","idxLo":0,"idxHi":81379,"nBuckets":1800},
+ {"ch":3,"kind":"P","idxLo":0,"idxHi":81379,"nBuckets":1800},
+ {"ch":4,"kind":"V","idxLo":0,"idxHi":81379,"nBuckets":1800},
+ {"ch":4,"kind":"I","idxLo":40000,"idxHi":41000,"nBuckets":1800},
+ {"ch":1,"kind":"P","idxLo":5000,"idxHi":25000,"nBuckets":1800},
+ {"ch":2,"kind":"V","idxLo":81379,"idxHi":81379,"nBuckets":1800},
+ {"ch":3,"kind":"I","idxLo":0,"idxHi":81379,"nBuckets":600},
+ {"ch":1,"kind":"I","idxLo":0,"idxHi":81379,"nBuckets":1800,"offset":true,"maxLimit":0.0001}
+]

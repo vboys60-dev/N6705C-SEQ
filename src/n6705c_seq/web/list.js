@@ -53,7 +53,7 @@
     if (response.error) App.showResult("error", response.title ?? App.t(title), response.error);
     return !response.error && !response.cancelled;
   }
-  function runState() { run.disabled = App.busy || !compiled?.ok; }
+  function runState() { run.disabled = !App.powerAllowed || !compiled?.ok; }
   async function compile() {
     const rev = ++compileRev;
     compiled = null;
@@ -328,7 +328,8 @@
     node.addEventListener("input", () => { if (meta) compile(); });
   }
   new ResizeObserver(() => requestAnimationFrame(() => fitZoom(root))).observe(document.body);
-  App.on("busy", runState);
+  App.on("state", runState);
+  App.on("busy", runState); // legacy busy-only event before the first state event
   App.on("measured", kind => { if (kind === "list") compile(); });
   let observedWidth, redrawFrame = null;
   new ResizeObserver(entries => {

@@ -1,0 +1,3399 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>N6705C DLOG Viewer - MEM3 Performance Preview</title>
+<style>
+  :root{
+    --bg:#141417;
+    --panel:#1a1a1f;
+    --panel-2:#202026;
+    --border:#302f37;
+    --text:#e9e9ec;
+    --text-dim:#98979f;
+    --text-faint:#68666f;
+    --ch1:#f0a83c;
+    --ch2:#66cf5c;
+    --ch3:#4a9eea;
+    --ch4:#e662b0;
+    --danger:#e2574c;
+    --radius:10px;
+    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, 'Courier New', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  }
+  /* 柔和深色：偏暖炭灰底、降低對比與飽和度，長時間觀看較不刺眼 */
+  html[data-theme="soft-dark"]{
+    --bg:#211f1c;
+    --panel:#282523;
+    --panel-2:#302c29;
+    --border:#413b35;
+    --text:#ece6db;
+    --text-dim:#a89f92;
+    --text-faint:#7d7468;
+    --ch1:#e0a868;
+    --ch2:#8fbb7a;
+    --ch3:#7ba7c9;
+    --ch4:#c98bab;
+    --danger:#d97a6c;
+  }
+  /* 淺色紙感：明亮環境使用，曲線色加深以維持對比與辨識度 */
+  html[data-theme="light"]{
+    --bg:#f4f1ea;
+    --panel:#ffffff;
+    --panel-2:#f1ede4;
+    --border:#ddd6c8;
+    --text:#2b2820;
+    --text-dim:#6b6357;
+    --text-faint:#948c7d;
+    --ch1:#a8600f;
+    --ch2:#3f8f3a;
+    --ch3:#2f6fb0;
+    --ch4:#b23f82;
+    --danger:#c0392b;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    font-size:14px;
+    line-height:1.5;
+  }
+  ::selection{ background:#4a9eea55; }
+  :focus-visible{ outline:2px solid var(--ch3); outline-offset:2px; }
+
+  .app{
+    max-width:1180px;
+    margin:0 auto;
+    padding:20px 20px 60px;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+
+  /* ---------- Topbar ---------- */
+  .topbar{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:16px;
+    flex-wrap:wrap;
+    padding-bottom:14px;
+    border-bottom:1px solid var(--border);
+  }
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .brand-mark{
+    width:38px; height:38px; border-radius:8px;
+    background:linear-gradient(135deg,var(--ch1),var(--ch2) 33%,var(--ch3) 66%,var(--ch4));
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-weight:700; color:#111; font-size:13px;
+    flex:none;
+  }
+  .brand h1{ margin:0; font-size:16px; letter-spacing:0.06em; font-weight:700; }
+  .build-tag{
+    font-family:var(--mono); font-size:10px; font-weight:600;
+    color:var(--bg); background:var(--ch2);
+    padding:2px 6px; border-radius:4px; margin-left:8px; letter-spacing:0.04em;
+    vertical-align:middle;
+  }
+  .brand .sub{ margin:2px 0 0; font-size:12px; color:var(--text-dim); }
+
+  .global-toggle{
+    display:flex; flex-direction:column; gap:4px; align-items:flex-start;
+    background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--ch1);
+    border-radius:8px; padding:8px 12px; max-width:260px;
+  }
+  .global-toggle .mt-hint{ margin:0; }
+  .offset-limit-row{ display:flex; align-items:center; gap:6px; margin:2px 0 0 23px; }
+  .offset-limit-row .offset-limit-label{ font-size:11.5px; color:var(--text-dim); white-space:nowrap; }
+  .offset-limit-row .offset-limit-input{
+    width:72px; background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:4px 6px; border-radius:5px; font-family:var(--mono); font-size:11.5px;
+  }
+  .offset-limit-row .offset-limit-input:focus{ outline:none; border-color:var(--ch3); }
+  .offset-limit-row .offset-limit-input:disabled{ opacity:.5; }
+
+  .case-group{
+    display:flex; align-items:center; gap:8px;
+    background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--ch3);
+    border-radius:8px; padding:8px 12px;
+  }
+  .case-group .case-label{ font-size:12px; color:var(--text-dim); font-weight:600; white-space:nowrap; }
+  .case-group .case-input{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:6px 10px; border-radius:6px; font-size:13px; width:180px; font-family:var(--sans);
+  }
+  .case-group .case-input:focus{ outline:none; border-color:var(--ch3); }
+
+  .lang-switch{ display:flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; flex:none; }
+  .lang-switch button{
+    background:var(--panel-2); border:none; color:var(--text-dim);
+    padding:6px 12px; font-size:12px; cursor:pointer; font-family:var(--sans);
+  }
+  .lang-switch button.active{ background:var(--ch3); color:#0d0d10; font-weight:700; }
+  .lang-switch button:not(.active):hover{ color:var(--text); }
+
+  .file-controls{ display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+  .control-row{ display:flex; gap:8px; align-items:center; }
+  .theme-select{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:6px 10px; border-radius:8px; font-size:12px; cursor:pointer; font-family:var(--sans);
+  }
+  .theme-select:focus{ outline:none; border-color:var(--ch3); }
+  .file-btn{
+    display:inline-flex; align-items:center; gap:6px;
+    background:var(--panel-2); border:1px solid var(--border);
+    color:var(--text); padding:8px 14px; border-radius:8px;
+    font-size:13px; cursor:pointer; user-select:none;
+    transition:border-color .15s ease;
+  }
+  .file-btn:hover{ border-color:var(--ch3); }
+  .file-btn.small{ padding:6px 10px; font-size:12px; }
+
+  /* ---------- File info bar (own row, so loading a file never reflows the header controls) ---------- */
+  .file-info-bar{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:8px 14px;
+  }
+  .file-info{
+    font-family:var(--mono); font-size:11px; color:var(--text-dim);
+    display:flex; flex-wrap:wrap; column-gap:18px; row-gap:3px; align-items:baseline;
+  }
+  .file-info .dim{ color:var(--text-faint); }
+  .file-info .warn{ color:var(--ch1); }
+  .file-info .info{ color:var(--ch3); }
+
+  /* ---------- Trace panel ---------- */
+  .trace-panel{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:14px 16px; display:flex; flex-direction:column; gap:10px;
+  }
+  .trace-group{ display:flex; align-items:flex-start; gap:14px; flex-wrap:wrap; }
+  .group-label{ font-size:12px; color:var(--text-dim); font-weight:600; padding-top:8px; width:34px; flex:none; }
+  /* 右軸種類切換（電流／功率）：取代原本固定的「電流」文字標籤 */
+  .right-axis-select{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:5px 8px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;
+    font-family:var(--sans); flex:none; align-self:flex-start; margin-top:2px;
+  }
+  .right-axis-select:focus{ outline:none; border-color:var(--ch3); }
+  .trace-chips{ display:flex; gap:8px; flex-wrap:wrap; flex:1; }
+  .chip{
+    --chip-color:#888;
+    display:flex; align-items:center; gap:6px;
+    background:var(--panel-2); border:1px solid var(--border); border-left:3px solid var(--chip-color);
+    border-radius:8px; padding:6px 8px;
+  }
+  .chip input[type=checkbox]{ accent-color:var(--chip-color); width:15px; height:15px; cursor:pointer; }
+  .chip input[type=color]{ width:20px; height:20px; padding:0; border:none; border-radius:5px; background:none; cursor:pointer; }
+  .chip input[type=color]::-webkit-color-swatch-wrapper{ padding:0; }
+  .chip input[type=color]::-webkit-color-swatch{ border:1px solid var(--border); border-radius:5px; }
+  .chip input[type=text]{ background:transparent; border:none; color:var(--text); font-size:12px; width:80px; font-family:var(--sans); }
+  .chip input[type=text]:focus{ outline:none; color:var(--text); }
+  .chip input[type=number].chip-offset{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    font-size:11px; width:52px; border-radius:5px; padding:3px 4px; font-family:var(--mono);
+  }
+  .chip input[type=number].chip-offset:focus{ outline:none; border-color:var(--ch3); }
+
+  /* ---------- Chart ---------- */
+  .chart-section{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:14px 16px 16px; display:flex; flex-direction:column; gap:12px;
+  }
+  .chart-toolbar{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; font-size:12.5px; }
+  .chart-toolbar button{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:6px 12px; border-radius:8px; font-size:12.5px; cursor:pointer;
+  }
+  .chart-toolbar button:hover{ border-color:var(--ch3); }
+  .range-inputs{ display:flex; align-items:center; gap:6px; }
+  .range-inputs label{ display:flex; align-items:center; gap:5px; color:var(--text-dim); }
+  .range-inputs input[type=number]{
+    width:92px; background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:5px 7px; border-radius:6px; font-family:var(--mono); font-size:12px;
+  }
+  .chart-hint{ color:var(--text-faint); font-size:11.5px; margin-left:auto; }
+
+  .axis-toolbar{ padding-top:2px; border-top:1px dashed var(--border); }
+  .axis-ctrl{
+    display:flex; align-items:center; gap:6px;
+    background:var(--panel-2); border:1px solid var(--border); border-radius:8px;
+    padding:5px 9px;
+  }
+  .axis-ctrl .axis-tag{ font-weight:700; color:var(--text-dim); font-size:11.5px; margin-right:2px; }
+  .mini-check{ display:flex; align-items:center; gap:4px; color:var(--text-dim); font-size:11.5px; cursor:pointer; }
+  .mini-check input{ width:13px; height:13px; cursor:pointer; }
+  .axis-ctrl label{ display:flex; align-items:center; gap:4px; color:var(--text-dim); font-size:11.5px; }
+  .axis-ctrl input[type=number]{
+    width:78px; background:var(--bg); border:1px solid var(--border); color:var(--text);
+    padding:4px 6px; border-radius:5px; font-family:var(--mono); font-size:11.5px;
+  }
+  .axis-ctrl input[type=number]:disabled{ opacity:.5; }
+
+  .chart-wrap{ position:relative; width:100%; height:clamp(360px, calc(100vh - 300px), 860px); }
+  canvas#chart{ width:100%; height:100%; display:block; cursor:crosshair; }
+  .empty-state{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:4px; color:var(--text-dim); pointer-events:none; font-size:13px;
+  }
+  .empty-state .hint{ font-size:12px; color:var(--text-faint); }
+
+  /* ---------- Time scrollbar (replaces hand-drag panning) ---------- */
+  .time-scrollbar{ padding:2px 0 0; display:none; }
+  .time-scrollbar.active{ display:block; }
+  .ts-track{
+    position:relative; height:14px; background:var(--panel-2); border:1px solid var(--border);
+    border-radius:7px; cursor:pointer;
+  }
+  .ts-thumb{
+    position:absolute; top:1px; bottom:1px; left:0; width:40px; min-width:18px;
+    background:var(--ch3); border-radius:6px; cursor:grab;
+  }
+  .ts-thumb:hover{ background:#5aa8ee; }
+  .ts-thumb.dragging{ cursor:grabbing; background:#5aa8ee; }
+
+  /* ---------- 折疊面板：用完就收，減少常駐佔位（原生 <details>，無需 JS 控制開合） ---------- */
+  .panel-fold{ margin-top:2px; }
+  .panel-fold > summary{
+    list-style:none; cursor:pointer; display:flex; align-items:center; gap:6px;
+    padding:8px 0; color:var(--text-dim); font-size:12.5px; font-weight:600;
+    user-select:none;
+  }
+  .panel-fold > summary::-webkit-details-marker{ display:none; }
+  .panel-fold > summary::before{
+    content:'▸'; display:inline-block; width:0.9em; color:var(--text-faint);
+    transition:transform .15s ease;
+  }
+  .panel-fold[open] > summary::before{ transform:rotate(90deg); }
+  .panel-fold > summary:hover{ color:var(--text); }
+  .panel-fold > summary:hover::before{ color:var(--text-dim); }
+  /* mini 變體：用於行內說明文字這種比整個區塊小一級的折疊（例如負值校正的三行提示），
+     字級與顏色比照 .mt-hint，避免看起來像另一個獨立區塊標題 */
+  .panel-fold.mini > summary{
+    font-size:11.5px; font-weight:400; color:var(--text-faint); padding:2px 0;
+  }
+  .panel-fold.mini > summary:hover{ color:var(--text-dim); }
+  .panel-fold.mini .mt-hint{ margin-top:3px; }
+
+  /* ---------- 匯出工具列共用樣式（CSV / 圖片／報告 共用） ---------- */
+  .export-bar{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding-top:10px; margin-top:2px; border-top:1px dashed var(--border);
+    font-size:12.5px;
+  }
+  .export-bar .ce-label{ color:var(--text-dim); font-weight:600; }
+  .export-bar select{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:6px 10px; border-radius:8px; font-size:12.5px; cursor:pointer;
+  }
+  .export-bar select:focus{ outline:none; border-color:var(--ch3); }
+  .export-bar button{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:6px 14px; border-radius:8px; font-size:12.5px; cursor:pointer;
+  }
+  .export-bar button:hover:not(:disabled){ border-color:var(--ch3); }
+  .export-bar button:disabled{ opacity:.4; cursor:not-allowed; }
+  .export-bar .ce-hint{ color:var(--text-faint); font-size:11.5px; }
+  .csv-export-bar .ce-check{ display:flex; align-items:center; gap:5px; color:var(--text-dim); font-size:11.5px; cursor:pointer; }
+  .csv-export-bar .ce-check input{ width:13px; height:13px; cursor:pointer; }
+
+  .marker-stats{ font-size:12px; }
+  .stats-head{ display:flex; gap:16px; align-items:baseline; margin-bottom:6px; font-family:var(--mono); flex-wrap:wrap; }
+  .stats-head span{ color:var(--text-dim); }
+  table.stats-table{ width:100%; border-collapse:collapse; }
+  table.stats-table th, table.stats-table td{
+    text-align:left; padding:5px 8px; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:12px;
+  }
+  table.stats-table th{ color:var(--text-dim); font-weight:600; font-size:11px; }
+  .dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+
+  /* ---------- Marker table section ---------- */
+  .marker-table-section{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:14px 16px 16px;
+  }
+  .mt-header{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:10px; }
+  .toggle{ display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; cursor:pointer; }
+  .toggle input{ width:16px; height:16px; accent-color:var(--ch3); cursor:pointer; }
+  .mt-hint{ font-size:11.5px; color:var(--text-faint); flex:1; min-width:220px; }
+  .mt-actions{ display:flex; gap:8px; }
+  .mt-actions button{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:6px 12px; border-radius:8px; font-size:12px; cursor:pointer;
+  }
+  .mt-actions button:hover:not(:disabled){ border-color:var(--ch3); }
+  .mt-actions button:disabled{ opacity:.4; cursor:not-allowed; }
+
+  table.marker-table{ width:100%; border-collapse:collapse; transition:opacity .15s ease; }
+  table.marker-table th, table.marker-table td{
+    padding:7px 8px; border-bottom:1px solid var(--border); font-size:12.5px; text-align:left; vertical-align:middle;
+  }
+  table.marker-table th{ color:var(--text-dim); font-weight:600; font-size:11px; }
+  table.marker-table td{ font-family:var(--mono); }
+  table.marker-table .dim{ font-family:var(--sans); color:var(--text-faint); }
+  .note-input{
+    width:100%; background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:5px 7px; border-radius:6px; font-size:12px; font-family:var(--sans);
+  }
+  .note-input:focus{ outline:none; border-color:var(--ch3); }
+  .del-btn{
+    background:none; border:1px solid var(--border); color:var(--text-dim);
+    width:26px; height:26px; border-radius:6px; cursor:pointer; font-size:12px;
+  }
+  .del-btn:hover{ color:var(--danger); border-color:var(--danger); }
+
+  .toast{
+    position:fixed; bottom:22px; left:50%; transform:translate(-50%,20px);
+    background:#26262e; border:1px solid #3a3a44; color:#f0f0ee;
+    padding:9px 16px; border-radius:8px; font-size:12.5px;
+    opacity:0; pointer-events:none; transition:opacity .18s ease, transform .18s ease;
+    z-index:50;
+  }
+  .toast.show{ opacity:1; transform:translate(-50%,0); }
+
+  @media (max-width:640px){
+    .file-controls{ align-items:flex-start; }
+    .chart-hint{ margin-left:0; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">N6</div>
+      <div>
+        <h1>DLOG VIEWER<span class="build-tag">v1.4</span><span class="build-tag" style="background:var(--danger)">MEM3 效能 PREVIEW</span></h1>
+        <p class="sub" data-i18n="brandSub">Keysight N6705C 資料記錄離線分析工具</p>
+      </div>
+    </div>
+    <div class="case-group">
+      <label class="case-label" for="caseNameInput" data-i18n="caseNameLabel">案件名稱</label>
+      <input type="text" id="caseNameInput" class="case-input" data-i18n-placeholder="caseNamePlaceholder" placeholder="輸入案件名稱...">
+    </div>
+    <div class="global-toggle">
+      <label class="toggle">
+        <input type="checkbox" id="offsetToggle">
+        <span data-i18n="offsetLabel">電流負值校正</span>
+      </label>
+      <div class="offset-limit-row">
+        <label class="offset-limit-label" for="offsetMaxLimitInput" data-i18n="offsetMaxLimitLabel">最大值限制</label>
+        <input type="number" id="offsetMaxLimitInput" class="offset-limit-input" min="0" step="any" value="0.0001" disabled>
+      </div>
+      <details class="panel-fold mini" id="offsetHintFold">
+        <summary data-i18n="offsetHintToggle">說明</summary>
+        <p class="mt-hint" data-i18n="offsetHint">開啟後，電流負值會被 0（不含）~ 最大值限制 區間內的亂數取代，恆大於 0、不等於 0（模擬雜訊底值；特殊測項專用，一般測試請保持關閉）</p>
+      </details>
+    </div>
+    <div class="file-controls">
+      <div class="control-row">
+        <div class="lang-switch" id="langSwitch" hidden style="display:none">
+          <button type="button" class="lang-opt active" data-lang="zh">中文</button>
+          <button type="button" class="lang-opt" data-lang="en">EN</button>
+        </div>
+        <select id="themeSelect" class="theme-select">
+          <option value="dark" data-i18n="themeDarkOpt">深色經典</option>
+          <option value="soft-dark" data-i18n="themeSoftDarkOpt">柔和深色</option>
+          <option value="light" data-i18n="themeLightOpt">淺色紙感</option>
+        </select>
+      </div>
+      <label class="file-btn" id="openMainBtn" role="button" tabindex="0">
+        <span data-i18n="chooseFileBtn">選擇 .dlog 檔案</span>
+      </label>
+      <div class="control-row">
+        <label class="file-btn small" id="openCompareBtn" role="button" tabindex="0">
+          <span data-i18n="compareFileBtn">載入比對檔案</span>
+        </label>
+        <button id="compareClearBtn" type="button" data-i18n="compareClearBtn" style="display:none;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:8px;font-size:12px;cursor:pointer;">移除比對檔</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="file-info-bar">
+    <div class="file-info" id="fileInfo">尚未載入檔案</div>
+    <div class="file-info" id="compareFileInfo" style="margin-top:4px;"><span class="dim" id="compareFileName">尚未載入比對檔案</span></div>
+    <div class="file-info" id="parseProgressRow" style="margin-top:4px;display:none;">
+      <span class="info" id="parseProgressText">解析中...</span>
+      <span class="info" id="srcWarn" data-i18n="srcWarn" style="margin-left:10px;color:var(--ch3);"></span>
+      <button id="parseCancelBtn" type="button" data-i18n="cancelBtn" style="margin-left:10px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:2px 10px;border-radius:6px;font-size:12px;cursor:pointer;"></button>
+    </div>
+  </div>
+
+  <section class="trace-panel">
+    <div class="trace-group">
+      <span class="group-label" data-i18n="groupVoltage">電壓</span>
+      <div class="trace-chips" id="voltChips"></div>
+    </div>
+    <div class="trace-group">
+      <select id="rightAxisKindSelect" class="right-axis-select">
+        <option value="I" data-i18n="rightAxisCurrentOpt">電流 (A)</option>
+        <option value="P" data-i18n="rightAxisPowerOpt">功率 (W)</option>
+      </select>
+      <div class="trace-chips" id="currChips"></div>
+    </div>
+  </section>
+
+  <section class="chart-section">
+    <div class="chart-toolbar">
+      <button id="autoscaleBtn" data-i18n="btnAutoscale">⟲ 全部</button>
+      <button id="backBtn" disabled data-i18n="btnBack">← 回上一步</button>
+      <button id="centerMarkersBtn" data-i18n-title="centerMarkersTitle" title="將 M1、M2 標記線移回目前圖表可視範圍內，縮放後遺失標記時可用">M1,M2</button>
+      <div class="range-inputs">
+        <label><span data-i18n="rangeStart">起始</span> <input type="number" id="viewStart" step="any">s</label>
+        <label><span data-i18n="rangeEnd">結束</span> <input type="number" id="viewEnd" step="any">s</label>
+        <button id="applyRangeBtn" data-i18n="btnApply">套用</button>
+      </div>
+      <span class="chart-hint" data-i18n="chartHintMain">主圖拖曳：圈選放大｜下方捲動條：平移｜Ctrl(⌘)+滾輪：縮放時間</span>
+    </div>
+    <div class="chart-toolbar axis-toolbar">
+      <div class="axis-ctrl" data-axis="v">
+        <span class="axis-tag" data-i18n="axisVTag">V 軸</span>
+        <label class="mini-check"><input type="checkbox" id="vAutoToggle" checked><span data-i18n="autoLabel">自動</span></label>
+        <label>Ref<input type="number" id="vRefInput" step="any"></label>
+        <label><span data-i18n="perDivLabel">格</span><input type="number" id="vDivInput" step="any"></label>
+      </div>
+      <div class="axis-ctrl" data-axis="i">
+        <span class="axis-tag" id="axisRightTag">I 軸</span>
+        <label class="mini-check"><input type="checkbox" id="iAutoToggle" checked><span data-i18n="autoLabel">自動</span></label>
+        <label>Ref<input type="number" id="iRefInput" step="any"></label>
+        <label><span data-i18n="perDivLabel">格</span><input type="number" id="iDivInput" step="any"></label>
+      </div>
+      <span class="chart-hint" data-i18n="chartHintAxis">左／右軸邊界：Ctrl(⌘)+滾輪調整刻度、上下拖曳調整參考位置｜右鍵：新增標記</span>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+      <div class="empty-state" id="emptyState">
+        <p data-i18n="emptyTitle">尚未載入資料</p>
+        <p class="hint" data-i18n="emptyHint">選擇上方 .dlog 檔案以開始分析</p>
+      </div>
+    </div>
+    <div class="time-scrollbar" id="timeScrollbar">
+      <div class="ts-track" id="tsTrack">
+        <div class="ts-thumb" id="tsThumb"></div>
+      </div>
+    </div>
+    <div class="marker-stats" id="markerStats"></div>
+    <details class="panel-fold" id="exportFold" open>
+      <summary data-i18n="exportSectionLabel">匯出（CSV／圖片／報告）</summary>
+      <div class="export-bar csv-export-bar" id="csvExportBar">
+        <span class="ce-label" data-i18n="csvExportLabel">CSV 匯出</span>
+        <select id="csvRangeSelect">
+          <option value="markers" data-i18n="csvRangeMarkers">M1 ↔ M2 區間</option>
+          <option value="view" data-i18n="csvRangeView">目前顯示範圍</option>
+          <option value="all" data-i18n="csvRangeAll">全部資料</option>
+        </select>
+        <label class="ce-check"><input type="checkbox" id="csvVisibleOnly" checked><span data-i18n="csvVisibleOnlyLabel">僅匯出已勾選曲線</span></label>
+        <span class="ce-hint" id="csvRangeHint"></span>
+        <button id="exportCsvBtn" disabled data-i18n="btnExportCsv">⬇ 匯出 CSV</button>
+      </div>
+      <div class="export-bar img-export-bar" id="imgExportBar">
+        <span class="ce-label" data-i18n="imgExportLabel">圖片／報告 色彩</span>
+        <select id="imageThemeSelect">
+          <option value="normal" data-i18n="themeNormal">原色（目前主題）</option>
+          <option value="light" data-i18n="themeLight">白底列印版</option>
+          <option value="negative" data-i18n="themeNegative">完全負片</option>
+        </select>
+        <button id="exportImageBtn" disabled data-i18n="btnExportImage">⬇ 匯出圖片 PNG</button>
+        <button id="exportReportBtn" disabled data-i18n="btnExportReport">⬇ 匯出 HTML 報告</button>
+        <span class="ce-hint" data-i18n="reportHint">報告會內嵌目前圖表截圖與統計資料；若 Marker Table 已開啟，會一併附上標記清單</span>
+      </div>
+    </details>
+  </section>
+
+  <section class="marker-table-section">
+    <div class="mt-header">
+      <label class="toggle">
+        <input type="checkbox" id="markerTableToggle">
+        <span>Marker Table</span>
+      </label>
+      <span class="mt-hint" data-i18n="markerTableHint">開啟後，在圖表任一顯示中的曲線上按滑鼠右鍵即可新增標記（最多 10 點，自動吸附最近資料點）</span>
+      <div class="mt-actions">
+        <button id="exportJsonBtn" disabled data-i18n="btnExportJson">匯出 JSON</button>
+        <label class="file-btn small" id="importJsonBtn" role="button" tabindex="0">
+          <span data-i18n="btnImportJson">載入 JSON</span>
+        </label>
+      </div>
+    </div>
+    <table class="marker-table" id="markerTableEl">
+      <thead>
+        <tr><th data-i18n="thIndex">#</th><th data-i18n="thTime">時間 (s)</th><th data-i18n="thChannel">通道</th><th data-i18n="thVoltage">電壓</th><th data-i18n="thCurrent">電流</th><th data-i18n="thPower">功率</th><th data-i18n="thNote">註記</th><th></th></tr>
+      </thead>
+      <tbody id="markerTableBody"></tbody>
+    </table>
+  </section>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  'use strict';
+
+  const MONO_FONT = "11px ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
+  const PAD = { l:60, r:60, t:24, b:36 };
+  const N_BUCKETS = 1800;
+
+  // 外殼傳入的連線資訊（fragment：t、gen、lang、parent）；讀完立刻清掉 fragment。
+  const shellCtx = (function(){
+    const p = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const c = { token:p.get('t')||'', gen:parseInt(p.get('gen'),10), lang:p.get('lang'), parent:p.get('parent')||'' };
+    try{ history.replaceState(null, '', location.pathname + location.search); }catch(_){ /* ignore */ }
+    c.ok = /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}$/.test(c.parent) && c.token.length>0 && Number.isInteger(c.gen);
+    return c;
+  })();
+
+  // 頁面外觀主題：同時涵蓋 CSS 介面色（見 <style> 內 html[data-theme=...]）
+  // 與 canvas 圖表繪製色（grid/軸文字/Marker線/曲線預設色），兩邊用同一組
+  // 色票確保視覺一致。曲線色特別挑選「柔和但彼此可辨識」的色調。
+  const CHART_THEMES = {
+    dark:      { bg:'#1a1a1f', grid:'rgba(255,255,255,0.06)', axisText:'#98979f', markerLine:'rgba(255,255,255,0.5)',  markerLabel:'#e9e9ec', badgeFill:'#0d0d10', badgeText:'#ffffff', chColors:['#f0a83c','#66cf5c','#4a9eea','#e662b0'] },
+    'soft-dark':{ bg:'#282523', grid:'rgba(255,247,235,0.07)', axisText:'#a89f92', markerLine:'rgba(255,247,235,0.45)', markerLabel:'#ece6db', badgeFill:'#171412', badgeText:'#f2ede4', chColors:['#e0a868','#8fbb7a','#7ba7c9','#c98bab'] },
+    light:     { bg:'#ffffff', grid:'rgba(0,0,0,0.10)',       axisText:'#6b6357', markerLine:'rgba(0,0,0,0.40)',       markerLabel:'#2b2820', badgeFill:'#2b2820', badgeText:'#ffffff', chColors:['#a8600f','#3f8f3a','#2f6fb0','#b23f82'] },
+  };
+
+  const state = {
+    fileName:null, tint:null, declaredTime:null, nRecords:null,
+    channelModels:['CH1','CH2','CH3','CH4'],
+    activeChannels:[1,2,3,4],
+    // 原始樣本不再放在瀏覽器記憶體（千萬筆的 raw 有數百 MB），改由本機 Python server
+    // 以 memmap 持有；handle 是 server 端的檔案識別碼（內容 sha1），取值一律透過它。
+    handle:null,
+    loaded:false,            // 取代舊版用 state.V 當「已載入」哨兵的做法
+    traces:[],
+    // 比對檔（MEM）：僅供主波形圖疊圖比對用，t=0 與主檔案對齊，但保留各自獨立的
+    // tint／nRecords（取樣間隔與筆數可以不同），故繪圖／統計一律改用「每條曲線各自
+    // 換算時間↔索引」，而不是共用同一組全域 idx（見 tintOf()/nRecOfTrace() 等輔助函式）
+    compare:null,             // { fileName, handle, tint, nRecords, fields, minmax }
+    // LOD（Level of Detail）分層 min/max 摘要，key 格式：'p:V1'（本檔案 CH1 電壓）／
+    // 'c:I3'（比對檔 CH3 電流）。由 server 在開檔時一併建置並隨 /open 回傳，
+    // 常駐前端讓大範圍縮放的重繪維持同步、零網路（僅佔 raw 的 4.8%）。
+    // 找不到對應項目時安全退回 raw 視窗逐筆掃描，不影響任何數值正確性。
+    lod:new Map(),
+    rightAxisKind:'I', // 'I'（電流）或 'P'（功率 V*I）——決定右軸目前顯示哪一種曲線／單位
+    marker1:null, marker2:null,
+    markerTableOn:false,
+    markers:[],
+    offsetMode:false,   // 預設不開啟校正
+    offsetMaxLimit:0.0001,   // 電流負值校正的最大值限制：負值會被 (0, offsetMaxLimit] 區間內的值取代，預設 0.0001（校正開關預設關閉，不影響一般瀏覽）
+    view:{ t0:0, t1:1 },
+    viewHistory:[],
+    vAxis:{ auto:true, ref:0, perDiv:1, _autoMin:null, _autoMax:null },
+    iAxis:{ auto:true, ref:0, perDiv:1, _autoMin:null, _autoMax:null },
+    lang:(shellCtx.lang==='en' ? 'en' : 'zh'),
+    caseName:'',
+    theme:'dark',
+  };
+
+  // ---------------------------------------------------------------
+  // 中文／English 語言字典：整版所有靜態與動態文字統一由此取得，
+  // T(key, ...args) 依 state.lang 回傳對應語言字串（值可為字串或函式，
+  // 函式用於需要帶入參數的模板，例如筆數、時間等）
+  // ---------------------------------------------------------------
+  const I18N = {
+    zh: {
+      pageTitle: 'N6705C DLOG Viewer',
+      brandSub: 'Keysight N6705C 資料記錄離線分析工具',
+      caseNameLabel: '案件名稱',
+      caseNamePlaceholder: '輸入案件名稱...',
+      offsetLabel: '電流負值校正',
+      offsetMaxLimitLabel: '最大值限制',
+      offsetHintToggle: '說明',
+      offsetHint: '開啟後，電流負值會被 0（不含）~ 最大值限制 區間內的亂數取代，恆大於 0、不等於 0（模擬雜訊底值；特殊測項專用，一般測試請保持關閉）',
+      chooseFileBtn: '選擇 .dlog 檔案',
+      noFileLoaded: '尚未載入檔案',
+      srcWarn: '分析中請勿移動、覆寫或編輯來源檔',
+      cancelBtn: '取消',
+      progressHash: '驗證檔案',
+      progressParse: '解析中',
+      progressLod: '建立摘要',
+      progressCsv: 'CSV 匯出中...',
+      errBadParent: '無法與外殼建立連線，開檔與存檔已停用',
+      saveFailedPrefix: '儲存失敗：',
+      msgExportDataChanged: '\u532f\u51fa\u671f\u9593\u8a2d\u5b9a\u6216\u8cc7\u6599\u6709\u8b8a\u52d5\uff0c\u6216\u7d71\u8a08\u53d6\u5f97\u5931\u6557\uff0c\u8acb\u518d\u8a66\u4e00\u6b21', // zh, escaped: source stays ASCII
+      compareFileBtn: '載入比對檔案',
+      compareClearBtn: '移除比對檔',
+      compareNoFile: '尚未載入比對檔案',
+      compareFileInfo: (name,n,tintMs)=>name+'（'+n.toLocaleString()+' 筆 · tint='+tintMs.toFixed(5)+' ms）',
+      compareNeedMain: '請先載入主檔案，再載入比對檔案',
+      compareLoaded: (name)=>'比對檔已載入：'+name,
+      compareLoadFailed: '比對檔解析失敗：',
+      groupVoltage: '電壓',
+      groupCurrent: '電流',
+      groupPower: '功率',
+      rightAxisCurrentOpt: '電流 (A)',
+      rightAxisPowerOpt: '功率 (W)',
+      btnAutoscale: '⟲ 全部',
+      btnBack: '← 回上一步',
+      centerMarkersTitle: '將 M1、M2 標記線移回目前圖表可視範圍內，縮放後遺失標記時可用',
+      rangeStart: '起始',
+      rangeEnd: '結束',
+      btnApply: '套用',
+      chartHintMain: '主圖拖曳：圈選放大｜下方捲動條：平移｜Ctrl(⌘)+滾輪：縮放時間',
+      chipOffsetTitle: '曲線顯示位移（僅影響畫面位置，不影響數值／統計／匯出），雙擊重置為 0',
+      themeDarkOpt: '深色經典',
+      themeSoftDarkOpt: '柔和深色',
+      themeLightOpt: '淺色紙感',
+      axisVTag: 'V 軸',
+      axisITag: 'I 軸',
+      axisPTag: 'P 軸',
+      autoLabel: '自動',
+      perDivLabel: '格',
+      chartHintAxis: '左／右軸邊界：Ctrl(⌘)+滾輪調整刻度、上下拖曳調整參考位置｜右鍵：新增標記',
+      emptyTitle: '尚未載入資料',
+      emptyHint: '選擇上方 .dlog 檔案以開始分析',
+      exportSectionLabel: '匯出（CSV／圖片／報告）',
+      csvExportLabel: 'CSV 匯出',
+      csvRangeMarkers: 'M1 ↔ M2 區間',
+      csvRangeView: '目前顯示範圍',
+      csvRangeAll: '全部資料',
+      csvVisibleOnlyLabel: '僅匯出已勾選曲線',
+      btnExportCsv: '⬇ 匯出 CSV',
+      imgExportLabel: '圖片／報告 色彩',
+      themeNormal: '原色（目前主題）',
+      themeLight: '白底列印版',
+      themeNegative: '完全負片',
+      btnExportImage: '⬇ 匯出圖片 PNG',
+      btnExportReport: '⬇ 匯出 HTML 報告',
+      reportHint: '報告會內嵌目前圖表截圖與統計資料；若 Marker Table 已開啟，會一併附上標記清單',
+      markerTableHint: '開啟後，在圖表任一顯示中的曲線上按滑鼠右鍵即可新增標記（最多 10 點，自動吸附最近資料點）',
+      btnExportJson: '匯出 JSON',
+      btnImportJson: '載入 JSON',
+      thIndex: '#', thTime: '時間 (s)', thChannel: '通道', thVoltage: '電壓', thCurrent: '電流', thPower: '功率', thNote: '註記',
+      thTrace: '曲線', thM1Val: 'M1 值', thM2Val: 'M2 值', thMax: 'Max', thMin: 'Min', thAvg: 'Avg',
+      noTraceSelected: '尚未勾選任何曲線',
+      recordsUnit: ' 筆記錄',
+      actualDurationLabel: '實際時長',
+      infoStoppedEarly: (declared,dur)=>'ℹ 記錄可能提前停止：header 設定總時長 '+declared+'s，實際只記錄了 '+dur.toFixed(3)+'s（分析與匯出皆以實際筆數為準，非錯誤）',
+      warnLongerThanDeclared: (declared,dur)=>'⚠ 實際記錄時長（'+dur.toFixed(3)+'s）超過 header 設定時長（'+declared+'s），請確認檔案是否正常',
+      parseFailedPrefix: '解析失敗：',
+      msgBadRange: '時間範圍不正確',
+      msgMarkersRecentered: 'M1/M2 已移至目前可視範圍中間',
+      msgBadAxisValue: '刻度數值不正確',
+      msgWheelHint: '按住 Ctrl（Mac：Cmd）再滾動滑鼠可縮放圖表，避免誤觸',
+      msgEnableMarkerTable: '請先開啟 Marker Table 開關',
+      msgMarkerLimit: '已達 10 點上限，請先刪除舊標記',
+      msgNoTraceChecked: '請先勾選至少一條曲線',
+      msgMarkersLoaded: (n)=>'已載入 '+n+' 筆標記',
+      msgJsonLoadFailed: 'JSON 載入失敗：',
+      csvNoMarkers: '尚未設定 M1/M2',
+      csvWillExport: (n,t0,t1)=>'將匯出 '+n+' 筆資料點（t = '+t0+'s ~ '+t1+'s）',
+      msgNoMarkersForCsv: '尚未設定 M1/M2，請先於圖表上拖曳兩條 Marker 線',
+      msgBadDataRange: '資料區間不正確',
+      msgNoTraceForCsv: '請先勾選至少一條曲線，或取消「僅匯出已勾選曲線」',
+      msgCsvExported: (n)=>'已匯出 '+n+' 筆資料至 CSV',
+      msgImageExportFailed: '圖片匯出失敗',
+      msgImageExported: '已匯出圖表圖片',
+      msgReportExported: '已匯出 HTML 報告',
+      markerTableOffHint: '開啟上方 Marker Table 開關以檢視／新增標記',
+      markerTableEmptyHint: '尚無標記。在圖表上任一勾選中的曲線按右鍵即可新增（最多 10 點）',
+      notePlaceholder: '輸入註記...',
+      deleteBtnTitle: '刪除',
+      axisVTitle: '電壓 (V)',
+      axisITitle: '電流 (A)',
+      axisPTitle: '功率 (W)',
+      reportTitlePrefix: 'DLOG 分析報告 — ',
+      reportH1: 'N6705C DLOG 分析報告',
+      metaFile: '檔案',
+      metaGenTime: '產生時間',
+      metaSamples: '樣本數',
+      metaDuration: '總時長',
+      metaOffsetMode: 'Offset 模式',
+      onLabel: '開啟',
+      offLabel: '關閉',
+      metaChartColor: '圖表色彩',
+      metaViewRange: '目前顯示範圍',
+      metaCaseName: '案件名稱',
+      reportChartShotHeading: '曲線圖截圖',
+      reportStatsHeading: '統計資料（M1 / M2 區間）',
+      reportMarkerHeading: 'Marker Table 標記清單',
+      reportMarkerEmpty: 'Marker Table 已開啟，但尚無標記點。',
+      reportFooter: '由 N6705C DLOG Viewer 自動產生',
+      errNoEndMarker: '找不到 </dlog> 結束標記，檔案格式不符',
+      errNoTint: 'Header 中找不到 <tint> 欄位',
+      errFileTooShort: '檔案長度不足，缺少記錄筆數欄位',
+      errDataLenMismatch: (expected,actual)=>'資料長度不符：期望 '+expected+' bytes，實際剩餘 '+actual+' bytes',
+    },
+    en: {
+      pageTitle: 'N6705C DLOG Viewer',
+      brandSub: 'Keysight N6705C Data Log Offline Analysis Tool',
+      caseNameLabel: 'Case Name',
+      caseNamePlaceholder: 'Enter case name...',
+      offsetLabel: 'Negative Current Correction',
+      offsetMaxLimitLabel: 'Max Limit',
+      offsetHintToggle: 'Details',
+      offsetHint: 'When enabled, negative current values are replaced with a random value in (0, Max Limit] — always greater than 0, never exactly 0 (simulates the noise floor; special test items only — keep this off for normal tests).',
+      chooseFileBtn: 'Choose .dlog File',
+      noFileLoaded: 'No file loaded',
+      srcWarn: 'Do not move, overwrite or edit the source file while it is being analyzed',
+      cancelBtn: 'Cancel',
+      progressHash: 'Verifying file',
+      progressParse: 'Parsing',
+      progressLod: 'Building overview',
+      progressCsv: 'Exporting CSV...',
+      errBadParent: 'Cannot reach the host shell; open and save are disabled',
+      saveFailedPrefix: 'Save failed: ',
+      msgExportDataChanged: 'Settings or data changed during export, or statistics failed to load; please try again',
+      compareFileBtn: 'Load Comparison File',
+      compareClearBtn: 'Remove Comparison',
+      compareNoFile: 'No comparison file loaded',
+      compareFileInfo: (name,n,tintMs)=>name+' ('+n.toLocaleString()+' records · tint='+tintMs.toFixed(5)+' ms)',
+      compareNeedMain: 'Load the main file before loading a comparison file',
+      compareLoaded: (name)=>'Comparison file loaded: '+name,
+      compareLoadFailed: 'Failed to parse comparison file: ',
+      groupVoltage: 'Voltage',
+      groupCurrent: 'Current',
+      groupPower: 'Power',
+      rightAxisCurrentOpt: 'Current (A)',
+      rightAxisPowerOpt: 'Power (W)',
+      btnAutoscale: '⟲ Reset Zoom',
+      btnBack: '← Undo Zoom',
+      centerMarkersTitle: 'Move M1/M2 marker lines back into the current visible chart range (useful when zooming loses them)',
+      rangeStart: 'Start',
+      rangeEnd: 'End',
+      btnApply: 'Apply',
+      chartHintMain: 'Drag on chart: box-zoom | Scrollbar below: pan | Ctrl(⌘)+wheel: zoom time',
+      chipOffsetTitle: 'Trace display offset (visual position only — does not affect values, stats, or exports). Double-click to reset to 0.',
+      themeDarkOpt: 'Classic Dark',
+      themeSoftDarkOpt: 'Soft Dark',
+      themeLightOpt: 'Light Paper',
+      axisVTag: 'V Axis',
+      axisITag: 'I Axis',
+      axisPTag: 'P Axis',
+      autoLabel: 'Auto',
+      perDivLabel: '/div',
+      chartHintAxis: 'Left/right axis edge: Ctrl(⌘)+wheel to scale, drag up/down to shift reference | Right-click: add marker',
+      emptyTitle: 'No data loaded',
+      emptyHint: 'Choose a .dlog file above to begin analysis',
+      exportSectionLabel: 'Export (CSV / Image / Report)',
+      csvExportLabel: 'CSV Export',
+      csvRangeMarkers: 'M1 ↔ M2 Range',
+      csvRangeView: 'Current View Range',
+      csvRangeAll: 'All Data',
+      csvVisibleOnlyLabel: 'Visible traces only',
+      btnExportCsv: '⬇ Export CSV',
+      imgExportLabel: 'Image/Report Color',
+      themeNormal: 'Original (current theme)',
+      themeLight: 'Print (white background)',
+      themeNegative: 'Full negative',
+      btnExportImage: '⬇ Export Image PNG',
+      btnExportReport: '⬇ Export HTML Report',
+      reportHint: 'The report embeds the current chart screenshot and stats; if Marker Table is enabled, its marker list is included too.',
+      markerTableHint: 'When enabled, right-click any visible trace on the chart to add a marker (max 10 points, snaps to the nearest sample).',
+      btnExportJson: 'Export JSON',
+      btnImportJson: 'Load JSON',
+      thIndex: '#', thTime: 'Time (s)', thChannel: 'Channel', thVoltage: 'Voltage', thCurrent: 'Current', thPower: 'Power', thNote: 'Note',
+      thTrace: 'Trace', thM1Val: 'M1 Value', thM2Val: 'M2 Value', thMax: 'Max', thMin: 'Min', thAvg: 'Avg',
+      noTraceSelected: 'No trace selected',
+      recordsUnit: ' records',
+      actualDurationLabel: 'actual duration',
+      infoStoppedEarly: (declared,dur)=>'ℹ Recording may have stopped early: header declared '+declared+'s total, but only '+dur.toFixed(3)+'s was actually recorded (analysis and exports use the actual record count — this is not an error)',
+      warnLongerThanDeclared: (declared,dur)=>'⚠ Actual recorded duration ('+dur.toFixed(3)+'s) exceeds the header-declared duration ('+declared+'s) — please verify the file is not corrupted',
+      parseFailedPrefix: 'Parse failed: ',
+      msgBadRange: 'Invalid time range',
+      msgMarkersRecentered: 'M1/M2 moved to the center of the current view',
+      msgBadAxisValue: 'Invalid scale value',
+      msgWheelHint: 'Hold Ctrl (Cmd on Mac) and scroll to zoom the chart, to avoid accidental zoom',
+      msgEnableMarkerTable: 'Please enable the Marker Table switch first',
+      msgMarkerLimit: 'Reached the 10-point limit — delete an existing marker first',
+      msgNoTraceChecked: 'Please select at least one trace first',
+      msgMarkersLoaded: (n)=>'Loaded '+n+' marker(s)',
+      msgJsonLoadFailed: 'Failed to load JSON: ',
+      csvNoMarkers: 'M1/M2 not set',
+      csvWillExport: (n,t0,t1)=>'Will export '+n+' samples (t = '+t0+'s ~ '+t1+'s)',
+      msgNoMarkersForCsv: 'M1/M2 not set — drag out both marker lines on the chart first',
+      msgBadDataRange: 'Invalid data range',
+      msgNoTraceForCsv: 'Please select at least one trace, or uncheck "Visible traces only"',
+      msgCsvExported: (n)=>'Exported '+n+' rows to CSV',
+      msgImageExportFailed: 'Image export failed',
+      msgImageExported: 'Chart image exported',
+      msgReportExported: 'HTML report exported',
+      markerTableOffHint: 'Enable the Marker Table switch above to view/add markers',
+      markerTableEmptyHint: 'No markers yet. Right-click any checked trace on the chart to add one (max 10 points)',
+      notePlaceholder: 'Enter a note...',
+      deleteBtnTitle: 'Delete',
+      axisVTitle: 'Voltage (V)',
+      axisITitle: 'Current (A)',
+      axisPTitle: 'Power (W)',
+      reportTitlePrefix: 'DLOG Analysis Report — ',
+      reportH1: 'N6705C DLOG Analysis Report',
+      metaFile: 'File',
+      metaGenTime: 'Generated',
+      metaSamples: 'Samples',
+      metaDuration: 'Duration',
+      metaOffsetMode: 'Offset Mode',
+      onLabel: 'On',
+      offLabel: 'Off',
+      metaChartColor: 'Chart Color',
+      metaViewRange: 'Current View Range',
+      metaCaseName: 'Case Name',
+      reportChartShotHeading: 'Chart Screenshot',
+      reportStatsHeading: 'Statistics (M1 / M2 Range)',
+      reportMarkerHeading: 'Marker Table List',
+      reportMarkerEmpty: 'Marker Table is enabled, but no markers have been added yet.',
+      reportFooter: 'Generated automatically by N6705C DLOG Viewer',
+      errNoEndMarker: 'Could not find the </dlog> end marker — file format not recognized',
+      errNoTint: 'Could not find a <tint> field in the header',
+      errFileTooShort: 'File is too short — missing the record-count field',
+      errDataLenMismatch: (expected,actual)=>'Data length mismatch: expected '+expected+' bytes, but only '+actual+' bytes remain',
+    },
+  };
+
+  function T(key, ...args){
+    const dict = I18N[state.lang] || I18N.zh;
+    let v = dict[key];
+    if(v===undefined) v = I18N.zh[key];
+    if(v===undefined) return key;
+    return typeof v==='function' ? v(...args) : v;
+  }
+
+  // ---------------------------------------------------------------
+  // 資料層：.dlog 的解析、LOD 建置、統計、CSV 匯出全部改由本機 Python server
+  // 負責（server/dlog_core.py、server/dlog_server.py）。瀏覽器端不再持有原始樣本，
+  // 因此檔案大小不再受分頁記憶體限制（千萬筆以上的 raw 有數百 MB，瀏覽器吃不下）。
+  //
+  // 前端仍保留兩層本地快取，讓「重繪」維持同步、零網路——這點很關鍵，因為拖曳
+  // M1/M2、切換主題、勾選曲線這些操作都會重繪，但根本沒有改變視野：
+  //   1. state.lod      開檔時一次載入，僅佔 raw 的 4.8%，涵蓋大範圍縮放
+  //   2. state.rawWindow 目前視野附近的原始樣本（含前後各一倍 margin），涵蓋放大後的細節
+  // 只有「視野改變且離開已快取的 raw 視窗」才會觸發一次非同步取數。
+  // ---------------------------------------------------------------
+  const API = '';  // 同源；頁面由分析 server 提供
+
+  // ---- HTTP：所有請求帶 token＋gen；JOB 類請求在用戶端限 3 條並行（server 上限 4，
+  // /cancel、/release 為 CONTROL，不佔名額）。
+  const JOB_SLOTS = 3;
+  let jobActive = 0;
+  const jobWaiters = [];
+  async function jobSlot(){
+    if(jobActive>=JOB_SLOTS) await new Promise(r=>jobWaiters.push(r));
+    jobActive++;
+  }
+  function jobDone(){
+    jobActive--;
+    const w = jobWaiters.shift();
+    if(w) w();
+  }
+  // Resolves with the fully read body (parsed JSON when json, else an ArrayBuffer)
+  // so a JOB slot is held until the response is consumed, not just its headers.
+  async function apiFetch(path, opt, control, json){
+    opt = Object.assign({}, opt);
+    opt.headers = Object.assign({ 'X-Analysis-Token':shellCtx.token, 'X-Analysis-Gen':String(shellCtx.gen) }, opt.headers||{});
+    if(!control) await jobSlot();
+    try{
+      const res = await fetch(API+path, opt);
+      if(!res.ok){
+        let msg = 'HTTP '+res.status, code = '';
+        try{ const j = await res.json(); msg = j.error || msg; code = j.code || ''; }catch(_){ /* ignore */ }
+        const e = new Error(msg); e.code = code; e.status = res.status;
+        throw e;
+      }
+      return await (json ? res.json() : res.arrayBuffer());
+    }finally{
+      if(!control) jobDone();
+    }
+  }
+  function postJson(path, body, req, control, json){
+    const headers = { 'Content-Type':'application/json' };
+    if(req) headers['X-Analysis-Req'] = req;
+    return apiFetch(path, { method:'POST', headers, body:JSON.stringify(body) }, control, json);
+  }
+
+  // ---- postMessage（契約 §4）：只對 parent 精確 origin 發送；收訊驗 source/origin/v/gen/type
+  let reqSeq = 0;
+  function nextId(){ return 'r'+(++reqSeq); }
+  const pendingReplies = new Map();   // id -> { type: 期望的回覆型別, resolve }
+  function shellSend(msg){
+    if(!shellCtx.ok) return;
+    window.parent.postMessage(Object.assign({ v:1, gen:shellCtx.gen }, msg), shellCtx.parent);
+  }
+  function shellAsk(type, fields){
+    if(!shellCtx.ok) return Promise.reject(new Error(T('errBadParent')));
+    return new Promise(resolve=>{
+      const id = nextId();
+      pendingReplies.set(id, { type: type==='open_request' ? 'open_result' : 'save_result', resolve });
+      shellSend(Object.assign({ type, id }, fields));
+    });
+  }
+  window.addEventListener('message', (ev)=>{
+    if(!shellCtx.ok || ev.source!==window.parent || ev.origin!==shellCtx.parent) return;
+    const d = ev.data;
+    if(!d || typeof d!=='object' || d.v!==1 || d.gen!==shellCtx.gen) return;
+    if(d.type==='lang'){
+      if(d.lang==='zh' || d.lang==='en') setLang(d.lang);
+      return;
+    }
+    if(d.type==='open_result' || d.type==='save_result'){
+      if(typeof d.id!=='string' || typeof d.ok!=='boolean') return;
+      const p = pendingReplies.get(d.id);
+      if(!p || p.type!==d.type) return;
+      pendingReplies.delete(d.id);
+      p.resolve(d);
+    }
+  });
+  // 向外殼要路徑授權；使用者取消 → null；被拒 → 丟錯
+  async function askPath(type, fields){
+    const r = await shellAsk(type, fields);
+    if(r.cancelled) return null;
+    if(!r.ok || typeof r.grant!=='string'){
+      const e = new Error(r.error || 'denied'); e.code = r.code || '';
+      throw e;
+    }
+    return r;
+  }
+  async function saveBlob(purpose, suggested, blob){
+    const g = await askPath('save_request', { purpose, suggested });
+    if(!g) return false;
+    await apiFetch('/save', { method:'POST', headers:{ 'X-Analysis-Grant':g.grant, 'X-Analysis-Purpose':purpose, 'Content-Type':'application/octet-stream' }, body:blob });
+    return true;
+  }
+  function releaseHandle(h){
+    if(h) postJson('/release', { h }, null, true).catch(()=>{});
+  }
+  let activeReq = null;
+  // Opens and the CSV export run one at a time: a second click while one is in
+  // flight is ignored, so Cancel, the progress row and activeReq always belong to
+  // the single running operation and a slow earlier open cannot overwrite a later one.
+  let longOpBusy = false;
+  function longOp(fn){
+    return async ()=>{
+      if(longOpBusy) return;
+      longOpBusy = true;
+      try{ await fn(); }finally{ longOpBusy = false; }
+    };
+  }
+  function cancelActive(){
+    if(activeReq) postJson('/cancel', { req:activeReq }, null, true).catch(()=>{});
+  }
+
+  // 回應格式：[4-byte meta 長度][JSON metadata][Float32 payload]
+  function splitBinary(buf){
+    const dv = new DataView(buf);
+    const metaLen = dv.getUint32(0, true);
+    const meta = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buf, 4, metaLen)));
+    return { meta, payload: buf, base: 4 + metaLen };
+  }
+  function f32View(buf, base, offset, length){
+    return new Float32Array(buf, base + offset, length);
+  }
+
+  const PROGRESS_POLL_MS = 300;
+  async function apiOpen(grant, onProgress){
+    if(onProgress) onProgress('hash', 0);
+    const req = nextId();
+    activeReq = req;
+    let res;
+    // 輪詢 /progress（CONTROL，不佔 slot）；錯誤一律忽略
+    const poll = setInterval(async ()=>{
+      try{
+        const j = await apiFetch('/progress?req='+req, {}, true, true);
+        if(j.ok && onProgress && activeReq===req) onProgress(j.stage, j.pct);
+      }catch(_){ /* ignore */ }
+    }, PROGRESS_POLL_MS);
+    try{
+      res = await postJson('/open', { grant }, req);
+    }finally{
+      clearInterval(poll);
+      activeReq = null;
+    }
+    const { meta, payload, base } = splitBinary(res);
+    const lodObj = {};
+    const factors = meta.lodFactors;
+    meta.lodLayout.forEach(seg=>{
+      const entry = lodObj[seg.key] || (lodObj[seg.key] = {});
+      const lvName = seg.level===0 ? 'level0' : 'level1';
+      const lv = entry[lvName] || (entry[lvName] = {
+        factor: seg.level===0 ? factors.level0 : factors.level1,
+        n: seg.length,
+      });
+      lv[seg.which] = f32View(payload, base, seg.offset, seg.length);
+    });
+    if(onProgress) onProgress('lod', 100);
+    return { meta, lod: lodObj };
+  }
+
+  // §7.1：與 contracts.use_buckets 同一算式
+  const MAX_SAMPLES_SPAN = 2000000, MAX_RESPONSE_BYTES = 64*1024*1024, META_RESERVE_BYTES = 64*1024, SAMPLE_BYTES = 4;
+  function useBuckets(span, nKeys){
+    return span>MAX_SAMPLES_SPAN || (META_RESERVE_BYTES + span*nKeys*SAMPLE_BYTES)>MAX_RESPONSE_BYTES;
+  }
+  // /samples 預設 keys＝所有啟用聲道的 V、I
+  function nKeysOfHandle(handle){
+    const ch = (state.compare && handle===state.compare.handle) ? state.compare.activeChannels : state.activeChannels;
+    return 2*((ch&&ch.length)||4);
+  }
+
+  function qs(params){
+    return Object.keys(params)
+      .filter(k=>params[k]!==null && params[k]!==undefined)
+      .map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k]))
+      .join('&');
+  }
+
+  // 校正參數：所有取值端點共用，server 端統一套用電流負值校正，
+  // 前端不再自己產生亂數（舊版的 offsetRandCache 已隨之刪除）
+  function offsetParams(){
+    return state.offsetMode
+      ? { offset:1, maxLimit: Math.max(0, state.offsetMaxLimit||0) }
+      : {};
+  }
+
+  async function apiSamples(handle, lo, hi){
+    const { meta, payload, base } = splitBinary(await apiFetch('/samples?'+qs({ h:handle, lo, hi, ...offsetParams() })));
+    const V = {}, I = {};
+    meta.layout.forEach(seg=>{
+      const kind = seg.key[0], ch = parseInt(seg.key.slice(1),10);
+      (kind==='V' ? V : I)[ch] = f32View(payload, base, seg.offset, seg.length);
+    });
+    return { lo:meta.lo, hi:meta.hi, V, I };
+  }
+
+  async function apiStats(handle, keys, lo, hi){
+    return apiFetch('/stats?'+qs({ h:handle, keys:keys.join(','), lo, hi, ...offsetParams() }), {}, false, true);
+  }
+
+  // 範圍過大（useBuckets）時改走 /buckets：每 key 連續 t、min、max 三段
+  async function apiBuckets(handle, keys, lo, hi, n){
+    const { meta, payload, base } = splitBinary(await apiFetch('/buckets?'+qs({ h:handle, keys:keys.join(','), lo, hi, n, ...offsetParams() })));
+    const out = {};
+    meta.layout.forEach(seg=>{
+      out[seg.key] = {
+        t:   f32View(payload, base, seg.offset, seg.length),
+        min: f32View(payload, base, seg.offset + seg.length*4, seg.length),
+        max: f32View(payload, base, seg.offset + seg.length*8, seg.length),
+      };
+    });
+    return out;
+  }
+  const srvBuckets = new Map();   // handle -> { sig, data:{key:{t,min,max}} }
+  function serverBuckets(trace, idxLo, idxHi, nBuckets, off){
+    const handle = handleOf(trace);
+    const key = trace.kind+trace.ch;
+    const sig = [idxLo, idxHi, nBuckets, currentDataSig()].join('|');
+    const c = srvBuckets.get(handle);
+    if(c && c.sig===sig && c.data[key]){
+      const d = c.data[key];
+      const b = new Array(d.t.length);
+      for(let i=0;i<b.length;i++) b[i] = { t:d.t[i], min:d.min[i]+off, max:d.max[i]+off };
+      trace._lastBuckets = b;
+      return b;
+    }
+    const pk = 'b:'+handle+':'+sig;
+    if(!rawPending.has(pk)){
+      const keys = new Set([key]);
+      state.traces.filter(t=>t.visible && handleOf(t)===handle).forEach(t=>keys.add(t.kind+t.ch));
+      const ticket = cacheTicket();
+      rawPending.set(pk, apiBuckets(handle, Array.from(keys), idxLo, idxHi, nBuckets).then(data=>{
+        if(ticket.mine()) rawPending.delete(pk);
+        if(!ticket.fresh()) return;
+        srvBuckets.set(handle, { sig, data });
+        scheduleRedraw();
+      }).catch(err=>{
+        if(ticket.mine()) rawPending.delete(pk);
+        console.error('buckets 取得失敗：', err);
+      }));
+    }
+    return trace._lastBuckets || [];
+  }
+
+  // ---------------------------------------------------------------
+  // raw 視窗快取：涵蓋「放大到 LOD 不夠精細」時所需的原始樣本。
+  // 取數時前後各多抓一倍 view 寬度當 margin，讓小幅平移不必每幀都重新取。
+  // ---------------------------------------------------------------
+  const rawWindows = new Map();   // handle -> { lo, hi, V:{ch:Float32Array}, I:{ch:Float32Array} }
+  const rawPending = new Map();   // handle -> 進行中的請求標記，避免同一輪重覆送出
+  // 校正設定會改變 server 回傳的數值，變更時必須讓所有已快取的樣本失效
+  let rawWindowSig = '';
+  // Bumped on every invalidation. A response is kept only if the epoch and the
+  // correction settings captured at request start still hold; it removes its
+  // pending entry only within its own epoch (a newer request may own that key).
+  let cacheEpoch = 0;
+  function cacheTicket(){
+    const epoch = cacheEpoch, sig = currentDataSig();
+    return { mine: ()=>epoch===cacheEpoch, fresh: ()=>epoch===cacheEpoch && sig===currentDataSig() };
+  }
+
+  function currentDataSig(){
+    return state.offsetMode ? ('1:'+Math.max(0, state.offsetMaxLimit||0)) : '0';
+  }
+  function invalidateDataCaches(){
+    rawWindows.clear();
+    srvBuckets.clear();
+    rawPending.clear();
+    pointCache.clear();
+    pointPending.clear();
+    lastStatsSig = null;
+    rawWindowSig = currentDataSig();
+    cacheEpoch++;
+  }
+
+  function rawWindowFor(handle){
+    if(rawWindowSig !== currentDataSig()) invalidateDataCaches();
+    return rawWindows.get(handle) || null;
+  }
+
+  // 確保 [idxLo, idxHi] 落在已快取的 raw 視窗內；未涵蓋時觸發背景取數並回 false，
+  // 呼叫端（computeViewBuckets）此時沿用上一幀結果，資料到達後會自動重繪。
+  function ensureRawWindow(handle, nRec, idxLo, idxHi){
+    if(!handle || nRec<=0) return false;
+    const w = rawWindowFor(handle);
+    if(w && idxLo>=w.lo && idxHi<=w.hi) return true;
+    if(rawPending.get(handle)) return false;
+    const span = idxHi - idxLo + 1;
+    let lo = Math.max(0, idxLo - span);
+    let hi = Math.min(nRec-1, idxHi + span);
+    if(useBuckets(hi-lo+1, nKeysOfHandle(handle))){ lo = idxLo; hi = idxHi; }  // 邊界放不下就只取視野本身
+    // rawPending 存的是「這次取數的 promise」而不是單純的 true——匯出流程
+    // （ensureExportData）需要能 await 它，等資料真的到齊再開始畫。
+    const ticket = cacheTicket();
+    rawPending.set(handle, apiSamples(handle, lo, hi).then(win=>{
+      if(ticket.mine()) rawPending.delete(handle);
+      if(!ticket.fresh()) return; // settings or cache changed while fetching: stale
+      rawWindows.set(handle, win);
+      scheduleRedraw();
+    }).catch(err=>{
+      if(ticket.mine()) rawPending.delete(handle);
+      console.error('raw 樣本取得失敗：', err);
+    }));
+    return false;
+  }
+
+  // ---------------------------------------------------------------
+  // 單點快取：服務 M1/M2 游標數值、Marker Table 數值、新增標記。
+  // 這些點不一定落在 raw 視窗內（例如大範圍縮放時視窗根本沒載入），
+  // 因此另外用「以索引為 key」的小快取，每次只取 1 筆。
+  // ---------------------------------------------------------------
+  const pointCache = new Map();   // handle+':'+idx -> { V:{ch:number}, I:{ch:number} }
+  const pointPending = new Map();
+
+  function pointKey(handle, idx){ return handle+':'+idx; }
+
+  function getPoint(handle, idx){
+    if(rawWindowSig !== currentDataSig()) invalidateDataCaches();
+    if(!handle) return null;
+    // 已載入的 raw 視窗涵蓋這個索引就直接用，不必另外請求
+    const w = rawWindows.get(handle);
+    if(w && idx>=w.lo && idx<=w.hi){
+      const rel = idx - w.lo;
+      const V = {}, I = {};
+      Object.keys(w.V).forEach(ch=>{ V[ch] = w.V[ch][rel]; });
+      Object.keys(w.I).forEach(ch=>{ I[ch] = w.I[ch][rel]; });
+      return { V, I };
+    }
+    const key = pointKey(handle, idx);
+    if(pointCache.has(key)) return pointCache.get(key);
+    if(pointPending.get(key)) return null;
+    pointPending.set(key, true);
+    const ticket = cacheTicket();
+    apiSamples(handle, idx, idx).then(win=>{
+      if(ticket.mine()) pointPending.delete(key);
+      if(!ticket.fresh()) return;
+      const V = {}, I = {};
+      Object.keys(win.V).forEach(ch=>{ V[ch] = win.V[ch][0]; });
+      Object.keys(win.I).forEach(ch=>{ I[ch] = win.I[ch][0]; });
+      if(pointCache.size > 500) pointCache.clear(); // 上限保護：拖曳 M1/M2 會產生大量索引
+      pointCache.set(key, { V, I });
+      scheduleRedraw();
+    }).catch(err=>{
+      if(ticket.mine()) pointPending.delete(key);
+      console.error('單點取值失敗：', err);
+    });
+    return null;
+  }
+
+  // 匯出前呼叫：把「目前視野 + M1/M2 + 全部 marker」需要的資料一次備妥，
+  // 之後的渲染流程即可維持同步、與現行版本逐像素一致。
+  // Settings changed while preparing (cache invalidated): prepare again so the
+  // export never draws values fetched under the old correction settings.
+  // Stats are refreshed inside the round so a change during that wait is caught too.
+  // A round is retried when the caches were invalidated, its stats request was
+  // superseded (a newer one is still in flight), or the markers / view / traces it
+  // prepared for moved meanwhile.
+  // Resolves false (after a message) when 5 rounds all went stale: callers must not render.
+  function exportInputsSig(){
+    return JSON.stringify([state.handle, state.compare && state.compare.handle, state.marker1, state.marker2,
+      state.markers.map(m=>m.time), state.view && [state.view.t0, state.view.t1],
+      state.traces.filter(t=>t.visible).map(t=>t.key)]);
+  }
+  async function ensureExportData(){
+    for(let attempt=0; attempt<5; attempt++){
+      if(rawWindowSig !== currentDataSig()) invalidateDataCaches();
+      const ticket = cacheTicket();
+      const inputs = exportInputsSig();
+      await prepareExportData(ticket);
+      const statsCommitted = await refreshStats(); // stats panel Max/Min/Avg must be current too
+      if(statsCommitted && ticket.fresh() && inputs===exportInputsSig()) return true;
+    }
+    flashMessage(T('msgExportDataChanged'), 6000);
+    return false;
+  }
+  async function prepareExportData(ticket){
+    const jobs = [];
+    const sources = [{ handle: state.handle, nRec: state.nRecords, tint: state.tint }];
+    if(state.compare) sources.push({ handle: state.compare.handle, nRec: state.compare.nRecords, tint: state.compare.tint });
+    sources.forEach(src=>{
+      if(!src.handle) return;
+      const idxs = [];
+      [state.marker1, state.marker2].forEach(t=>{
+        if(t!=null) idxs.push(Math.max(0, Math.min(src.nRec-1, Math.round(t/src.tint))));
+      });
+      state.markers.forEach(m=>{
+        idxs.push(Math.max(0, Math.min(src.nRec-1, Math.round(m.time/src.tint))));
+      });
+      idxs.forEach(idx=>{
+        const w = rawWindows.get(src.handle);
+        if(w && idx>=w.lo && idx<=w.hi) return;
+        if(pointCache.has(pointKey(src.handle, idx))) return;
+        jobs.push(apiSamples(src.handle, idx, idx).then(win=>{
+          if(!ticket.fresh()) return;
+          const V = {}, I = {};
+          Object.keys(win.V).forEach(ch=>{ V[ch] = win.V[ch][0]; });
+          Object.keys(win.I).forEach(ch=>{ I[ch] = win.I[ch][0]; });
+          pointCache.set(pointKey(src.handle, idx), { V, I });
+        }));
+      });
+    });
+    await Promise.all(jobs);
+
+    // 圖表本身的資料也要備妥。drawChartIntoContext() 走的是同步的 computeViewBuckets()，
+    // 而它在 raw 視窗還沒到齊時只會沿用上一幀（剛載入時甚至回空陣列）——匯出的
+    // PNG／HTML 報告就會是一張空白圖。改造前資料全在記憶體不會有這個中間狀態，
+    // 這是非同步資料層才有的坑。
+    // 這裡不重新判斷「該走 LOD 還是 raw」，直接讓 computeViewBuckets() 自己決定：
+    // 需要 raw 的它會觸發取數並登記到 rawPending，走 LOD 的則什麼都不做。
+    for(let round=0; round<20; round++){
+      state.traces.filter(t=>t.visible).forEach(t=>computeViewBuckets(t, N_BUCKETS));
+      const pending = Array.from(rawPending.values());
+      if(pending.length===0) break;
+      await Promise.all(pending);
+    }
+  }
+
+  function showParseProgress(phase, pct){
+    const row = document.getElementById('parseProgressRow');
+    const txt = document.getElementById('parseProgressText');
+    if(!row || !txt) return;
+    row.style.display = '';
+    const warn = document.getElementById('srcWarn');
+    if(warn) warn.style.display = phase==='csv' ? 'none' : '';
+    txt.textContent = phase==='csv' ? T('progressCsv') : (phase==='lod' ? T('progressLod') : phase==='hash' ? T('progressHash') : T('progressParse')) + ' ' + pct + '%';
+  }
+  function hideParseProgress(){
+    const row = document.getElementById('parseProgressRow');
+    if(row) row.style.display = 'none';
+  }
+
+  // 把 /open 回傳的 lod 物件（key 為 'V1'..'P4'）寫入 state.lod
+  // （key 改為 'p:V1' / 'c:I3' 這種格式），並清掉該來源舊的 LOD 項目
+  function installLod(prefix, lodObj){
+    Array.from(state.lod.keys()).filter(k=>k.startsWith(prefix)).forEach(k=>state.lod.delete(k));
+    if(!lodObj) return;
+    ['V','I','P'].forEach(kind=>{
+      for(let ch=1; ch<=4; ch++){
+        const entry = lodObj[kind+ch];
+        if(entry) state.lod.set(prefix+kind+ch, entry);
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 數值讀取（統一入口，Offset 開關只需改這裡）
+  // ---------------------------------------------------------------
+  // trace.src 區分資料來源：'p'（預設／未設定＝主檔案）或 'c'（比對檔／MEM）。
+  // 兩個來源可以有不同的 tint／nRecords，所有「時間↔索引」換算與樣本讀取
+  // 一律透過這裡的輔助函式，不再假設全域只有一組 state.tint／state.nRecords。
+  function tintOf(trace){ return (trace && trace.src==='c') ? (state.compare ? state.compare.tint : state.tint) : state.tint; }
+  function nRecOfTrace(trace){ return (trace && trace.src==='c') ? (state.compare ? state.compare.nRecords : 0) : (state.nRecords||0); }
+  function clampIdxTrace(trace, i){
+    const n = nRecOfTrace(trace);
+    if(n<=0) return 0;
+    return Math.max(0, Math.min(n-1, i));
+  }
+  // 時間點 t 落在這條曲線的記錄範圍外（例如比對檔比主檔短）時回 -1／NaN，
+  // 不能像 clampIdxTrace 那樣夾到最後一筆，否則會把最後一筆當成該時間點的讀數顯示出來。
+  function idxAtTime(trace, t){
+    const i = Math.round(t/tintOf(trace));
+    return (i<0 || i>=nRecOfTrace(trace)) ? -1 : i;
+  }
+  function valAtTime(trace, t){
+    const i = idxAtTime(trace, t);
+    return i<0 ? NaN : getVal(trace, i);
+  }
+  // handle 對應：主檔案（'p'）與比對檔（'c'）各有一份 server 端 handle
+  function handleOf(trace){
+    return (trace && trace.src==='c') ? (state.compare ? state.compare.handle : null) : state.handle;
+  }
+
+  // 電流負值校正已改由 server 端統一套用（以索引推導的決定性雜湊，同一索引恆得同值），
+  // 因此這裡取到的值「已經是校正後的結果」，前端不再需要自己產生亂數與快取。
+  // 取值來源優先序：目前的 raw 視窗 → 單點快取；兩者都沒有時回 NaN，
+  // 呼叫端會略過該筆（不畫點／不顯示數值），資料到達後會自動重繪補上。
+  function sampleAt(trace, idx){
+    const handle = handleOf(trace);
+    if(!handle) return null;
+    const w = rawWindows.get(handle);
+    if(w && idx>=w.lo && idx<=w.hi){
+      const rel = idx - w.lo;
+      const Vc = w.V[trace.ch], Ic = w.I[trace.ch];
+      return { v: Vc ? Vc[rel] : NaN, i: Ic ? Ic[rel] : NaN };
+    }
+    const pt = getPoint(handle, idx);
+    if(!pt) return null;
+    const v = pt.V[trace.ch], i = pt.I[trace.ch];
+    return { v: (v===undefined ? NaN : v), i: (i===undefined ? NaN : i) };
+  }
+
+  // 該聲道在 raw 視窗裡沒有資料時的替身：讀任何索引都得到 undefined，
+  // 後續算式自然變成 NaN，與 sampleAt() 取不到值時的行為一致（呼叫端會略過該筆）。
+  const EMPTY_F32 = new Float32Array(0);
+
+  function getV(trace, idx){
+    const s = sampleAt(trace, idx);
+    return s ? s.v : NaN;
+  }
+  function getI(trace, idx){
+    const s = sampleAt(trace, idx);
+    return s ? s.i : NaN;
+  }
+  // kind: 'V' 電壓 / 'I' 電流 / 'P' 功率（即時計算 = 電壓 × 電流，套用與電流相同的 offset 設定）
+  function getVal(trace, idx){
+    const s = sampleAt(trace, idx);
+    if(!s) return NaN;
+    if(trace.kind==='V') return s.v;
+    if(trace.kind==='P') return s.v * s.i;
+    return s.i;
+  }
+
+  function initTraces(){
+    const chColors = (CHART_THEMES[state.theme] || CHART_THEMES.dark).chColors;
+    const traces = [];
+    for(let ch=1; ch<=4; ch++){
+      traces.push({ key:'v'+ch, ch, kind:'V', src:'p', label:'CH'+ch+' '+T('groupVoltage'), color:chColors[ch-1], visible:true, dash:false, labelIsDefault:true, posOffset:0, colorIsDefault:true, recorded:true });
+    }
+    for(let ch=1; ch<=4; ch++){
+      traces.push({ key:'i'+ch, ch, kind:'I', src:'p', label:'CH'+ch+' '+T('groupCurrent'), color:chColors[ch-1], visible:false, dash:true, labelIsDefault:true, posOffset:0, colorIsDefault:true, recorded:true });
+    }
+    for(let ch=1; ch<=4; ch++){
+      traces.push({ key:'p'+ch, ch, kind:'P', src:'p', label:'CH'+ch+' '+T('groupPower'), color:chColors[ch-1], visible:false, dash:true, labelIsDefault:true, posOffset:0, colorIsDefault:true });
+    }
+    return traces;
+  }
+
+  // 比對檔（MEM）專屬色盤：刻意使用與主檔案 CH1-4 明顯不同的螢光色系，
+  // 且不隨頁面主題切換而改變（主題切換只重置「主檔案」預設色，見 applyTheme()），
+  // 讓使用者在疊圖時一眼就能分辨哪些線來自比對檔。
+  const COMPARE_CH_COLORS = ['#ff5fd8','#5dffc7','#ffe45f','#8f9bff'];
+  function initCompareTraces(){
+    const traces = [];
+    ['V','I','P'].forEach(kind=>{
+      const prefix = kind==='V' ? 'mv' : (kind==='I' ? 'mi' : 'mp');
+      const groupKey = kind==='V' ? 'groupVoltage' : (kind==='P' ? 'groupPower' : 'groupCurrent');
+      for(let ch=1; ch<=4; ch++){
+        traces.push({
+          key:prefix+ch, ch, kind, src:'c',
+          label:'MEM-CH'+ch+' '+T(groupKey),
+          color:COMPARE_CH_COLORS[ch-1], visible:false, dash:true,
+          labelIsDefault:true, posOffset:0, colorIsDefault:true, recorded:true
+        });
+      }
+    });
+    return traces;
+  }
+
+  function clampIdx(i){ return Math.max(0, Math.min(state.nRecords-1, i)); }
+  function getDuration(){ return (state.nRecords-1)*state.tint; }
+
+  function unitOf(kind){ return kind==='V' ? 'V' : (kind==='P' ? 'W' : 'A'); }
+  function fmtVal(v, kind){
+    if(v==null || Number.isNaN(v)) return '—';
+    const unit = unitOf(kind);
+    if(Math.abs(v) < 1) return (v*1000).toFixed(3)+' m'+unit;
+    return v.toFixed(4)+' '+unit;
+  }
+  // 統計視窗／Marker Table 專用的自動換算格式：依數量級在「基準單位／m／µ／n」
+  // 四級之間自動選擇，每級固定小數點後 4 位——比 fmtVal()（只換算到 m）多兩層 µ／n，
+  // 避免電流負值校正、或功率（=電壓×電流）連帶產生的極小正值被四捨五入到看起來像 0。
+  // 電流走 A/mA/µA/nA；功率走 W/mW/µW/nW，共用同一套換算邏輯，只差基準單位字串。
+  function fmtAutoScale(v, baseUnit){
+    if(v==null || Number.isNaN(v)) return '—';
+    const a = Math.abs(v);
+    if(a===0) return '0.0000 '+baseUnit;
+    if(a >= 1)     return v.toFixed(4)+' '+baseUnit;
+    if(a >= 1e-3)  return (v*1e3).toFixed(4)+' m'+baseUnit;
+    if(a >= 1e-6)  return (v*1e6).toFixed(4)+' µ'+baseUnit;
+    return (v*1e9).toFixed(4)+' n'+baseUnit;
+  }
+  function fmtCurrentAuto(v){ return fmtAutoScale(v, 'A'); }
+  function fmtPowerAuto(v){ return fmtAutoScale(v, 'W'); }
+  // 表格用數值格式：電流走 fmtCurrentAuto、功率走 fmtPowerAuto（皆自動換算到 n 級）；電壓維持原本 fmtVal 邏輯
+  function fmtValForTable(v, kind){
+    if(kind==='I') return fmtCurrentAuto(v);
+    if(kind==='P') return fmtPowerAuto(v);
+    return fmtVal(v, kind);
+  }
+  function fmtTimeTick(t, span){
+    if(span < 0.01) return t.toFixed(6)+'s';
+    if(span < 1) return t.toFixed(4)+'s';
+    if(span < 100) return t.toFixed(3)+'s';
+    return t.toFixed(1)+'s';
+  }
+  function fmtAxisNum(v){
+    if(Math.abs(v) >= 100) return v.toFixed(1);
+    if(Math.abs(v) >= 1) return v.toFixed(3);
+    return (v*1000).toFixed(1)+'m';
+  }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // 匯出檔名：若使用者填了案件名稱，一律加在檔名最前面，方便整理歸檔
+  function exportBaseName(){
+    const base = (state.fileName||'dlog').replace(/\.dlog$/i,'');
+    const cn = (state.caseName||'').trim();
+    if(!cn) return base;
+    return cn.replace(/[\\/:*?"<>|]/g,'_') + '_' + base;
+  }
+
+  // ---------------------------------------------------------------
+  // 色彩反轉工具（用於「完全負片」匯出模式：對曲線顏色做真正的像素負片運算）
+  // ---------------------------------------------------------------
+  function hexToRgb(hex){
+    hex = hex.replace('#','');
+    if(hex.length===3) hex = hex.split('').map(c=>c+c).join('');
+    const num = parseInt(hex,16);
+    return { r:(num>>16)&255, g:(num>>8)&255, b:num&255 };
+  }
+  function rgbToHex(r,g,b){
+    return '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+  }
+  function invertHex(hex){
+    const {r,g,b} = hexToRgb(hex);
+    return rgbToHex(255-r, 255-g, 255-b);
+  }
+
+  // 圖片／報告匯出的三種色彩模式：
+  //  normal   — 與畫面上顯示的深色主題一致
+  //  light    — 白底列印版：背景/格線/文字反轉為淺色系，曲線保持原本顏色（示波器軟體常見的「列印反轉」做法）
+  //  negative — 完全負片：背景、格線、文字、曲線顏色全部做真正的像素反轉
+  // normal 用 getter 動態跟隨「目前頁面外觀主題」（深色經典／柔和深色／淺色紙感），
+  // 這樣「原色（目前主題）」匯出選項才會真的等於畫面上看到的樣子；
+  // light／negative 維持固定，各自是專用的白底列印版與真正的像素負片。
+  const EXPORT_THEMES = {
+    get normal(){
+      const live = CHART_THEMES[state.theme] || CHART_THEMES.dark;
+      return { labelKey:'themeNormal', bg:live.bg, grid:live.grid, axisText:live.axisText, markerLine:live.markerLine, markerLabel:live.markerLabel, badgeFill:live.badgeFill, badgeText:live.badgeText, mapColor:c=>c };
+    },
+    light:    { labelKey:'themeLight',    bg:'#ffffff', grid:'rgba(0,0,0,0.12)',   axisText:'#55545c', markerLine:'rgba(0,0,0,0.45)', markerLabel:'#1a1a1f', badgeFill:'#0d0d10', badgeText:'#ffffff', mapColor:c=>c, annotText:'#1a1a1f' },
+    negative: { labelKey:'themeNegative', bg:'#e5e5e0', grid:'rgba(0,0,0,0.06)',   axisText:'#676860', markerLine:'rgba(0,0,0,0.5)',  markerLabel:'#161613', badgeFill:'#f2f2ef', badgeText:'#000000', mapColor:c=>invertHex(c) },
+  };
+
+  // ---------------------------------------------------------------
+  // 動態分桶（依目前縮放視窗即時計算，取代全檔靜態快取，
+  // 這樣縮放/平移時垂直軸才會自動依可見範圍 autoscale）
+  // ---------------------------------------------------------------
+  // 注意：這裡直接把 trace.posOffset（各通道獨立的視覺位移）加進 min/max，
+  // 因為這組 buckets 同時餵給「畫線」跟「autoscale 範圍計算」兩處使用——
+  // 位移必須算進 autoscale，否則位移後的曲線在自動刻度模式下會被裁切到畫面外。
+  // Marker/統計/CSV 走的是 getVal() 直接讀值，不經過這裡，所以不受影響，仍是真實數值。
+  // 注意：idxLo/idxHi 不再由呼叫端傳入，而是依「這條曲線自己的 tint／nRecords」
+  // 對照目前的 state.view（秒）換算——主檔案與比對檔（MEM）的取樣間隔、筆數可以不同，
+  // 但兩者共用同一組以秒為單位的縮放/平移視窗（t=0 對齊），所以只有索引換算需要分開。
+  function computeViewBuckets(trace, nBuckets){
+    const tint = tintOf(trace);
+    const nRec = nRecOfTrace(trace);
+    if(nRec<=0) return [];
+    // 視野完全落在這條曲線的記錄範圍外（例如比對檔比主檔短）：不畫，也不參與自動刻度，
+    // 否則下面的 clamp 會把最後一筆當成視野內的資料
+    if(state.view.t1<0 || state.view.t0/tint>nRec-1) return [];
+    const idxLo = clampIdxTrace(trace, Math.floor(state.view.t0/tint));
+    const idxHi = clampIdxTrace(trace, Math.ceil(state.view.t1/tint));
+    const off = trace.posOffset || 0;
+    const count = idxHi - idxLo + 1;
+    if(count<=0) return [];
+
+    // LOD 優先（常駐前端、完全本地、同步）。校正開啟時 LOD 摘要（建置當下未套用校正）
+    // 會與取值端點的校正後數值不一致，此時只能退回 raw 逐筆掃描——此為罕見情境
+    // （校正預設關閉，UI 已註明特殊測項專用）。升級路徑是另建一份「校正後」LOD。
+    const lodUsable = !(state.offsetMode && trace.kind!=='V');
+    if(count>nBuckets && lodUsable){
+      const lodEntry = state.lod.get(lodKeyFor(trace));
+      if(lodEntry){
+        const samplesPerBucket = count/nBuckets;
+        let level = null;
+        if(lodEntry.level1 && lodEntry.level1.factor<=samplesPerBucket) level = lodEntry.level1;
+        else if(lodEntry.level0 && lodEntry.level0.factor<=samplesPerBucket) level = lodEntry.level0;
+        if(level){
+          const b = bucketsFromLodLevel(level, idxLo, idxHi, tint, off, nBuckets);
+          trace._lastBuckets = b;
+          return b;
+        }
+      }
+    }
+
+    // 走到這裡代表需要原始樣本：確保 raw 視窗已涵蓋這個範圍。
+    // 尚未就緒時沿用上一幀的結果（避免畫面空白閃爍），資料到達後會自動重繪。
+    if(useBuckets(count, nKeysOfHandle(handleOf(trace)))){
+      return serverBuckets(trace, idxLo, idxHi, nBuckets, off);
+    }
+    if(!ensureRawWindow(handleOf(trace), nRec, idxLo, idxHi)){
+      return trace._lastBuckets || [];
+    }
+
+    // 內層迴圈是全域唯一的「每樣本」熱點：一幀要跑 12 條曲線 × 數萬筆，
+    // 所以這裡刻意不走 getVal()／sampleAt()——那條路每個樣本都要付一次 Map 查找
+    // 加一次 {v,i} 物件配置，實測 81k×4ch 12 曲線會從 4.4ms 掉到 117ms／幀。
+    // 上面的 ensureRawWindow() 已保證 [idxLo,idxHi] 落在視窗內，因此在進迴圈前
+    // 就把 Float32Array、位移與 kind 分支全部解析完，內層只剩陣列索引
+    // （等同改造前的 state.V[ch][idx]）。
+    // 註：這裡不可以改用「每次呼叫新建一個取值閉包」的寫法——V8 對每幀都換一個
+    // 函式物件的呼叫點無法最佳化，實測同樣的迴圈會從 0.9ms 變成 3.2ms／條。
+    const win = rawWindows.get(handleOf(trace));
+    const wLo = win ? win.lo : 0;
+    const Vc = (win && win.V[trace.ch]) || EMPTY_F32;
+    const Ic = (win && win.I[trace.ch]) || EMPTY_F32;
+    const isP = trace.kind==='P';
+    const src = trace.kind==='I' ? Ic : Vc;
+
+    if(count<=nBuckets){
+      const buckets=[];
+      for(let k=idxLo;k<=idxHi;k++){
+        const v=(isP ? Vc[k-wLo]*Ic[k-wLo] : src[k-wLo])+off;
+        buckets.push({ t:k*tint, min:v, max:v });
+      }
+      trace._lastBuckets = buckets;
+      return buckets;
+    }
+
+    const bucketSize = Math.ceil(count/nBuckets);
+    const buckets=[];
+    for(let start=idxLo; start<=idxHi; start+=bucketSize){
+      const end = Math.min(idxHi, start+bucketSize-1);
+      let mn=Infinity, mx=-Infinity;
+      for(let k=start;k<=end;k++){
+        const v=(isP ? Vc[k-wLo]*Ic[k-wLo] : src[k-wLo])+off;
+        if(v<mn) mn=v;
+        if(v>mx) mx=v;
+      }
+      buckets.push({ t:((start+end)/2)*tint, min:mn, max:mx });
+    }
+    trace._lastBuckets = buckets;
+    return buckets;
+  }
+
+  // trace 對應的 LOD 快取 key：'p:'/'c:' 來源前綴 + kind + 通道編號，與 state.lod 的存放格式一致
+  function lodKeyFor(trace){ return (trace.src==='c' ? 'c:' : 'p:') + trace.kind + trace.ch; }
+
+  // 從指定的 LOD 層級（level.min/level.max，每筆對應原始資料中 factor 筆的聚合值）
+  // 依 idxLo/idxHi（原始樣本索引範圍）換算出對應的 LOD 條目範圍，再視需要把多個 LOD
+  // 條目進一步聚合成 nBuckets 組——邏輯與原始樣本那條路徑的分桶方式完全對應，
+  // 只是把「掃原始樣本」換成「掃 LOD 條目」，數量少了 factor 倍。
+  function bucketsFromLodLevel(level, idxLo, idxHi, tint, off, nBuckets){
+    const factor = level.factor;
+    const eLo = Math.max(0, Math.floor(idxLo/factor));
+    const eHi = Math.min(level.n-1, Math.floor(idxHi/factor));
+    const count = eHi - eLo + 1;
+    if(count<=0) return [];
+    const buckets=[];
+    if(count<=nBuckets){
+      for(let e=eLo;e<=eHi;e++){
+        const rawStart = e*factor, rawEnd = Math.min(idxHi, rawStart+factor-1);
+        const t = ((Math.max(idxLo,rawStart)+rawEnd)/2)*tint;
+        buckets.push({ t, min:level.min[e]+off, max:level.max[e]+off });
+      }
+      return buckets;
+    }
+    const bucketSize = Math.ceil(count/nBuckets);
+    for(let start=eLo; start<=eHi; start+=bucketSize){
+      const end = Math.min(eHi, start+bucketSize-1);
+      let mn=Infinity, mx=-Infinity;
+      for(let e=start;e<=end;e++){
+        if(level.min[e]<mn) mn=level.min[e];
+        if(level.max[e]>mx) mx=level.max[e];
+      }
+      const rawMid = (start*factor + Math.min(idxHi,(end+1)*factor-1))/2;
+      buckets.push({ t:rawMid*tint, min:mn+off, max:mx+off });
+    }
+    return buckets;
+  }
+
+  function computeAxisRangeFromBuckets(bucketsList){
+    let mn=Infinity, mx=-Infinity;
+    bucketsList.forEach(buckets=>buckets.forEach(b=>{ if(b.min<mn) mn=b.min; if(b.max>mx) mx=b.max; }));
+    if(!isFinite(mn)){ mn=0; mx=1; }
+    if(mn===mx){ mn-=1; mx+=1; }
+    const pad=(mx-mn)*0.1;
+    return [mn-pad, mx+pad];
+  }
+
+  // 軸範圍：auto=true 時每次重算 autofit（並快取起來供滾輪切手動時當起點），
+  // auto=false 時改用使用者設定的 ref（中心值）± 2 格 perDiv（4 格總高，對齊格線）
+  function resolveAxisRange(axis, bucketsList){
+    const [autoMin, autoMax] = computeAxisRangeFromBuckets(bucketsList);
+    axis._autoMin = autoMin; axis._autoMax = autoMax;
+    if(axis.auto) return [autoMin, autoMax];
+    return [ axis.ref - 2*axis.perDiv, axis.ref + 2*axis.perDiv ];
+  }
+
+  // 區間統計（Max/Min/Avg）改由 server 端以 numpy 掃 memmap 計算——區間可能橫跨
+  // 整個檔案（千萬筆），不可能靠前端的 raw 視窗涵蓋。結果存進 statsCache，
+  // computeRangeStats() 維持同步介面（讀快取），實際取數由 refreshStats() 負責。
+  const statsCache = new Map();   // trace.key -> { min, max, avg }
+  let statsInFlight = null;
+
+  // idxLo/idxHi 同樣依這條曲線自己的 tint 換算（見 computeViewBuckets 的說明）
+  function rangeIdxOf(trace, tLo, tHi){
+    const tint = tintOf(trace);
+    const lo = Math.round(tLo/tint), hi = Math.round(tHi/tint);
+    if(hi<0 || lo>nRecOfTrace(trace)-1) return null; // 區間與這條曲線的記錄範圍完全沒有交集：無統計值
+    return [ clampIdxTrace(trace, lo), clampIdxTrace(trace, hi) ];
+  }
+
+  function computeRangeStats(trace){
+    return statsCache.get(trace.key) || { min:NaN, max:NaN, avg:NaN };
+  }
+
+  // 取得目前 M1↔M2 區間、所有已勾選曲線的統計值。依來源（主檔／比對檔）分組送出，
+  // 各自一個請求就涵蓋該來源全部曲線。
+  // Resolves true when this round's results were committed in full; false when a newer
+  // round superseded it or a request failed / came back without a result.
+  async function refreshStats(){
+    // 每一輪一開始就換新 token：換檔、移動游標、改校正設定都會觸發新一輪，
+    // 舊一輪的回應晚到時一律丟棄，不可寫回 statsCache（key 只有 trace.key，分不出新舊資料）
+    const token = {};
+    statsInFlight = token;
+    if(!state.loaded || state.marker1==null || state.marker2==null) return true;
+    const tLo = Math.min(state.marker1, state.marker2);
+    const tHi = Math.max(state.marker1, state.marker2);
+    const visible = state.traces.filter(t=>t.visible);
+    if(visible.length===0){ statsCache.clear(); return true; }
+
+    const groups = new Map();   // handle -> { traces:[], lo, hi }
+    visible.forEach(t=>{
+      const handle = handleOf(t);
+      if(!handle) return;
+      const range = rangeIdxOf(t, tLo, tHi);
+      if(!range){ statsCache.set(t.key, { min:NaN, max:NaN, avg:NaN }); return; }
+      const [lo, hi] = range;
+      // 同一來源的曲線 tint 相同，索引區間必定一致，可安全共用一個請求
+      const g = groups.get(handle) || { traces:[], lo, hi };
+      g.traces.push(t);
+      groups.set(handle, g);
+    });
+
+    const jobs = [];
+    let filled = 0;   // groups whose request succeeded with a result for every trace
+    groups.forEach((g, handle)=>{
+      const keys = g.traces.map(t=>t.kind+t.ch);
+      jobs.push(apiStats(handle, keys, g.lo, g.hi).then(res=>{
+        if(statsInFlight !== token) return;
+        if(res && g.traces.every(t=>res[t.kind+t.ch])) filled++;
+        g.traces.forEach(t=>{
+          const r = res && res[t.kind+t.ch];
+          if(r) statsCache.set(t.key, {
+            min: r.min==null ? NaN : r.min,
+            max: r.max==null ? NaN : r.max,
+            avg: r.avg==null ? NaN : r.avg,
+          });
+        });
+      }));
+    });
+    // allSettled：一個來源失敗時仍要等同輪其他請求寫完才清 token，否則它們的成功結果會被當成舊回應丟掉
+    (await Promise.allSettled(jobs)).forEach(r=>{
+      if(r.status==='rejected') console.error('統計取得失敗：', r.reason);
+    });
+    if(statsInFlight !== token) return false;
+    statsInFlight = null;
+    return filled===jobs.length;   // a failed or partial request is not committed stats
+  }
+
+  function currentViewIdxRange(){
+    return [ clampIdx(Math.floor(state.view.t0/state.tint)), clampIdx(Math.ceil(state.view.t1/state.tint)) ];
+  }
+
+  // ---------------------------------------------------------------
+  // UI：Trace chips
+  // ---------------------------------------------------------------
+  function renderChips(){
+    const voltWrap = document.getElementById('voltChips');
+    const currWrap = document.getElementById('currChips');
+    voltWrap.innerHTML=''; currWrap.innerHTML='';
+    state.traces.filter(t => t.recorded !== false).forEach(t=>{
+      // 右側（電流／功率）一次只顯示目前下拉選單所選的種類，避免兩種不同單位混在同一軸上
+      if(t.kind!=='V' && t.kind!==state.rightAxisKind) return;
+      const chip = document.createElement('div');
+      chip.className='chip';
+      chip.style.setProperty('--chip-color', t.color);
+      chip.innerHTML =
+        '<input type="checkbox" class="chip-check" data-key="'+t.key+'" '+(t.visible?'checked':'')+'>'+
+        '<input type="color" class="chip-color" data-key="'+t.key+'" value="'+t.color+'">'+
+        '<input type="text" class="chip-name" data-key="'+t.key+'" value="'+escapeHtml(t.label)+'">'+
+        '<input type="number" class="chip-offset" data-key="'+t.key+'" value="'+(t.posOffset||0)+'" step="any" title="'+escapeHtml(T('chipOffsetTitle'))+'">';
+      (t.kind==='V' ? voltWrap : currWrap).appendChild(chip);
+    });
+  }
+
+  document.querySelector('.trace-panel').addEventListener('input', onChipChange);
+  document.querySelector('.trace-panel').addEventListener('change', onChipChange);
+  document.querySelector('.trace-panel').addEventListener('dblclick', (e)=>{
+    if(!e.target.classList.contains('chip-offset')) return;
+    const key = e.target.dataset.key;
+    const t = state.traces.find(tr=>tr.key===key);
+    if(!t) return;
+    t.posOffset = 0;
+    e.target.value = 0;
+    scheduleRedraw();
+  });
+  function onChipChange(e){
+    const key = e.target.dataset.key;
+    if(!key) return;
+    const t = state.traces.find(tr=>tr.key===key);
+    if(!t) return;
+    if(e.target.classList.contains('chip-check')) t.visible = e.target.checked;
+    if(e.target.classList.contains('chip-color')){
+      t.color = e.target.value;
+      t.colorIsDefault = false;
+      e.target.closest('.chip').style.setProperty('--chip-color', t.color);
+    }
+    if(e.target.classList.contains('chip-name')){
+      t.label = e.target.value; t.labelIsDefault = false;
+      renderMarkerTable(); // Marker Table 的通道名稱要即時跟隨這裡的命名變更
+    }
+    if(e.target.classList.contains('chip-offset')){
+      const v = parseFloat(e.target.value);
+      t.posOffset = Number.isFinite(v) ? v : 0;
+    }
+    scheduleRedraw();
+  }
+
+  // ---------------------------------------------------------------
+  // 右軸種類切換（電流 ↔ 功率）：兩者單位不同（A vs W），故同一時間
+  // 右軸只顯示其中一種；切換時重置右軸刻度為自動，避免舊刻度誤用在新單位上
+  // ---------------------------------------------------------------
+  function updateRightAxisLabels(){
+    const tagEl = document.getElementById('axisRightTag');
+    if(tagEl) tagEl.textContent = T(state.rightAxisKind==='P' ? 'axisPTag' : 'axisITag');
+  }
+  document.getElementById('rightAxisKindSelect').addEventListener('change', (e)=>{
+    state.rightAxisKind = e.target.value==='P' ? 'P' : 'I';
+    state.iAxis = { auto:true, ref:0, perDiv:1, _autoMin:null, _autoMax:null };
+    renderChips();
+    updateRightAxisLabels();
+    scheduleRedraw();
+  });
+
+  // ---------------------------------------------------------------
+  // 檔案載入
+  // ---------------------------------------------------------------
+  function onActivate(id, fn){
+    const el = document.getElementById(id);
+    el.addEventListener('click', fn);
+    el.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); fn(); } });
+  }
+  document.getElementById('parseCancelBtn').addEventListener('click', cancelActive);
+  onActivate('openMainBtn', longOp(async ()=>{
+    try{
+      const g = await askPath('open_request', { purpose:'dlog' });
+      if(!g) return;
+      showParseProgress('parse', 0);
+      const { meta, lod } = await apiOpen(g.grant, (phase,pct)=>showParseProgress(phase,pct));
+      const oldHandle = state.handle;
+      state.fileName = meta.fileName;
+      state.handle = meta.handle;
+      releaseHandle(oldHandle);
+      state.tint = meta.tint;
+      state.declaredTime = meta.declaredTime;
+      state.nRecords = meta.nRecords;
+      state.channelModels = meta.channelModels;
+      state.activeChannels = meta.activeChannels;
+      // server 的 fields 是 [[ch,kind],...]，轉回前端慣用的物件形式
+      state.fields = meta.fields.map(f=>({ ch:f[0], kind:f[1] }));
+      state.minmax = meta.minmax;
+      state.loaded = true;
+      invalidateDataCaches(); // 換檔案了，舊的 raw 視窗／單點快取不再對應新資料
+      statsCache.clear();
+      state.traces.forEach(t=>{ t._lastBuckets = null; });
+      installLod('p:', lod);
+
+      // 標記哪些曲線實際有資料（根據 header 的 sense 旗標）
+      // 功率 P = V×I，必須 V 和 I 都有記錄才有意義
+      function hasField(ch, kind){
+        if(!Array.isArray(state.fields)){
+          console.warn('meta.fields 缺失，退回以 activeChannels 判斷');
+          return state.activeChannels.indexOf(ch) !== -1;
+        }
+        return state.fields.some(f => f.ch===ch && f.kind===kind);
+      }
+      state.traces.forEach(t=>{
+        if(t.src!=='p') return;
+        if(t.kind==='P'){
+          t.recorded = hasField(t.ch,'V') && hasField(t.ch,'I');
+          t.visible = false;
+        }else{
+          t.recorded = hasField(t.ch, t.kind);
+          t.visible = t.recorded;
+        }
+      });
+
+      const duration = getDuration();
+      state.view = { t0:0, t1:duration };
+      state.viewHistory = [];
+      state.marker1 = duration*0.25;
+      state.marker2 = duration*0.75;
+      state.markers = [];
+      state.vAxis = { auto:true, ref:0, perDiv:1, _autoMin:null, _autoMax:null };
+      state.iAxis = { auto:true, ref:0, perDiv:1, _autoMin:null, _autoMax:null };
+
+      updateFileInfo();
+      syncRangeInputs();
+      updateBackButton();
+      renderChips();
+      renderMarkerTable();
+      document.getElementById('exportJsonBtn').disabled = false;
+      document.getElementById('exportCsvBtn').disabled = false;
+      document.getElementById('exportImageBtn').disabled = false;
+      document.getElementById('exportReportBtn').disabled = false;
+      document.getElementById('emptyState').style.display='none';
+      setPanelFoldOpen('exportFold', false); // 檔案載入成功＝設定階段結束、進入分析階段，收起用不到的匯出區
+      scheduleRedraw();
+    }catch(err){
+      if(err.code!=='cancelled') flashMessage(T('parseFailedPrefix')+err.message, 6000);
+      console.error(err);
+    }finally{
+      hideParseProgress();
+    }
+  }));
+
+  // ---------------------------------------------------------------
+  // 比對檔（MEM）載入／移除：僅供主波形圖疊圖比對，t=0 與主檔案對齊，
+  // 一次僅能有一個比對檔，重新選擇會直接取代舊的（連同其曲線與相關標記一併換新）
+  // ---------------------------------------------------------------
+  // 比對檔資訊列的文字依語言而異，且載入後要保留檔名資訊——集中在這裡，
+  // 讓載入／移除／語言切換三處都走同一個入口，避免切語言時把檔名洗掉。
+  function updateCompareFileInfo(){
+    const el = document.getElementById('compareFileName');
+    if(!el) return;
+    el.textContent = state.compare
+      ? T('compareFileInfo', state.compare.fileName, state.compare.nRecords, state.compare.tint*1000)
+      : T('compareNoFile');
+  }
+
+  onActivate('openCompareBtn', longOp(async ()=>{
+    if(!state.loaded){
+      flashMessage(T('compareNeedMain'), 6000);
+      return;
+    }
+    try{
+      const g = await askPath('open_request', { purpose:'dlog' });
+      if(!g) return;
+      showParseProgress('parse', 0);
+      const { meta, lod } = await apiOpen(g.grant, (phase,pct)=>showParseProgress(phase,pct));
+      const oldCompare = state.compare && state.compare.handle;
+      state.compare = {
+        fileName:meta.fileName, handle:meta.handle, tint:meta.tint, nRecords:meta.nRecords, activeChannels:meta.activeChannels,
+        fields:meta.fields.map(f=>({ ch:f[0], kind:f[1] })), minmax:meta.minmax,
+      };
+      releaseHandle(oldCompare);
+      installLod('c:', lod);
+      statsCache.clear(); // 舊比對檔的統計（曲線 key 與新檔相同）不可沿用
+      // 移除舊的比對檔曲線與相關標記（若先前已載入過比對檔），主檔案（'p'）的曲線與標記不受影響
+      state.traces = state.traces.filter(t=>t.src!=='c').concat(initCompareTraces());
+      // 根據比對檔的 sense 旗標標記實際有資料的曲線
+      function hasFieldCompare(ch, kind){
+        if(!Array.isArray(state.compare.fields)){
+          console.warn('比對檔 meta.fields 缺失，退回全通過（無法判斷則不隱藏，保留使用者手動勾選）');
+          return true;
+        }
+        return state.compare.fields.some(f => f.ch===ch && f.kind===kind);
+      }
+      state.traces.filter(t=>t.src==='c').forEach(t=>{
+        if(t.kind==='P'){
+          t.recorded = hasFieldCompare(t.ch,'V') && hasFieldCompare(t.ch,'I');
+        }else{
+          t.recorded = hasFieldCompare(t.ch, t.kind);
+        }
+      });
+      state.markers = state.markers.filter(m=>m.src!=='c');
+      updateCompareFileInfo();
+      document.getElementById('compareClearBtn').style.display = 'inline-block';
+      renderChips();
+      renderMarkerTable();
+      scheduleRedraw();
+      flashMessage(T('compareLoaded', meta.fileName));
+    }catch(err){
+      if(err.code!=='cancelled') flashMessage(T('compareLoadFailed')+err.message, 6000);
+      console.error(err);
+    }finally{
+      hideParseProgress();
+    }
+  }));
+
+  document.getElementById('compareClearBtn').addEventListener('click', ()=>{
+    releaseHandle(state.compare && state.compare.handle);
+    state.compare = null;
+    installLod('c:', null); // 一併清掉比對檔的 LOD 快取
+    invalidateDataCaches();
+    statsCache.clear();
+    state.traces = state.traces.filter(t=>t.src!=='c');
+    state.markers = state.markers.filter(m=>m.src!=='c');
+    updateCompareFileInfo();
+    document.getElementById('compareClearBtn').style.display = 'none';
+    renderChips();
+    renderMarkerTable();
+    scheduleRedraw();
+  });
+
+  function updateFileInfo(){
+    const el = document.getElementById('fileInfo');
+    const dur = getDuration();
+    const declared = state.declaredTime;
+    const threshold = Math.max(dur*0.01, 0.001);
+    // header 的 <time> 只是使用者當初設定的「預計總時長」，記錄常常會提前停止
+    // （例如手動停止、觸發條件提前結束等），這是正常情況，不是錯誤——所有分析
+    // 與匯出一律以「實際筆數 × tint」為準，這裡的訊息只是告知使用者差異存在。
+    // 只有反過來（實際比 header 設定的還長）才是真正異常，值得用警示樣式提醒。
+    const stoppedEarly = declared!=null && (declared - dur) > threshold;
+    const longerThanDeclared = declared!=null && (dur - declared) > threshold;
+    let html = '<div><strong>'+escapeHtml(state.fileName)+'</strong></div>';
+    html += '<div class="dim">'+state.nRecords.toLocaleString()+T('recordsUnit')+' · tint='+(state.tint*1000).toFixed(5)+' ms · '+T('actualDurationLabel')+' '+dur.toFixed(3)+' s</div>';
+    if(stoppedEarly){
+      html += '<div class="info">'+T('infoStoppedEarly', declared, dur)+'</div>';
+    }else if(longerThanDeclared){
+      html += '<div class="warn">'+T('warnLongerThanDeclared', declared, dur)+'</div>';
+    }
+    const chanParts = [1,2,3,4]
+      .filter(id=>state.channelModels[id-1]!=null)
+      .map(id=>'CH'+id+': '+escapeHtml(state.channelModels[id-1]));
+    html += '<div class="dim">'+chanParts.join(' · ')+'</div>';
+    el.innerHTML = html;
+  }
+
+  // ---------------------------------------------------------------
+  // 座標轉換（依目前縮放/平移視窗 state.view）
+  // ---------------------------------------------------------------
+  function domainSpan(){ return state.view.t1 - state.view.t0; }
+  function xOf(t, rectWidth){
+    const plotW = rectWidth - PAD.l - PAD.r;
+    return PAD.l + ((t-state.view.t0)/domainSpan())*plotW;
+  }
+  function tOfX(x, rectWidth){
+    const plotW = rectWidth - PAD.l - PAD.r;
+    let t = state.view.t0 + ((x-PAD.l)/plotW)*domainSpan();
+    return Math.max(0, Math.min(getDuration(), t));
+  }
+
+  // ---------------------------------------------------------------
+  // 繪圖
+  // ---------------------------------------------------------------
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+  let rafPending = false;
+
+  function scheduleRedraw(){
+    if(rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(()=>{ rafPending=false; draw(); updateStatsPanel(); updateScrollbar(); });
+  }
+
+  // 【MEM3 效能優化】拖曳專用的節流重繪：一般互動（勾選曲線、縮放結束等單次事件）
+  // 仍走 scheduleRedraw()（rAF 去重，最快可達螢幕更新率）；但 M1/M2 標記拖曳、圈選、
+  // 軸刻度拖曳、捲動條拖曳這幾種「滑鼠一直移動、事件量很大」的互動，在大檔案（千萬筆
+  // 等級）情況下，每一幀重繪都要重新掃描可視範圍內的原始樣本，掃描成本本身遠比
+  // rAF 節流更關鍵——這裡把重繪頻率再降到約 25fps（40ms 一次），在 LOD 分層繪圖
+  // （見 computeViewBuckets）完全生效前，先直接減少「重新掃描」被觸發的次數，
+  // 降低拖曳時的操作延遲；LOD 上線後這層節流仍保留，兩者疊加、互不衝突。
+  let lastDragRedrawTs = 0;
+  const DRAG_REDRAW_MIN_INTERVAL_MS = 40;
+  function scheduleRedrawThrottled(){
+    const now = performance.now();
+    if(now - lastDragRedrawTs < DRAG_REDRAW_MIN_INTERVAL_MS) return;
+    lastDragRedrawTs = now;
+    scheduleRedraw();
+  }
+
+  function draw(){
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(rect.width*dpr);
+    canvas.height = Math.round(rect.height*dpr);
+    canvas.style.width = rect.width+'px';
+    canvas.style.height = rect.height+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,rect.width,rect.height);
+
+    if(!state.loaded) return;
+
+    const theme = CHART_THEMES[state.theme] || CHART_THEMES.dark;
+    drawChartIntoContext(ctx, rect, { ...theme, mapColor:c=>c });
+
+    // 圈選放大中的選取範圍覆蓋層（drawChartIntoContext 不畫這個，僅畫面版需要）
+    if(boxSelect){
+      const plotH = rect.height - PAD.t - PAD.b;
+      const xA = Math.min(boxSelect.xStart, boxSelect.xCurrent);
+      const xB = Math.max(boxSelect.xStart, boxSelect.xCurrent);
+      ctx.fillStyle = 'rgba(74,158,234,0.15)';
+      ctx.fillRect(xA, PAD.t, xB-xA, plotH);
+      ctx.strokeStyle = 'rgba(74,158,234,0.6)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(xA, PAD.t, xB-xA, plotH);
+    }
+  }
+
+  window.addEventListener('resize', scheduleRedraw);
+  // <details> 展開/收合不會觸發 window resize，但會改變 .chart-wrap 實際尺寸，
+  // 若不補這個 observer，折疊面板後圖表釋出的空間不會反映到 canvas 上（畫面被 CSS 拉伸變形）。
+  new ResizeObserver(()=>scheduleRedraw()).observe(document.querySelector('.chart-wrap'));
+
+  // ---------------------------------------------------------------
+  // 匯出用繪圖：在獨立的離屏 canvas 上，依指定色彩主題重繪目前畫面
+  // （邏輯與 draw() 對應，但顏色改由 theme 決定，且一律填滿背景色，
+  //  這樣輸出的 PNG／報告截圖才不會依賴頁面 CSS 的深色底）
+  // ---------------------------------------------------------------
+  // 圖表本體繪製抽出成獨立函式，接受外部傳入的 octx／rect／theme——
+  // 這樣「只匯出曲線圖」（renderChartForExport，供 HTML 報告內嵌截圖用）與
+  // 「曲線圖 + 統計值 + Marker Table 一起匯出成一張長圖」（renderExportCanvasFull，
+  // 供「⬇ 匯出圖片 PNG」按鈕用）可以共用同一份繪圖邏輯，不必複製貼上兩份。
+  function drawChartIntoContext(octx, rect, theme){
+    octx.fillStyle = theme.bg;
+    octx.fillRect(0,0,rect.width,rect.height);
+    if(!state.loaded) return;
+
+    const plotW = rect.width - PAD.l - PAD.r;
+    const plotH = rect.height - PAD.t - PAD.b;
+
+    const vTraces = state.traces.filter(t=>t.kind==='V' && t.visible);
+    const iTraces = state.traces.filter(t=>t.kind===state.rightAxisKind && t.visible);
+    const vBucketsList = vTraces.map(t=>computeViewBuckets(t, N_BUCKETS));
+    const iBucketsList = iTraces.map(t=>computeViewBuckets(t, N_BUCKETS));
+    const [vMin,vMax] = resolveAxisRange(state.vAxis, vBucketsList);
+    const [iMin,iMax] = resolveAxisRange(state.iAxis, iBucketsList);
+    const yOfV = v => PAD.t + plotH - ((v-vMin)/(vMax-vMin))*plotH;
+    const yOfI = v => PAD.t + plotH - ((v-iMin)/(iMax-iMin))*plotH;
+
+    octx.strokeStyle = theme.grid;
+    octx.lineWidth = 1;
+    for(let g=0; g<=4; g++){
+      const y = PAD.t + (g/4)*plotH;
+      octx.beginPath(); octx.moveTo(PAD.l,y); octx.lineTo(PAD.l+plotW,y); octx.stroke();
+    }
+
+    octx.font = MONO_FONT;
+    octx.fillStyle = theme.axisText;
+    octx.textAlign='left';
+    octx.fillText(T('axisVTitle'), PAD.l, 14);
+    octx.textAlign='right';
+    octx.fillText(T(state.rightAxisKind==='P' ? 'axisPTitle' : 'axisITitle'), PAD.l+plotW, 14);
+
+    octx.textAlign='right';
+    for(let g=0; g<=4; g++){
+      const val = vMax - (g/4)*(vMax-vMin);
+      const y = PAD.t + (g/4)*plotH;
+      octx.fillText(fmtAxisNum(val), PAD.l-8, y+4);
+    }
+    octx.textAlign='left';
+    for(let g=0; g<=4; g++){
+      const val = iMax - (g/4)*(iMax-iMin);
+      const y = PAD.t + (g/4)*plotH;
+      octx.fillText(fmtAxisNum(val), PAD.l+plotW+8, y+4);
+    }
+    octx.textAlign='center';
+    const span = domainSpan();
+    for(let g=0; g<=5; g++){
+      const t = state.view.t0 + (g/5)*span;
+      const x = xOf(t, rect.width);
+      octx.fillText(fmtTimeTick(t, span), x, PAD.t+plotH+16);
+    }
+    octx.textAlign='left';
+
+    function drawTraceBuckets(buckets, tr, yOf){
+      if(buckets.length===0) return;
+      octx.beginPath();
+      octx.strokeStyle = theme.mapColor(tr.color);
+      octx.lineWidth = tr.kind==='V' ? 1.6 : 1.2;
+      octx.setLineDash(tr.dash ? [4,3] : []);
+      let first=true;
+      buckets.forEach(b=>{
+        const x = xOf(b.t, rect.width);
+        const yMax = yOf(b.max), yMin = yOf(b.min);
+        if(first){ octx.moveTo(x,yMax); first=false; } else { octx.lineTo(x,yMax); }
+        octx.lineTo(x,yMin);
+      });
+      octx.stroke();
+      octx.setLineDash([]);
+    }
+    vTraces.forEach((tr,k)=>drawTraceBuckets(vBucketsList[k], tr, yOfV));
+    iTraces.forEach((tr,k)=>drawTraceBuckets(iBucketsList[k], tr, yOfI));
+
+    if(!state.vAxis.auto){
+      const y = yOfV(state.vAxis.ref);
+      octx.strokeStyle = theme.markerLabel; octx.lineWidth = 2;
+      octx.beginPath(); octx.moveTo(PAD.l-7,y); octx.lineTo(PAD.l,y); octx.stroke();
+    }
+    if(!state.iAxis.auto){
+      const y = yOfI(state.iAxis.ref);
+      octx.strokeStyle = theme.markerLabel; octx.lineWidth = 2;
+      octx.beginPath(); octx.moveTo(PAD.l+plotW,y); octx.lineTo(PAD.l+plotW+7,y); octx.stroke();
+    }
+
+    [ {time:state.marker1,label:'M1'}, {time:state.marker2,label:'M2'} ].forEach(m=>{
+      if(m.time==null || m.time<state.view.t0 || m.time>state.view.t1) return;
+      const x = xOf(m.time, rect.width);
+      octx.strokeStyle = theme.markerLine;
+      octx.setLineDash([5,4]);
+      octx.beginPath(); octx.moveTo(x,PAD.t); octx.lineTo(x,PAD.t+plotH); octx.stroke();
+      octx.setLineDash([]);
+      octx.fillStyle = theme.markerLabel;
+      octx.font = "bold 11px ui-monospace, monospace";
+      octx.textAlign='center';
+      octx.fillText(m.label, x, PAD.t-10);
+      octx.textAlign='left';
+
+      const entries = [
+        ...vTraces.map(tr=>({ tr, val:valAtTime(tr, m.time), yOf:yOfV })),
+        ...iTraces.map(tr=>({ tr, val:valAtTime(tr, m.time), yOf:yOfI })),
+      ].filter(entry=>!Number.isNaN(entry.val)); // 時間點超出該曲線記錄範圍（或數值未就緒）就不畫
+      entries.forEach(entry=>{
+        const y = entry.yOf(entry.val + (entry.tr.posOffset||0));
+        octx.fillStyle = theme.mapColor(entry.tr.color);
+        octx.beginPath(); octx.arc(x,y,3,0,Math.PI*2); octx.fill();
+        octx.font = MONO_FONT;
+        // 白底列印版：淺色曲線色在白底上讀不清，數值文字改用深色（辨識靠上面的圓點）
+        if(theme.annotText) octx.fillStyle = theme.annotText;
+        octx.fillText(fmtVal(entry.val, entry.tr.kind), x+7, y-5);
+      });
+    });
+
+    if(state.markerTableOn){
+      state.markers.forEach(mk=>{
+        if(mk.time<state.view.t0 || mk.time>state.view.t1) return;
+        // 右軸目前顯示的是另一種量（電流↔功率）時，這個標記沒有對應的刻度可畫
+        if(mk.kind!=='V' && mk.kind!==state.rightAxisKind) return;
+        const x = xOf(mk.time, rect.width);
+        const mkTrace = state.traces.find(tr=>tr.ch===mk.ch && tr.kind===mk.kind && tr.src===(mk.src||'p'));
+        const mkOff = mkTrace ? (mkTrace.posOffset||0) : 0;
+        const mkv = markerValues(mk);
+        const mkVal = mk.kind==='V' ? mkv.voltage : (mk.kind==='P' ? mkv.power : mkv.current);
+        if(Number.isNaN(mkVal)) return; // 數值尚未就緒，這一幀先不畫，取到後會自動重繪
+        const y = mk.kind==='V' ? yOfV(mkVal+mkOff) : yOfI(mkVal+mkOff);
+        octx.beginPath(); octx.arc(x,y,5,0,Math.PI*2);
+        octx.fillStyle = theme.badgeFill; octx.fill();
+        octx.lineWidth=1.5; octx.strokeStyle = theme.mapColor(mk.color); octx.stroke();
+        octx.fillStyle = theme.badgeText;
+        octx.font = "bold 9px ui-monospace, monospace";
+        octx.textAlign='center'; octx.textBaseline='middle';
+        octx.fillText(String(mk.id), x, y+0.5);
+        octx.textAlign='left'; octx.textBaseline='alphabetic';
+      });
+    }
+  }
+
+  // 「只匯出曲線圖」：供 HTML 報告內嵌截圖使用（報告本身已經有獨立的 HTML 統計表格／
+  // Marker Table 清單，不需要再把它們畫進截圖裡重複一次）
+  function renderChartForExport(themeKey){
+    const theme = EXPORT_THEMES[themeKey] || EXPORT_THEMES.normal;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const off = document.createElement('canvas');
+    off.width = Math.round(rect.width*dpr);
+    off.height = Math.round(rect.height*dpr);
+    const octx = off.getContext('2d');
+    octx.setTransform(dpr,0,0,dpr,0,0);
+    drawChartIntoContext(octx, rect, theme);
+    return off;
+  }
+
+  // ---------------------------------------------------------------
+  // 「⬇ 匯出圖片 PNG」專用：在曲線圖下方接著畫出 M1/M2 統計值表格（含比對檔 MEM
+  // 曲線，若有勾選），若 Marker Table 開關已開啟，再接著畫出 Marker Table 清單——
+  // 三段畫在同一張直向堆疊的長圖上，讓匯出的 PNG 跟報告一樣「圖表 + 數據」一次到位。
+  // ---------------------------------------------------------------
+  const EXPORT_ROW_H = 20;
+  const EXPORT_SECTION_HEADER_H = 66; // 標題列(22) + 欄位標題列(22) + 分隔線間距(6+16)
+  const EXPORT_SECTION_PAD_BOTTOM = 14;
+
+  function measureStatsExportHeight(){
+    if(!state.loaded) return 0;
+    const rows = Math.max(1, state.traces.filter(t=>t.visible).length);
+    return EXPORT_SECTION_HEADER_H + rows*EXPORT_ROW_H + EXPORT_SECTION_PAD_BOTTOM;
+  }
+  function measureMarkerExportHeight(){
+    if(!state.loaded || !state.markerTableOn) return 0;
+    const rows = Math.max(1, state.markers.length);
+    return EXPORT_SECTION_HEADER_H + rows*EXPORT_ROW_H + EXPORT_SECTION_PAD_BOTTOM;
+  }
+
+  function drawExportSectionHeader(octx, theme, x, y, w, titleText, cols){
+    octx.strokeStyle = theme.grid;
+    octx.lineWidth = 1;
+    octx.beginPath(); octx.moveTo(x,y); octx.lineTo(x+w,y); octx.stroke();
+
+    const pad = 16;
+    let cy = y + 22;
+    octx.textAlign='left'; octx.textBaseline='alphabetic';
+    octx.font = "bold 12px ui-monospace, monospace";
+    octx.fillStyle = theme.markerLabel;
+    octx.fillText(titleText, x+pad, cy);
+    cy += 22;
+
+    const usableW = w - pad*2;
+    let cx = x+pad;
+    const colX = cols.map(c=>{ const xx=cx; cx += usableW*c.frac; return xx; });
+
+    octx.font = MONO_FONT;
+    octx.fillStyle = theme.axisText;
+    cols.forEach((c,i)=> octx.fillText(c.label, colX[i], cy));
+    cy += 6;
+    octx.beginPath(); octx.moveTo(x+pad, cy); octx.lineTo(x+w-pad, cy); octx.stroke();
+    cy += 16;
+    return { colX, rowY: cy, pad };
+  }
+
+  function drawExportStatsSection(octx, theme, x, y, w, h){
+    if(h<=0) return;
+    const tLo = Math.min(state.marker1, state.marker2);
+    const tHi = Math.max(state.marker1, state.marker2);
+    const cols = [
+      { key:'trace', label:T('thTrace'), frac:0.30 },
+      { key:'m1',    label:T('thM1Val'), frac:0.16 },
+      { key:'m2',    label:T('thM2Val'), frac:0.16 },
+      { key:'max',   label:T('thMax'),   frac:0.13 },
+      { key:'min',   label:T('thMin'),   frac:0.12 },
+      { key:'avg',   label:T('thAvg'),   frac:0.13 },
+    ];
+    const titleText = 'M1 t = '+state.marker1.toFixed(6)+' s    M2 t = '+state.marker2.toFixed(6)+' s    ΔT = '+(tHi-tLo).toFixed(6)+' s';
+    const { colX, rowY } = drawExportSectionHeader(octx, theme, x, y, w, titleText, cols);
+    let cy = rowY;
+    const visible = state.traces.filter(t=>t.visible);
+    octx.font = MONO_FONT;
+    if(visible.length===0){
+      octx.fillStyle = theme.axisText;
+      octx.fillText(T('noTraceSelected'), colX[0], cy);
+      return;
+    }
+    visible.forEach(t=>{
+      // 每條曲線各自依自己的 tint 換算索引（主檔案／比對檔 MEM 取樣間隔可能不同）
+      const valM1 = valAtTime(t, state.marker1);
+      const valM2 = valAtTime(t, state.marker2);
+      const stats = computeRangeStats(t);
+      octx.fillStyle = theme.mapColor(t.color);
+      octx.beginPath(); octx.arc(colX[0]+4, cy-4, 4, 0, Math.PI*2); octx.fill();
+      octx.fillStyle = theme.axisText;
+      octx.fillText(t.label, colX[0]+14, cy);
+      octx.fillText(fmtValForTable(valM1,t.kind), colX[1], cy);
+      octx.fillText(fmtValForTable(valM2,t.kind), colX[2], cy);
+      octx.fillText(fmtValForTable(stats.max,t.kind), colX[3], cy);
+      octx.fillText(fmtValForTable(stats.min,t.kind), colX[4], cy);
+      octx.fillText(fmtValForTable(stats.avg,t.kind), colX[5], cy);
+      cy += EXPORT_ROW_H;
+    });
+  }
+
+  function drawExportMarkerSection(octx, theme, x, y, w, h){
+    if(h<=0) return;
+    const cols = [
+      { key:'id',   label:T('thIndex'),   frac:0.05 },
+      { key:'t',    label:T('thTime'),    frac:0.13 },
+      { key:'ch',   label:T('thChannel'), frac:0.22 },
+      { key:'v',    label:T('thVoltage'), frac:0.15 },
+      { key:'i',    label:T('thCurrent'), frac:0.15 },
+      { key:'p',    label:T('thPower'),   frac:0.15 },
+      { key:'note', label:T('thNote'),    frac:0.15 },
+    ];
+    const { colX, rowY } = drawExportSectionHeader(octx, theme, x, y, w, 'Marker Table', cols);
+    let cy = rowY;
+    octx.font = MONO_FONT;
+    if(state.markers.length===0){
+      octx.fillStyle = theme.axisText;
+      octx.fillText(T('markerTableEmptyHint'), colX[0], cy);
+      return;
+    }
+    state.markers.forEach(m=>{
+      octx.fillStyle = theme.mapColor(m.color);
+      octx.beginPath(); octx.arc(colX[2]+4, cy-4, 4, 0, Math.PI*2); octx.fill();
+      octx.fillStyle = theme.axisText;
+      octx.fillText(String(m.id), colX[0], cy);
+      octx.fillText(m.time.toFixed(5), colX[1], cy);
+      octx.fillText(markerChannelLabel(m), colX[2]+14, cy);
+      const mv = markerValues(m);
+      octx.fillText(fmtVal(mv.voltage,'V'), colX[3], cy);
+      octx.fillText(fmtCurrentAuto(mv.current), colX[4], cy);
+      octx.fillText(fmtPowerAuto(mv.power), colX[5], cy);
+      octx.fillText((m.note||'').slice(0,16), colX[6], cy);
+      cy += EXPORT_ROW_H;
+    });
+  }
+
+  // 「⬇ 匯出圖片 PNG」按鈕實際呼叫的入口：曲線圖 + 統計值區域（必備）+
+  // Marker Table 區域（僅在開關已開啟時才附加）疊成一張長圖
+  function renderExportCanvasFull(themeKey){
+    const theme = EXPORT_THEMES[themeKey] || EXPORT_THEMES.normal;
+    const chartRect = canvas.parentElement.getBoundingClientRect();
+    const statsH = measureStatsExportHeight();
+    const markerH = measureMarkerExportHeight();
+    const totalW = chartRect.width;
+    const totalH = chartRect.height + statsH + markerH;
+    const dpr = window.devicePixelRatio || 1;
+    const off = document.createElement('canvas');
+    off.width = Math.round(totalW*dpr);
+    off.height = Math.round(totalH*dpr);
+    const octx = off.getContext('2d');
+    octx.setTransform(dpr,0,0,dpr,0,0);
+    octx.fillStyle = theme.bg;
+    octx.fillRect(0,0,totalW,totalH);
+    drawChartIntoContext(octx, chartRect, theme);
+    if(statsH>0) drawExportStatsSection(octx, theme, 0, chartRect.height, totalW, statsH);
+    if(markerH>0) drawExportMarkerSection(octx, theme, 0, chartRect.height+statsH, totalW, markerH);
+    return off;
+  }
+
+  document.getElementById('exportImageBtn').addEventListener('click', async ()=>{
+    if(!state.loaded) return;
+    // 先把「目前視野 + M1/M2 + 全部 marker」需要的資料一次備妥，之後的渲染流程
+    // 維持同步、與現行版本逐像素一致（渲染程式碼本身完全沒改）
+    if(!(await ensureExportData())) return;
+    const mode = document.getElementById('imageThemeSelect').value;
+    const off = renderExportCanvasFull(mode); // 曲線圖 + 統計值區域，Marker Table 開啟時一併附加
+    off.toBlob(async blob=>{
+      if(!blob){ flashMessage(T('msgImageExportFailed')); return; }
+      const tag = mode==='light' ? '_print' : (mode==='negative' ? '_negative' : '');
+      try{
+        if(await saveBlob('png', exportBaseName()+tag+'.png', blob)) flashMessage(T('msgImageExported'));
+      }catch(err){ flashMessage(T('saveFailedPrefix')+err.message, 6000); }
+    }, 'image/png');
+  });
+
+  // ---------------------------------------------------------------
+  // HTML 報告匯出：內嵌圖表截圖 + 統計資料 + （若 Marker Table 已開啟）標記清單
+  // ---------------------------------------------------------------
+  function buildStatsRowsHtml(){
+    const tLo = Math.min(state.marker1, state.marker2);
+    const tHi = Math.max(state.marker1, state.marker2);
+    const visible = state.traces.filter(t=>t.visible);
+    const rows = visible.map(t=>{
+      const valM1 = valAtTime(t, state.marker1);
+      const valM2 = valAtTime(t, state.marker2);
+      const stats = computeRangeStats(t);
+      return '<tr>'+
+        '<td><span class="rdot" style="background:'+t.color+'"></span>'+escapeHtml(t.label)+'</td>'+
+        '<td>'+fmtValForTable(valM1,t.kind)+'</td>'+
+        '<td>'+fmtValForTable(valM2,t.kind)+'</td>'+
+        '<td>'+fmtValForTable(stats.max,t.kind)+'</td>'+
+        '<td>'+fmtValForTable(stats.min,t.kind)+'</td>'+
+        '<td>'+fmtValForTable(stats.avg,t.kind)+'</td>'+
+      '</tr>';
+    }).join('');
+    return { rows: rows || '<tr><td colspan="6">'+T('noTraceSelected')+'</td></tr>', tLo, tHi };
+  }
+
+  function buildMarkerTableHtml(){
+    if(state.markers.length===0){
+      return '<p class="r-dim">'+T('reportMarkerEmpty')+'</p>';
+    }
+    const rows = state.markers.map(m=>{
+      const mv = markerValues(m);
+      return '<tr>'+
+        '<td>'+m.id+'</td>'+
+        '<td>'+m.time.toFixed(5)+'</td>'+
+        '<td><span class="rdot" style="background:'+m.color+'"></span>'+escapeHtml(markerChannelLabel(m))+'</td>'+
+        '<td>'+fmtVal(mv.voltage,'V')+'</td>'+
+        '<td>'+fmtCurrentAuto(mv.current)+'</td>'+
+        '<td>'+fmtPowerAuto(mv.power)+'</td>'+
+        '<td>'+escapeHtml(m.note||'')+'</td>'+
+      '</tr>';
+    }).join('');
+    return '<table class="r-table"><thead><tr><th>'+T('thIndex')+'</th><th>'+T('thTime')+'</th><th>'+T('thChannel')+'</th><th>'+T('thVoltage')+'</th><th>'+T('thCurrent')+'</th><th>'+T('thPower')+'</th><th>'+T('thNote')+'</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+
+  function buildReportHtml(imgDataUrl, themeLabel){
+    const dur = getDuration();
+    const { rows, tLo, tHi } = buildStatsRowsHtml();
+    const genTime = new Date().toLocaleString();
+    const markerSection = state.markerTableOn
+      ? '<h2>'+T('reportMarkerHeading')+'</h2>' + buildMarkerTableHtml()
+      : '';
+    const caseNameTrim = (state.caseName||'').trim();
+    const caseLine = caseNameTrim
+      ? '<div><b>'+T('metaCaseName')+'</b>：'+escapeHtml(caseNameTrim)+'</div>'
+      : '';
+    const htmlLangAttr = state.lang==='en' ? 'en' : 'zh-Hant';
+    return '<!DOCTYPE html><html lang="'+htmlLangAttr+'"><head><meta charset="UTF-8">'+
+      '<title>'+T('reportTitlePrefix')+escapeHtml(state.fileName||'')+'</title>'+
+      '<style>'+
+        'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;'+
+        'background:#f4f4f6;color:#22222a;margin:0;padding:32px;}'+
+        '.report{max-width:960px;margin:0 auto;background:#fff;border:1px solid #e0e0e6;border-radius:10px;padding:32px 36px;}'+
+        'h1{font-size:20px;margin:0 0 4px;}'+
+        'h2{font-size:15px;margin:28px 0 10px;padding-top:14px;border-top:1px solid #e6e6ec;color:#33333d;}'+
+        '.meta{color:#6a6a76;font-size:12.5px;margin-bottom:20px;line-height:1.7;}'+
+        '.meta b{color:#22222a;}'+
+        'img.chart-shot{width:100%;border:1px solid #e0e0e6;border-radius:8px;display:block;}'+
+        'table.r-table{width:100%;border-collapse:collapse;font-size:12.5px;}'+
+        'table.r-table th,table.r-table td{text-align:left;padding:7px 10px;border-bottom:1px solid #e6e6ec;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;}'+
+        'table.r-table th{color:#6a6a76;font-weight:600;background:#f7f7f9;}'+
+        '.rdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;}'+
+        '.r-dim{color:#8a8a94;font-size:12.5px;}'+
+        '.stats-head{display:flex;gap:20px;flex-wrap:wrap;font-family:ui-monospace,monospace;font-size:12.5px;color:#33333d;margin-bottom:10px;}'+
+        '.footer{margin-top:26px;padding-top:14px;border-top:1px solid #e6e6ec;color:#9a9aa4;font-size:11px;}'+
+      '</style></head><body>'+
+      '<div class="report">'+
+        '<h1>'+T('reportH1')+'</h1>'+
+        '<div class="meta">'+
+          caseLine+
+          '<div><b>'+T('metaFile')+'</b>：'+escapeHtml(state.fileName||'')+'　<b>'+T('metaGenTime')+'</b>：'+genTime+'</div>'+
+          '<div><b>'+T('metaSamples')+'</b>：'+state.nRecords.toLocaleString()+'　<b>tint</b>：'+(state.tint*1000).toFixed(5)+' ms　<b>'+T('metaDuration')+'</b>：'+dur.toFixed(3)+' s　<b>'+T('metaOffsetMode')+'</b>：'+(state.offsetMode?T('onLabel'):T('offLabel'))+'</div>'+
+          '<div><b>'+T('metaChartColor')+'</b>：'+escapeHtml(themeLabel)+'　<b>'+T('metaViewRange')+'</b>：'+state.view.t0.toFixed(6)+'s ~ '+state.view.t1.toFixed(6)+'s</div>'+
+        '</div>'+
+        '<h2>'+T('reportChartShotHeading')+'</h2>'+
+        '<img class="chart-shot" src="'+imgDataUrl+'" alt="chart screenshot">'+
+        '<h2>'+T('reportStatsHeading')+'</h2>'+
+        '<div class="stats-head">'+
+          '<span>M1  t = '+state.marker1.toFixed(6)+' s</span>'+
+          '<span>M2  t = '+state.marker2.toFixed(6)+' s</span>'+
+          '<span>ΔT = '+(tHi-tLo).toFixed(6)+' s</span>'+
+        '</div>'+
+        '<table class="r-table"><thead><tr><th>'+T('thTrace')+'</th><th>'+T('thM1Val')+'</th><th>'+T('thM2Val')+'</th><th>'+T('thMax')+'</th><th>'+T('thMin')+'</th><th>'+T('thAvg')+'</th></tr></thead>'+
+        '<tbody>'+rows+'</tbody></table>'+
+        markerSection+
+        '<div class="footer">'+T('reportFooter')+'</div>'+
+      '</div>'+
+      '</body></html>';
+  }
+
+  document.getElementById('exportReportBtn').addEventListener('click', async ()=>{
+    if(!state.loaded) return;
+    if(!(await ensureExportData())) return;
+    const mode = document.getElementById('imageThemeSelect').value;
+    const theme = EXPORT_THEMES[mode] || EXPORT_THEMES.normal;
+    const off = renderChartForExport(mode);
+    const imgDataUrl = off.toDataURL('image/png');
+    const html = buildReportHtml(imgDataUrl, T(theme.labelKey));
+    const blob = new Blob([html], { type:'text/html;charset=utf-8;' });
+    try{
+      if(await saveBlob('html', exportBaseName()+'_report.html', blob)) flashMessage(T('msgReportExported'));
+    }catch(err){ flashMessage(T('saveFailedPrefix')+err.message, 6000); }
+  });
+
+  // 滑鼠停留在左／右軸邊界時，游標改為上下拖曳樣式，提示可拖曳調整 Ref
+  canvas.addEventListener('mousemove', (e)=>{
+    if(dragTarget || axisDragTarget) return;
+    if(!state.loaded){ canvas.style.cursor='crosshair'; return; }
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const plotW = rect.width - PAD.l - PAD.r;
+    canvas.style.cursor = (mx < PAD.l || mx > PAD.l+plotW) ? 'ns-resize' : 'crosshair';
+  });
+
+  // ---------------------------------------------------------------
+  // Marker 統計面板：M1/M2 各自時間與數值 + 區間 Max/Min/Avg
+  // ---------------------------------------------------------------
+  // 統計面板簽章：只要 marker1/marker2/offset 設定/可見曲線清單/檔案識別 沒變，
+  // 表格內容必然相同（跟 state.view 無關），可直接沿用上次算好的 HTML，
+  // 讓平移/縮放/圈選/軸拖曳這幾種跟統計面板無關的高頻互動不用重算。
+  let lastStatsSig = null;
+  let lastStatsHtml = '';
+  let statsFrozenForDrag = false; // M1/M2 拖曳中：true 時只更新 stats-head 時間/ΔT，Max/Min/Avg 沿用上次結果
+
+  function statsSignature(){
+    const visible = state.traces.filter(t=>t.visible);
+    const traceSig = visible.map(t=>t.key+':'+t.label+':'+t.color).join(',');
+    // handle 是檔案內容的 sha1：同名、同筆數但內容不同的檔案也會得到不同簽章
+    const fileSig = state.handle+(state.compare ? (':'+state.compare.handle) : '');
+    return [state.marker1, state.marker2, state.offsetMode, state.offsetMaxLimit, traceSig, fileSig, state.lang].join('|');
+  }
+
+  function computeStatsHtml(){
+    const tLo = Math.min(state.marker1, state.marker2);
+    const tHi = Math.max(state.marker1, state.marker2);
+    const visible = state.traces.filter(t=>t.visible);
+    const rows = visible.map(t=>{
+      const valM1 = valAtTime(t, state.marker1);
+      const valM2 = valAtTime(t, state.marker2);
+      const stats = computeRangeStats(t);
+      return '<tr>'+
+        '<td><span class="dot" style="background:'+t.color+'"></span>'+escapeHtml(t.label)+'</td>'+
+        '<td>'+fmtValForTable(valM1,t.kind)+'</td>'+
+        '<td>'+fmtValForTable(valM2,t.kind)+'</td>'+
+        '<td>'+fmtValForTable(stats.max,t.kind)+'</td>'+
+        '<td>'+fmtValForTable(stats.min,t.kind)+'</td>'+
+        '<td>'+fmtValForTable(stats.avg,t.kind)+'</td>'+
+      '</tr>';
+    }).join('');
+    return '<div class="stats-head">'+
+        '<span>M1  t = '+state.marker1.toFixed(6)+' s</span>'+
+        '<span>M2  t = '+state.marker2.toFixed(6)+' s</span>'+
+        '<span>ΔT = '+(tHi-tLo).toFixed(6)+' s</span>'+
+      '</div>'+
+      '<table class="stats-table"><thead><tr><th>'+T('thTrace')+'</th><th>'+T('thM1Val')+'</th><th>'+T('thM2Val')+'</th><th>'+T('thMax')+'</th><th>'+T('thMin')+'</th><th>'+T('thAvg')+'</th></tr></thead>'+
+      '<tbody>'+(rows || '<tr><td colspan="6" class="dim">'+T('noTraceSelected')+'</td></tr>')+'</tbody></table>';
+  }
+
+  function updateStatsPanel(){
+    const el = document.getElementById('markerStats');
+    updateCsvExportHint(); // 依賴 state.view，必須無條件執行，不受下方快取影響
+    if(!state.loaded){ el.innerHTML=''; lastStatsSig=null; return; }
+
+    if(statsFrozenForDrag){
+      // 拖曳 M1/M2 中：只更新時間/ΔT 顯示，Max/Min/Avg 欄位維持上次算好的內容，
+      // 等 mouseup 時再補算一次完整版（見下方拖曳 handler）
+      const tLo = Math.min(state.marker1, state.marker2);
+      const tHi = Math.max(state.marker1, state.marker2);
+      const headEl = el.querySelector('.stats-head');
+      if(headEl){
+        headEl.innerHTML =
+          '<span>M1  t = '+state.marker1.toFixed(6)+' s</span>'+
+          '<span>M2  t = '+state.marker2.toFixed(6)+' s</span>'+
+          '<span>ΔT = '+(tHi-tLo).toFixed(6)+' s</span>';
+        return;
+      }
+      // 還沒有現成表格可更新（例如剛載入檔案就開始拖）就退回完整計算一次
+    }
+
+    const sig = statsSignature();
+    if(sig===lastStatsSig){ return; } // 內容與上次完全相同，沿用既有 DOM，不重算不重繪
+    lastStatsSig = sig;
+    // Max/Min/Avg 由 server 端計算：先用目前快取（可能是上一個區間的值）畫出表格，
+    // 取數回來後再重繪一次填入正確值。M1/M2 兩欄與時間欄是本地資料，會立即正確。
+    lastStatsHtml = computeStatsHtml();
+    el.innerHTML = lastStatsHtml;
+    refreshStats().then(()=>{
+      // 取數期間若簽章又變了（使用者繼續操作），交給後續那一輪處理，避免蓋掉新結果
+      if(lastStatsSig !== sig) return;
+      const html = computeStatsHtml();
+      if(html !== lastStatsHtml){
+        lastStatsHtml = html;
+        el.innerHTML = html;
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 縮放 / 平移 / 自訂時間範圍 / 縮放歷史（回上一步）
+  // ---------------------------------------------------------------
+  function syncRangeInputs(){
+    document.getElementById('viewStart').value = state.view.t0.toFixed(6);
+    document.getElementById('viewEnd').value = state.view.t1.toFixed(6);
+  }
+
+  // ---------------------------------------------------------------
+  // 時間軸捲動條（取代原本主圖手掌拖曳平移）：
+  //   滑塊寬度＝目前顯示範圍佔全檔時長比例，位置＝view.t0 對應比例
+  //   拖曳滑塊＝平移（span 不變）；點擊軌道空白處＝以該點為中心跳轉
+  // ---------------------------------------------------------------
+  const timeScrollbarEl = document.getElementById('timeScrollbar');
+  const tsTrack = document.getElementById('tsTrack');
+  const tsThumb = document.getElementById('tsThumb');
+  let scrollDragging = false;
+  let scrollDragStartX = 0;
+  let scrollDragStartT0 = 0;
+
+  function updateScrollbar(){
+    if(!state.loaded){ timeScrollbarEl.classList.remove('active'); return; }
+    timeScrollbarEl.classList.add('active');
+    const dur = getDuration();
+    if(!(dur > 0)) return;
+    const trackW = tsTrack.clientWidth;
+    if(trackW <= 0) return;
+    const minThumbW = 18;
+    let thumbW = Math.max(minThumbW, (domainSpan()/dur) * trackW);
+    thumbW = Math.min(thumbW, trackW);
+    let thumbL = (state.view.t0/dur) * trackW;
+    thumbL = Math.max(0, Math.min(trackW - thumbW, thumbL));
+    tsThumb.style.width = thumbW+'px';
+    tsThumb.style.left = thumbL+'px';
+  }
+
+  function beginScrollDrag(clientX, startT0){
+    scrollDragging = true;
+    scrollDragStartX = clientX;
+    scrollDragStartT0 = startT0;
+    tsThumb.classList.add('dragging');
+  }
+
+  tsThumb.addEventListener('mousedown', (e)=>{
+    if(!state.loaded) return;
+    e.preventDefault();
+    e.stopPropagation();
+    beginScrollDrag(e.clientX, state.view.t0);
+  });
+
+  tsTrack.addEventListener('mousedown', (e)=>{
+    if(!state.loaded || e.target===tsThumb) return;
+    const rect = tsTrack.getBoundingClientRect();
+    const dur = getDuration();
+    const span = domainSpan();
+    const clickedT = ((e.clientX-rect.left)/rect.width) * dur;
+    let t0 = clickedT - span/2;
+    let t1 = t0 + span;
+    if(t0<0){ t1-=t0; t0=0; }
+    if(t1>dur){ t0-=(t1-dur); t1=dur; }
+    t0 = Math.max(0,t0);
+    pushHistory();
+    state.view = { t0, t1 };
+    syncRangeInputs();
+    scheduleRedraw();
+    beginScrollDrag(e.clientX, t0);
+  });
+
+  window.addEventListener('mousemove', (e)=>{
+    if(!scrollDragging) return;
+    const rect = tsTrack.getBoundingClientRect();
+    if(rect.width<=0) return;
+    const dur = getDuration();
+    const span = domainSpan();
+    const dt = ((e.clientX-scrollDragStartX)/rect.width) * dur;
+    let t0 = scrollDragStartT0 + dt;
+    let t1 = t0 + span;
+    if(t0<0){ t1-=t0; t0=0; }
+    if(t1>dur){ t0-=(t1-dur); t1=dur; }
+    t0 = Math.max(0,t0);
+    state.view = { t0, t1 };
+    syncRangeInputs();
+    scheduleRedrawThrottled();
+  });
+
+  window.addEventListener('mouseup', ()=>{
+    if(scrollDragging){
+      scrollDragging = false;
+      tsThumb.classList.remove('dragging');
+      scheduleRedraw(); // 補一次完整重繪，避免停在節流窗口內的稍早畫面
+    }
+  });
+
+  function pushHistory(){
+    state.viewHistory.push({ t0:state.view.t0, t1:state.view.t1 });
+    if(state.viewHistory.length>50) state.viewHistory.shift();
+    updateBackButton();
+  }
+  function updateBackButton(){
+    document.getElementById('backBtn').disabled = state.viewHistory.length===0;
+  }
+  document.getElementById('backBtn').addEventListener('click', ()=>{
+    if(state.viewHistory.length===0) return;
+    state.view = state.viewHistory.pop();
+    syncRangeInputs();
+    updateBackButton();
+    scheduleRedraw();
+  });
+
+  document.getElementById('autoscaleBtn').addEventListener('click', ()=>{
+    if(!state.loaded) return;
+    pushHistory();
+    state.view = { t0:0, t1:getDuration() };
+    syncRangeInputs();
+    scheduleRedraw();
+  });
+
+  // 將 M1/M2 移回目前可視範圍中間（縮放/平移後常會把標記線移出可視範圍，
+  // 導致滑鼠抓不到線也拖不動；這裡直接把兩條線重新放在目前畫面的 25%／75% 處）
+  document.getElementById('centerMarkersBtn').addEventListener('click', ()=>{
+    if(!state.loaded) return;
+    const span = domainSpan();
+    state.marker1 = state.view.t0 + span*0.25;
+    state.marker2 = state.view.t0 + span*0.75;
+    scheduleRedraw();
+    flashMessage(T('msgMarkersRecentered'));
+  });
+
+  document.getElementById('applyRangeBtn').addEventListener('click', ()=>{
+    if(!state.loaded) return;
+    let t0 = parseFloat(document.getElementById('viewStart').value);
+    let t1 = parseFloat(document.getElementById('viewEnd').value);
+    const dur = getDuration();
+    if(Number.isNaN(t0) || Number.isNaN(t1)){ flashMessage(T('msgBadRange')); return; }
+    t0 = Math.max(0,t0); t1 = Math.min(dur,t1);
+    if(t0>=t1){ flashMessage(T('msgBadRange')); return; } // 先 clamp 再檢查，輸入完全在記錄範圍外會得到反向區間
+    pushHistory();
+    state.view = { t0, t1 };
+    syncRangeInputs();
+    scheduleRedraw();
+  });
+
+  // ---------------------------------------------------------------
+  // V / I 軸刻度：自動 autofit ↔ 手動 Ref + 每格刻度（perDiv）
+  // ---------------------------------------------------------------
+  function syncAxisInputs(){
+    ['v','i'].forEach(which=>{
+      const axis = which==='v' ? state.vAxis : state.iAxis;
+      const refEl = document.getElementById(which+'RefInput');
+      const divEl = document.getElementById(which+'DivInput');
+      if(axis.auto && axis._autoMin!=null){
+        refEl.value = ((axis._autoMin+axis._autoMax)/2).toFixed(6);
+        divEl.value = ((axis._autoMax-axis._autoMin)/4).toFixed(6);
+      }else{
+        refEl.value = axis.ref.toFixed(6);
+        divEl.value = axis.perDiv.toFixed(6);
+      }
+      document.getElementById(which+'AutoToggle').checked = axis.auto;
+    });
+  }
+
+  function adjustAxisScale(which, deltaY){
+    const axis = which==='v' ? state.vAxis : state.iAxis;
+    if(axis.auto && axis._autoMin!=null){
+      axis.ref = (axis._autoMin+axis._autoMax)/2;
+      axis.perDiv = Math.max((axis._autoMax-axis._autoMin)/4, 1e-9);
+      axis.auto = false;
+    }
+    const factor = deltaY < 0 ? 0.85 : (1/0.85);
+    axis.perDiv = Math.max(axis.perDiv*factor, 1e-12);
+    syncAxisInputs();
+    scheduleRedraw();
+  }
+
+  function setAxisManual(which){
+    const axis = which==='v' ? state.vAxis : state.iAxis;
+    const ref = parseFloat(document.getElementById(which+'RefInput').value);
+    const perDiv = parseFloat(document.getElementById(which+'DivInput').value);
+    if(Number.isNaN(ref) || Number.isNaN(perDiv) || perDiv<=0){ flashMessage(T('msgBadAxisValue')); return; }
+    axis.ref = ref; axis.perDiv = perDiv; axis.auto = false;
+    document.getElementById(which+'AutoToggle').checked = false;
+    scheduleRedraw();
+  }
+
+  ['v','i'].forEach(which=>{
+    document.getElementById(which+'AutoToggle').addEventListener('change', (e)=>{
+      const axis = which==='v' ? state.vAxis : state.iAxis;
+      axis.auto = e.target.checked;
+      scheduleRedraw();
+    });
+    document.getElementById(which+'RefInput').addEventListener('change', ()=>setAxisManual(which));
+    document.getElementById(which+'DivInput').addEventListener('change', ()=>setAxisManual(which));
+  });
+
+  // 滾輪縮放防呆：需按住 Ctrl（Mac 為 Cmd）才會啟動縮放，
+  // 避免瀏覽頁面、滑鼠滑過圖表時不小心觸發縮放。未按住修飾鍵時
+  // 不 preventDefault，讓滾輪維持一般頁面捲動行為，並偶爾提示一次操作方式。
+  let lastWheelHintAt = 0;
+  canvas.addEventListener('wheel', (e)=>{
+    if(!state.loaded) return;
+    const zoomKeyHeld = e.ctrlKey || e.metaKey;
+    if(!zoomKeyHeld){
+      const now = Date.now();
+      if(now - lastWheelHintAt > 2500){
+        lastWheelHintAt = now;
+        flashMessage(T('msgWheelHint'));
+      }
+      return; // 不 preventDefault，讓頁面正常捲動
+    }
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const plotW = rect.width - PAD.l - PAD.r;
+
+    if(mx < PAD.l){ e.preventDefault(); adjustAxisScale('v', e.deltaY); return; }
+    if(mx > PAD.l+plotW){ e.preventDefault(); adjustAxisScale('i', e.deltaY); return; }
+
+    e.preventDefault();
+    const tAtCursor = tOfX(mx, rect.width);
+    const factor = e.deltaY < 0 ? 0.85 : (1/0.85);
+    const dur = getDuration();
+    const minSpan = Math.max(state.tint*10, dur*0.0005);
+    let span = domainSpan()*factor;
+    span = Math.max(minSpan, Math.min(dur, span));
+    const ratio = (tAtCursor - state.view.t0) / domainSpan();
+    let t0 = tAtCursor - ratio*span;
+    let t1 = t0 + span;
+    if(t0<0){ t1-=t0; t0=0; }
+    if(t1>dur){ t0-=(t1-dur); t1=dur; }
+    t0 = Math.max(0,t0);
+    state.view = { t0, t1 };
+    syncRangeInputs();
+    scheduleRedraw();
+  }, { passive:false });
+
+  // ---------------------------------------------------------------
+  // 滑鼠互動：
+  //   左鍵拖曳 Marker 線／圈選放大（box-zoom）
+  //   右鍵：新增 Marker Table 標記
+  //   左鍵在左／右軸邊界上下拖曳：直接拖動波形調整該軸 Ref（參考位置）
+  //   時間軸平移改由下方捲動條負責（見 timeScrollbar 相關程式碼）
+  // ---------------------------------------------------------------
+  let dragTarget = null;   // 'm1' | 'm2' | 'box' | null
+  let boxSelect = null;    // { xStart, xCurrent } 圈選中的像素座標
+
+  let axisDragTarget = null;  // 'v' | 'i' | null，在左／右軸邊界拖曳中
+  let axisDragStartY = null;
+  let axisDragStartRef = null;
+
+  function beginAxisDrag(which, clientY){
+    const axis = which==='v' ? state.vAxis : state.iAxis;
+    // 拖曳前若仍是自動刻度，先依目前 autofit 結果轉為手動基準，避免拖曳瞬間跳動
+    if(axis.auto && axis._autoMin!=null){
+      axis.ref = (axis._autoMin+axis._autoMax)/2;
+      axis.perDiv = Math.max((axis._autoMax-axis._autoMin)/4, 1e-9);
+      axis.auto = false;
+      document.getElementById(which+'AutoToggle').checked = false;
+    }
+    axisDragTarget = which;
+    axisDragStartY = clientY;
+    axisDragStartRef = axis.ref;
+    syncAxisInputs();
+  }
+
+  canvas.addEventListener('mousedown', (e)=>{
+    if(!state.loaded || e.button!==0) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const plotW = rect.width - PAD.l - PAD.r;
+
+    // Y 軸邊界區域：滾輪調整刻度、上下拖曳調整 Ref，不觸發時間軸拖曳
+    if(mx < PAD.l || mx > PAD.l+plotW){
+      beginAxisDrag(mx < PAD.l ? 'v' : 'i', e.clientY);
+      return;
+    }
+
+    // 時間軸平移已改由下方捲動條負責，主圖區域拖曳一律是圈選放大
+    let target = null;
+    if(state.marker1!=null && state.marker1>=state.view.t0 && state.marker1<=state.view.t1){
+      if(Math.abs(mx - xOf(state.marker1, rect.width)) < 8) target = 'm1';
+    }
+    if(!target && state.marker2!=null && state.marker2>=state.view.t0 && state.marker2<=state.view.t1){
+      if(Math.abs(mx - xOf(state.marker2, rect.width)) < 8) target = 'm2';
+    }
+    if(!target) target = 'box';
+
+    dragTarget = target;
+    if(target==='box') boxSelect = { xStart:mx, xCurrent:mx };
+  });
+
+  window.addEventListener('mousemove', (e)=>{
+    if(axisDragTarget){
+      const rect = canvas.getBoundingClientRect();
+      const plotH = rect.height - PAD.t - PAD.b;
+      const axis = axisDragTarget==='v' ? state.vAxis : state.iAxis;
+      const dyPixels = e.clientY - axisDragStartY;
+      // 拖曳量對應 4 格總高（perDiv*4）的比例：往下拖 = 波形往下移 = Ref 提高
+      axis.ref = axisDragStartRef + (dyPixels/plotH) * 4 * axis.perDiv;
+      syncAxisInputs();
+      scheduleRedrawThrottled();
+      return;
+    }
+    if(!state.loaded || !dragTarget) return;
+    const rect = canvas.getBoundingClientRect();
+    if(dragTarget==='m1' || dragTarget==='m2'){
+      const t = tOfX(e.clientX-rect.left, rect.width);
+      if(dragTarget==='m1') state.marker1=t; else state.marker2=t;
+      statsFrozenForDrag = true;
+      scheduleRedrawThrottled();
+    }else if(dragTarget==='box'){
+      boxSelect.xCurrent = e.clientX - rect.left;
+      scheduleRedrawThrottled();
+    }
+  });
+
+  window.addEventListener('mouseup', (e)=>{
+    if(axisDragTarget){
+      axisDragTarget = null;
+      axisDragStartY = null;
+      axisDragStartRef = null;
+      scheduleRedraw(); // 補一次完整重繪，避免停在節流窗口內的稍早畫面
+      return;
+    }
+    if(dragTarget==='box' && boxSelect){
+      const rect = canvas.getBoundingClientRect();
+      const xA = Math.min(boxSelect.xStart, boxSelect.xCurrent);
+      const xB = Math.max(boxSelect.xStart, boxSelect.xCurrent);
+      if(xB-xA > 4){
+        const tA = tOfX(xA, rect.width);
+        const tB = tOfX(xB, rect.width);
+        pushHistory();
+        state.view = { t0:tA, t1:tB };
+        syncRangeInputs();
+      }
+      boxSelect = null;
+      scheduleRedraw();
+    }else if(dragTarget==='m1' || dragTarget==='m2'){
+      // 拖曳過程用節流重繪（scheduleRedrawThrottled），放開滑鼠時強制補一次完整重繪，
+      // 確保最終畫面精確對齊放開當下的滑鼠位置，不會因節流窗口而卡在稍早的畫面；
+      // 同時解除 Max/Min/Avg 的凍結狀態，讓下一次 updateStatsPanel() 真正重算一次完整值
+      statsFrozenForDrag = false;
+      lastStatsSig = null; // 強制下一次 updateStatsPanel() 不被簽章快取擋掉
+      scheduleRedraw();
+    }
+    dragTarget = null;
+  });
+
+  canvas.addEventListener('contextmenu', (e)=>{
+    e.preventDefault();
+    if(!state.loaded) return;
+    if(!state.markerTableOn){ flashMessage(T('msgEnableMarkerTable')); return; }
+    tryAddMarker(e);
+  });
+
+  async function tryAddMarker(e){
+    if(state.markers.length >= 10){ flashMessage(T('msgMarkerLimit')); return; }
+    const visibleTraces = state.traces.filter(t=>t.visible);
+    if(visibleTraces.length===0){ flashMessage(T('msgNoTraceChecked')); return; }
+
+    const rect = canvas.getBoundingClientRect();
+    const my = e.clientY - rect.top;
+    const t = tOfX(e.clientX-rect.left, rect.width);
+
+    const plotH = rect.height - PAD.t - PAD.b;
+    const vTraces = state.traces.filter(tr=>tr.kind==='V' && tr.visible);
+    const iTraces = state.traces.filter(tr=>tr.kind===state.rightAxisKind && tr.visible);
+    const vBucketsList = vTraces.map(tr=>computeViewBuckets(tr, N_BUCKETS));
+    const iBucketsList = iTraces.map(tr=>computeViewBuckets(tr, N_BUCKETS));
+    const [vMin,vMax] = resolveAxisRange(state.vAxis, vBucketsList);
+    const [iMin,iMax] = resolveAxisRange(state.iAxis, iBucketsList);
+    const yOfV = v => PAD.t + plotH - ((v-vMin)/(vMax-vMin))*plotH;
+    const yOfI = v => PAD.t + plotH - ((v-iMin)/(iMax-iMin))*plotH;
+
+    // 吸附需要各曲線在游標時間點的實際數值。這些點不一定已在快取裡，
+    // 先一次備妥再往下算，避免用 NaN 去比距離而吸附到錯誤的曲線。
+    const candidates = visibleTraces.filter(tr=> tr.kind==='V' || tr.kind===state.rightAxisKind);
+    if(candidates.length===0) return;
+    await Promise.all(candidates.map(tr=>{
+      const handle = handleOf(tr);
+      const idxTr = idxAtTime(tr, t);
+      if(!handle || idxTr<0 || sampleAt(tr, idxTr)) return null;
+      return apiSamples(handle, idxTr, idxTr).then(win=>{
+        const V = {}, I = {};
+        Object.keys(win.V).forEach(ch=>{ V[ch] = win.V[ch][0]; });
+        Object.keys(win.I).forEach(ch=>{ I[ch] = win.I[ch][0]; });
+        pointCache.set(pointKey(handle, idxTr), { V, I });
+      }).catch(err=>console.error('標記取值失敗：', err));
+    }).filter(Boolean));
+
+    let best=null, bestDist=Infinity, bestIdx=0;
+    candidates.forEach(tr=>{
+      // 每條曲線各自依自己的 tint 換算索引（主檔案／比對檔 MEM 取樣間隔可能不同）
+      const idxTr = idxAtTime(tr, t);
+      if(idxTr<0) return; // 游標時間超出這條曲線的記錄範圍，不參與吸附
+      const val = getVal(tr, idxTr) + (tr.posOffset||0);
+      if(Number.isNaN(val)) return;
+      const y = tr.kind==='V' ? yOfV(val) : yOfI(val);
+      const d = Math.abs(y-my);
+      if(d<bestDist){ bestDist=d; best=tr; bestIdx=idxTr; }
+    });
+    if(!best) return;
+
+    const nextId = state.markers.length ? Math.max(...state.markers.map(m=>m.id))+1 : 1;
+    // 只存「身分」，不存數值快照——電壓／電流／功率一律依目前的校正設定即時取值，
+    // 這樣畫面、CSV、JSON、報告、PNG 永遠一致，切換校正開關時也會同步跟著變。
+    state.markers.push({
+      id: nextId,
+      time: bestIdx*tintOf(best),
+      ch: best.ch,
+      kind: best.kind,
+      src: best.src||'p', // 標記來源：'p' 主檔案／'c' 比對檔（MEM），避免通道編號互相混淆
+      color: best.color,
+      note: ''
+    });
+    renderMarkerTable();
+    scheduleRedraw();
+  }
+
+  // ---------------------------------------------------------------
+  // Offset 開關（電流負值校正）：校正由 server 端統一套用，因此切換開關或改變
+  // 最大值限制時，所有已快取的樣本／統計都必須作廢重取。Marker Table 的數值
+  // 是即時取值（不再是建立當下的快照），會跟著一起變正——匯出的 CSV／JSON／
+  // 報告／PNG 也因此不會再出現校正前的負值。
+  // ---------------------------------------------------------------
+  function onOffsetSettingChanged(){
+    invalidateDataCaches();
+    statsCache.clear();
+    state.traces.forEach(t=>{ t._lastBuckets = null; });
+    renderMarkerTable();
+    scheduleRedraw();
+  }
+  document.getElementById('offsetToggle').addEventListener('change', (e)=>{
+    state.offsetMode = e.target.checked;
+    document.getElementById('offsetMaxLimitInput').disabled = !state.offsetMode;
+    onOffsetSettingChanged();
+  });
+  document.getElementById('offsetMaxLimitInput').addEventListener('change', (e)=>{
+    let v = parseFloat(e.target.value);
+    if(!Number.isFinite(v) || v<0) v = 0;
+    state.offsetMaxLimit = v;
+    e.target.value = v;
+    onOffsetSettingChanged();
+  });
+
+  // ---------------------------------------------------------------
+  // Marker Table 開關 / 表格 / 匯出匯入
+  // ---------------------------------------------------------------
+  const markerTableToggle = document.getElementById('markerTableToggle');
+  markerTableToggle.addEventListener('change', (e)=>{
+    state.markerTableOn = e.target.checked;
+    document.getElementById('markerTableEl').style.opacity = state.markerTableOn ? '1' : '.35';
+    renderMarkerTable();
+    scheduleRedraw();
+  });
+
+  function renderMarkerTable(){
+    const tbody = document.getElementById('markerTableBody');
+    if(!state.markerTableOn){
+      tbody.innerHTML = '<tr><td colspan="8" class="dim">'+T('markerTableOffHint')+'</td></tr>';
+      return;
+    }
+    if(state.markers.length===0){
+      tbody.innerHTML = '<tr><td colspan="8" class="dim">'+T('markerTableEmptyHint')+'</td></tr>';
+      return;
+    }
+    tbody.innerHTML = state.markers.map((m,i)=>{
+      const mv = markerValues(m);
+      return '<tr>'+
+        '<td>'+m.id+'</td>'+
+        '<td>'+m.time.toFixed(5)+'</td>'+
+        '<td><span class="dot" style="background:'+m.color+'"></span>'+escapeHtml(markerChannelLabel(m))+'</td>'+
+        '<td>'+fmtVal(mv.voltage,'V')+'</td>'+
+        '<td>'+fmtCurrentAuto(mv.current)+'</td>'+
+        '<td>'+fmtPowerAuto(mv.power)+'</td>'+
+        '<td><input type="text" class="note-input" data-idx="'+i+'" value="'+escapeHtml(m.note)+'" placeholder="'+escapeHtml(T('notePlaceholder'))+'"></td>'+
+        '<td><button class="del-btn" data-idx="'+i+'" title="'+escapeHtml(T('deleteBtnTitle'))+'">✕</button></td>'+
+      '</tr>';
+    }).join('');
+  }
+
+  // Marker 的電壓／電流／功率一律依「目前的校正設定」即時取值，不保存建立當下的快照。
+  // 這是「校正結果必須寫入匯出檔案」的實作基礎：畫面、CSV、JSON、報告、PNG 全部
+  // 走這一個入口，開啟校正後不會再有任何一條路徑漏出校正前的負值。
+  // 取值尚未就緒（資料還在路上）時回 NaN，欄位顯示 '—'，到達後會自動重繪補上。
+  function markerValues(m){
+    const src = m.src||'p';
+    const pseudo = { ch:m.ch, kind:m.kind, src };
+    const idx = idxAtTime(pseudo, m.time);
+    const s = idx<0 ? null : sampleAt(pseudo, idx);
+    if(!s) return { voltage:NaN, current:NaN, power:NaN };
+    return { voltage:s.v, current:s.i, power:s.v*s.i };
+  }
+
+  // Marker Table 的通道名稱一律跟隨上方曲線面板目前的命名（含使用者自訂過的名稱），
+  // 而不是固定重組「CHx 電壓/電流」字串——這樣上方改名後，這裡會立即同步。
+  function markerChannelLabel(m){
+    const src = m.src||'p';
+    const trace = state.traces.find(tr=>tr.ch===m.ch && tr.kind===m.kind && tr.src===src);
+    if(trace) return trace.label;
+    const groupKey = m.kind==='V' ? 'groupVoltage' : (m.kind==='P' ? 'groupPower' : 'groupCurrent');
+    return (src==='c' ? 'MEM-CH' : 'CH')+m.ch+' '+T(groupKey);
+  }
+
+  const markerTableBody = document.getElementById('markerTableBody');
+  markerTableBody.addEventListener('input', (e)=>{
+    if(e.target.classList.contains('note-input')){
+      const idx = +e.target.dataset.idx;
+      if(state.markers[idx]) state.markers[idx].note = e.target.value;
+    }
+  });
+  markerTableBody.addEventListener('click', (e)=>{
+    if(e.target.classList.contains('del-btn')){
+      const idx = +e.target.dataset.idx;
+      state.markers.splice(idx,1);
+      state.markers.forEach((m,k)=>m.id=k+1);
+      renderMarkerTable();
+      scheduleRedraw();
+    }
+  });
+
+  document.getElementById('exportJsonBtn').addEventListener('click', async ()=>{
+    if(!(await ensureExportData())) return; // all marker values ready first, or no NaN-filled export
+    const payload = {
+      source_file: state.fileName,
+      tint: state.tint,
+      n_records: state.nRecords,
+      offset_mode: state.offsetMode,
+      offset_max_limit: state.offsetMaxLimit,
+      markers: state.markers.map(m=>{
+        const mv = markerValues(m);
+        return {
+          id:m.id, time_s:m.time, channel:(m.src==='c'?'MEM-CH':'CH')+m.ch, src:(m.src||'p'), type:m.kind,
+          voltage:mv.voltage, current:mv.current, power:mv.power, note:m.note
+        };
+      })
+    };
+    const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
+    try{
+      await saveBlob('markers', exportBaseName()+'.markers.json', blob);
+    }catch(err){ flashMessage(T('saveFailedPrefix')+err.message, 6000); }
+  });
+
+  // ---------------------------------------------------------------
+  // CSV 匯出：依所選區間（M1↔M2 / 目前顯示範圍 / 全部資料）匯出原始取樣資料。
+  // 【格式更新】改為固定欄位順序（CH1電壓,CH1電流,CH2電壓,CH2電流,CH3電壓,CH3電流,
+  // CH4電壓,CH4電流,CH1功率,CH2功率,CH3功率,CH4功率），並比照 Keysight 匯出格式
+  // 加上三行前導資訊（標題／取樣週期／日期）與對應欄位標題，維持固定結構方便下游
+  // 工具解析；欄位順序固定，但是否包含各欄位仍受「僅匯出已勾選曲線」勾選狀態影響
+  // （見下方 #csvVisibleOnly）；若有載入比對檔（MEM），再接著附加一組同樣
+  // 順序的 File2 欄位。
+  // ---------------------------------------------------------------
+  // 三行前導資訊（含 ctime 格式的日期）與欄位標題列改由 server 端產生
+  // （dlog_core.iter_csv／ctime_like），與此處的欄位順序一一對應。
+  // 固定欄位清單：{label, trace} 陣列，label 用於標題列、trace 用於實際取值，
+  // 兩者從同一份清單產生，避免標題跟數值欄位對不齊。src 分辨主檔案（'p'）／比對檔（'c'）。
+  function csvExportColumns(){
+    const cols = [];
+    function addSource(fileLabel, src){
+      for(let ch=1; ch<=4; ch++){
+        cols.push({ label:fileLabel+' Instrument A Channel '+ch+' Voltage Avg', trace: state.traces.find(t=>t.kind==='V'&&t.ch===ch&&t.src===src) });
+        cols.push({ label:fileLabel+' Instrument A Channel '+ch+' Current Avg', trace: state.traces.find(t=>t.kind==='I'&&t.ch===ch&&t.src===src) });
+      }
+      for(let ch=1; ch<=4; ch++){
+        cols.push({ label:fileLabel+' Instrument A Channel '+ch+' Power Avg', trace: state.traces.find(t=>t.kind==='P'&&t.ch===ch&&t.src===src) });
+      }
+    }
+    addSource('File1', 'p');
+    if(state.compare) addSource('File2', 'c');
+    return cols;
+  }
+  function csvRangeIdx(mode){
+    if(mode==='markers'){
+      if(state.marker1==null || state.marker2==null) return null;
+      const tLo = Math.min(state.marker1, state.marker2);
+      const tHi = Math.max(state.marker1, state.marker2);
+      return [ clampIdx(Math.round(tLo/state.tint)), clampIdx(Math.round(tHi/state.tint)) ];
+    }
+    if(mode==='view') return currentViewIdxRange();
+    return [0, state.nRecords-1];
+  }
+
+  function updateCsvExportHint(){
+    const hintEl = document.getElementById('csvRangeHint');
+    if(!hintEl) return;
+    if(!state.loaded){ hintEl.textContent=''; return; }
+    const mode = document.getElementById('csvRangeSelect').value;
+    const range = csvRangeIdx(mode);
+    if(!range){ hintEl.textContent=T('csvNoMarkers'); return; }
+    const [idxLo, idxHi] = range;
+    const n = idxHi - idxLo + 1;
+    hintEl.textContent = T('csvWillExport', n.toLocaleString(), (idxLo*state.tint).toFixed(6), (idxHi*state.tint).toFixed(6));
+  }
+
+  document.getElementById('csvRangeSelect').addEventListener('change', updateCsvExportHint);
+
+  // CSV 匯出改由 server 端串流產生並直接下載：瀏覽器邊收邊寫磁碟，JS 完全不碰資料，
+  // 記憶體用量與筆數無關——舊版把整份 CSV 組成一個 JS 字串再包 Blob，千萬筆會直接
+  // 撐爆分頁，因此當時需要一個 200 萬筆的確認對話框擋著；現在那個限制已不存在。
+  // 電流負值校正由 server 端套用（見 offsetParams()），匯出的檔案不會出現校正前的負值。
+  document.getElementById('exportCsvBtn').addEventListener('click', longOp(async ()=>{
+    if(!state.loaded) return;
+    const mode = document.getElementById('csvRangeSelect').value;
+    const range = csvRangeIdx(mode);
+    if(!range){ flashMessage(T('msgNoMarkersForCsv')); return; }
+    const [idxLo, idxHi] = range;
+    if(idxHi < idxLo){ flashMessage(T('msgBadDataRange')); return; }
+
+    const visibleOnly = document.getElementById('csvVisibleOnly').checked;
+    let cols = csvExportColumns();
+    if(visibleOnly) cols = cols.filter(c=>c.trace && c.trace.visible);
+    cols = cols.filter(c=>c.trace);
+    if(cols.length===0){ flashMessage(T('msgNoTraceForCsv')); return; }
+
+    const base = exportBaseName();
+    const rangeTag = mode==='markers' ? '_M1-M2' : (mode==='view' ? '_view' : '_all');
+    const body = {
+      h: state.handle,
+      lo: idxLo, hi: idxHi,
+      cols: cols.map(c=>(c.trace.src==='c' ? 'c:' : 'p:')+c.trace.kind+c.trace.ch).join(','),
+      offset: !!state.offsetMode,
+      maxLimit: Math.max(0, state.offsetMaxLimit||0),
+    };
+    if(state.compare) body.hc = state.compare.handle;
+    try{
+      const g = await askPath('save_request', { purpose:'csv', suggested: base+rangeTag+'.csv' });
+      if(!g) return;
+      body.grant = g.grant;
+      const req = nextId();
+      activeReq = req;
+      showParseProgress('csv', 0);
+      try{
+        await postJson('/export/csv', body, req);
+      }finally{
+        activeReq = null;
+        hideParseProgress();
+      }
+      flashMessage(T('msgCsvExported', (idxHi-idxLo+1).toLocaleString()));
+    }catch(err){
+      if(err.code!=='cancelled') flashMessage(T('saveFailedPrefix')+err.message, 6000);
+    }
+  }));
+
+  onActivate('importJsonBtn', async ()=>{
+    try{
+      const g = await askPath('open_request', { purpose:'markers' });
+      if(!g) return;
+      const json = (await postJson('/import/markers', { grant:g.grant }, null, false, true)).data || {};
+      state.markers = (json.markers||[]).filter(m=>Number.isFinite(m.time_s)).slice(0,10).map((m,i)=>{
+        const ch = parseInt(String(m.channel).replace(/\D/g,''), 10) || 1;
+        const kind = (m.type==='I' || m.type==='P') ? m.type : 'V';
+        // 相容舊版（無 src 欄位）：依 channel 字串是否含 "MEM" 判斷來源，新版一律直接讀 src 欄位
+        const src = (m.src==='c' || m.src==='p') ? m.src : (String(m.channel).indexOf('MEM')!==-1 ? 'c' : 'p');
+        const trace = state.traces.find(t=>t.ch===ch && t.kind===kind && t.src===src);
+        // 刻意忽略檔案裡的 voltage/current/power 欄位：數值一律依「目前載入的資料 +
+        // 目前的校正設定」即時重算（見 markerValues()），避免匯入一份在別的校正設定下
+        // 匯出的舊檔案時，表格顯示與匯出結果各說各話。
+        return {
+          id:i+1, time:m.time_s, ch, kind, src,
+          color: trace ? trace.color : '#ffffff',
+          note:m.note||''
+        };
+      });
+      renderMarkerTable();
+      scheduleRedraw();
+      flashMessage(T('msgMarkersLoaded', state.markers.length));
+    }catch(err){
+      flashMessage(T('msgJsonLoadFailed')+err.message, 6000);
+    }
+  });
+
+  function flashMessage(msg, ms){
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(flashMessage._t);
+    flashMessage._t = setTimeout(()=>el.classList.remove('show'), ms||2200);
+  }
+
+  // ---------------------------------------------------------------
+  // 語言切換：更新所有帶 data-i18n / data-i18n-placeholder / data-i18n-title
+  // 屬性的靜態文字，並重新產生依語言而異的動態內容（檔案資訊、統計表、
+  // Marker Table、CSV 提示、圖表座標文字、預設曲線名稱等）
+  // ---------------------------------------------------------------
+  function applyLanguage(){
+    document.documentElement.lang = state.lang==='en' ? 'en' : 'zh-Hant';
+    document.title = T('pageTitle');
+
+    document.querySelectorAll('[data-i18n]').forEach(el=>{
+      el.textContent = T(el.dataset.i18n);
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el=>{
+      el.placeholder = T(el.dataset.i18nPlaceholder);
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(el=>{
+      el.title = T(el.dataset.i18nTitle);
+    });
+
+    document.querySelectorAll('#langSwitch .lang-opt').forEach(btn=>{
+      btn.classList.toggle('active', btn.dataset.lang===state.lang);
+    });
+
+    // 尚未自訂過名稱的預設曲線標籤（CH1 電壓／CH1 Voltage…）跟著語言切換
+    if(state.traces && state.traces.length){
+      state.traces.forEach(t=>{
+        if(t.labelIsDefault){
+          const groupKey = t.kind==='V' ? 'groupVoltage' : (t.kind==='P' ? 'groupPower' : 'groupCurrent');
+          t.label = (t.src==='c' ? 'MEM-CH' : 'CH')+t.ch+' '+T(groupKey);
+        }
+      });
+      renderChips();
+    }
+    updateRightAxisLabels();
+
+    if(state.loaded){
+      updateFileInfo();
+    }else{
+      const fileInfoEl = document.getElementById('fileInfo');
+      if(fileInfoEl) fileInfoEl.textContent = T('noFileLoaded');
+    }
+    updateCompareFileInfo();
+    renderMarkerTable();
+    updateStatsPanel();
+    scheduleRedraw();
+  }
+
+  // 語言只聽外殼的 lang 訊息（初值取自 fragment）；Viewer 不提供自己的切換。
+  function setLang(lang){
+    if(lang===state.lang) return;
+    state.lang = lang;
+    applyLanguage();
+  }
+
+  // ---------------------------------------------------------------
+  // 頁面外觀主題切換：套用到 <html data-theme="...">（CSS 介面色跟著換），
+  // 並同步更新畫布繪圖色（見 CHART_THEMES）與「尚未自訂過顏色」的預設曲線色。
+  // 使用者手動改過的曲線顏色（colorIsDefault=false）不會被主題切換覆蓋。
+  // ---------------------------------------------------------------
+  function applyTheme(themeName, persist){
+    state.theme = CHART_THEMES[themeName] ? themeName : 'dark';
+    document.documentElement.setAttribute('data-theme', state.theme);
+    const sel = document.getElementById('themeSelect');
+    if(sel) sel.value = state.theme;
+
+    if(state.traces && state.traces.length){
+      const chColors = CHART_THEMES[state.theme].chColors;
+      state.traces.forEach(t=>{
+        if(!t.colorIsDefault) return;
+        // 比對檔（MEM）維持自己專屬的螢光色盤，不隨頁面主題切換而改變顏色，
+        // 只有主檔案（src==='p'）的預設色才跟著目前主題的 chColors 走
+        t.color = (t.src==='c') ? COMPARE_CH_COLORS[t.ch-1] : chColors[t.ch-1];
+      });
+      renderChips();
+    }
+    scheduleRedraw();
+    if(persist!==false){ prefs.theme = state.theme; savePrefs(); }
+  }
+
+  document.getElementById('themeSelect').addEventListener('change', (e)=>{
+    applyTheme(e.target.value);
+  });
+
+  // 案件名稱：即時存入 state，套用在報告內文與各項匯出檔名前綴
+  document.getElementById('caseNameInput').addEventListener('input', (e)=>{
+    state.caseName = e.target.value;
+  });
+
+  // ---------------------------------------------------------------
+  // 折疊面板（<details class="panel-fold">）：開合狀態跨次記憶，寫法比照
+  // dlogViewerLang／dlogViewerTheme。載入 .dlog 成功時另外會強制收合
+  // exportFold（見 fileInput 的 change handler），代表「設定階段結束、
+  // 進入分析階段」的明確分界，之後使用者手動重新展開仍會被記住。
+  // ---------------------------------------------------------------
+  // 偏好走 server 的 /prefs（完整物件覆寫，防抖 300ms）；語言不存。
+  const prefs = { version:1, theme:'dark', fold:{} };
+  let prefTimer = null;
+  function savePrefs(){
+    if(!shellCtx.ok) return;
+    clearTimeout(prefTimer);
+    prefTimer = setTimeout(()=>{ postJson('/prefs', prefs).catch(()=>{}); }, 300);
+  }
+  function setPanelFoldOpen(id, open){
+    const el = document.getElementById(id);
+    if(el) el.open = open;
+    prefs.fold[id] = !!open;
+    savePrefs();
+  }
+  async function loadPrefs(){
+    if(shellCtx.ok){
+      try{
+        const p = await apiFetch('/prefs', {}, false, true);
+        if(p && typeof p==='object'){
+          if(CHART_THEMES[p.theme]){ prefs.theme = p.theme; applyTheme(p.theme, false); }
+          if(p.fold && typeof p.fold==='object') prefs.fold = Object.assign({}, p.fold);
+        }
+      }catch(err){ /* 讀不到就用預設 */ }
+    }
+    document.querySelectorAll('details.panel-fold[id]').forEach(el=>{
+      if(typeof prefs.fold[el.id]==='boolean') el.open = prefs.fold[el.id];
+      el.addEventListener('toggle', ()=>{ prefs.fold[el.id] = el.open; savePrefs(); });
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // Init
+  // ---------------------------------------------------------------
+  document.documentElement.setAttribute('data-theme', state.theme);
+  const themeSelectEl = document.getElementById('themeSelect');
+  if(themeSelectEl) themeSelectEl.value = state.theme;
+
+  state.traces = initTraces();
+  const rightAxisSelectEl = document.getElementById('rightAxisKindSelect');
+  if(rightAxisSelectEl) rightAxisSelectEl.value = state.rightAxisKind;
+  updateRightAxisLabels();
+  renderChips();
+  renderMarkerTable();
+  applyLanguage();
+  scheduleRedraw();
+  if(!shellCtx.ok){
+    ['openMainBtn','openCompareBtn','importJsonBtn'].forEach(id=>{ const el = document.getElementById(id); el.style.pointerEvents = 'none'; el.style.opacity = '.4'; });
+    flashMessage(T('errBadParent'));
+  }else{
+    shellSend({ type:'ready' });
+  }
+  loadPrefs();
+})();
+</script>
+</body>
+</html>

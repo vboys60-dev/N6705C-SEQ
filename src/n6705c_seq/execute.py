@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from typing import Callable
 
 from n6705c.core.arb import ArbState, GroupArbRunner
 from n6705c.core.group import GlobalChannel, InstrumentGroup
@@ -47,17 +48,55 @@ def connect_group(resources: list[str], *, backend: str = "auto", timeout_ms: in
     The unit tested here (S/N MY66102013) answers with garbage bytes in the model
     field, which the library's default ASCII decoding rejects.  Latin-1 never fails.
     """
-    instruments: list[N6705C] = []
+    opened: list = []  # each entry owns one session: a bare transport until N6705C wraps it
     try:
         for resource in resources:
             transport = VisaTransport(resource, backend=backend, timeout_ms=timeout_ms)
+            opened.append(transport)
             transport._inst.encoding = "latin-1"  # noqa: SLF001 - no public hook
-            instruments.append(N6705C.from_transport(transport))
-    except BaseException:
-        for inst in instruments:
-            inst.close()
+            opened[-1] = N6705C.from_transport(transport)
+    except BaseException as exc:
+        close_all(opened, exc)
         raise
-    return InstrumentGroup(instruments)
+    return InstrumentGroup(opened)
+
+
+def run_callback(callback: Callable[[], None] | None, primary: BaseException | None = None) -> BaseException | None:
+    """Call a cleanup callback so its failure cannot skip the steps after it.
+
+    The failure is attached to ``primary`` as a note when one is propagating;
+    otherwise it is returned for the caller to raise once cleanup is done.
+    """
+    if callback is None:
+        return None
+    try:
+        callback()
+    except BaseException as exc:  # noqa: BLE001 - re-raised or attached by the caller
+        if primary is None:
+            return exc
+        primary.add_note(f"cleanup callback failed ({exc!r})")
+    return None
+
+
+def close_all(items, primary: BaseException | None = None) -> None:
+    """Close every item even if some closes fail; report the failures afterwards.
+
+    With ``primary`` (an exception already propagating) the failures are attached
+    to it as a note so the original error stays the one reported.
+    """
+    problems = []
+    for index, item in enumerate(items, start=1):
+        try:
+            item.close()
+        except Exception as exc:  # noqa: BLE001 - keep closing the rest
+            problems.append(f"frame {index} ({exc})")
+    if not problems:
+        return
+    message = "could not close: " + "; ".join(problems)
+    if primary is not None:
+        primary.add_note(message)
+        return
+    raise RuntimeError(message)
 
 
 class PlanRejected(ValueError):
@@ -223,6 +262,7 @@ def run_plan(
     wait: bool = True,
     hold_dc: bool = False,
     capture: dict | None = None,
+    on_cleanup: Callable[[], None] | None = None,
 ) -> GroupArbRunner:
     """Run the table. With ``wait`` the outputs are switched off again at the end,
     unless ``hold_dc``: then each rail stops at its high level and stays on.
@@ -238,7 +278,8 @@ def run_plan(
     models = [inst.identity.model.upper() for inst in group.instruments]
     if any("E36441A" in m for m in models):
         raise PlanRejected(f"N6705C runner cannot drive E36441A (or a mix): {models}")
-    return run_functions(group, functions, wait=wait, keep_on=hold_dc, capture=capture)
+    return run_functions(group, functions, wait=wait, keep_on=hold_dc, capture=capture,
+                         on_cleanup=on_cleanup)
 
 
 def run_functions(
@@ -248,6 +289,7 @@ def run_functions(
     wait: bool = True,
     keep_on: bool = False,
     capture: dict | None = None,
+    on_cleanup: Callable[[], None] | None = None,
 ) -> GroupArbRunner:
     """Run the functions. With ``wait`` the outputs are switched off at the end,
     unless ``keep_on``: then each rail stays on at its waveform's final level.
@@ -287,10 +329,13 @@ def run_functions(
                 time.sleep(max(0.0, tint * CAPTURE_POINTS - (time.monotonic() - started)) + 0.05)
                 _fetch(group, functions, tint, capture)
             if not keep_on:
+                if on_cleanup is not None:
+                    on_cleanup()
                 outputs_off(group)
     except OutputsNotConfirmedOff:
         raise
     except BaseException as exc:
+        run_callback(on_cleanup, exc)
         try:
             outputs_off(group)
         except OutputsNotConfirmedOff as off:
