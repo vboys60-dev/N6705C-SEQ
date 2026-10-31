@@ -342,7 +342,7 @@ def test_sources_and_translation_keys():
     assert set(keys) <= i18n.STRINGS.keys()
     assert {key for key in ListApi.__dict__ if not key.startswith("_")} == {
         "list_meta", "list_draft", "list_compile", "list_open_json", "list_save_json", "list_run"}
-    assert "innerHTML" not in paths[1].read_text()
+    assert "innerHTML" not in paths[1].read_text(encoding="utf-8")
 
 
 def test_list_javascript_handlers_without_window(api):

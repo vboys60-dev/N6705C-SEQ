@@ -1,6 +1,6 @@
 # 離線分析分頁｜T0 介面契約（v1）
 
-日期：2026-10-29（修訂：Codex 第 7 輪 9 項必修；T1/T2 後 5 項：`_finishing` 範圍、legacy 測試、T4 HTTP 原檢查、CSV 容差、未搬工具；Codex 第 8 輪 5 項：`_untimed` 原子回傳 bool、主工作 try/finally 重新計時、主工作內部 I/O 例外明列、取代報告 §5 計時起點、`/release` 例外；T3/T4 後 2 項：handle 引用交接（§6.5）、來源檔外部截短已知風險（§6.6）；2026-10-30 T0–T6 後 4 項：Viewer `alert()` 改 toast、`--selftest` 分析往返（§1.7）、`/open` 進度 `GET /progress`（§3.3）、主工作內部收尾 `on_cleanup`（§1.3，待使用者拍板）；同日使用者批准：`--selftest` JS API 白名單改禁止清單（§1.7.3））　擁有者：T0　來源：`報告分析升級版/升級報告.md`（§5、§7、§9）
+日期：2026-10-31（修訂：2026-10-31 同步 Codex 全專案審查——`DLOG_MAX_HEADER_BYTES`、`apiFetch` 第 4 參數、開檔與 CSV 匯出互斥；Codex 第 7 輪 9 項必修；T1/T2 後 5 項：`_finishing` 範圍、legacy 測試、T4 HTTP 原檢查、CSV 容差、未搬工具；Codex 第 8 輪 5 項：`_untimed` 原子回傳 bool、主工作 try/finally 重新計時、主工作內部 I/O 例外明列、取代報告 §5 計時起點、`/release` 例外；T3/T4 後 2 項：handle 引用交接（§6.5）、來源檔外部截短已知風險（§6.6）；2026-10-30 T0–T6 後 4 項：Viewer `alert()` 改 toast、`--selftest` 分析往返（§1.7）、`/open` 進度 `GET /progress`（§3.3）、主工作內部收尾 `on_cleanup`（§1.3，待使用者拍板）；同日使用者批准：`--selftest` JS API 白名單改禁止清單（§1.7.3））　擁有者：T0　來源：`報告分析升級版/升級報告.md`（§5、§7、§9）
 
 本文件與 `src/n6705c_seq/analysis/contracts.py` 是**同一份契約的兩半**：數字、列舉、型別以 `contracts.py` 為準（程式直接 import），語意與流程以本文件為準。兩者衝突時，回報 T0 修正，不得各自解讀。
 
@@ -290,6 +290,7 @@ def start_server(gate: GateForServer, *, cache_root: Path | None = None,
 
 - JSON body 上限 `MAX_JSON_BODY_BYTES`=64 KiB，超過 413。
 - CSV 欄位標題、格式、行尾、聲道缺欄留空規則與舊 `dlog_server._handle_export_csv` 完全相同（常數 `CSV_TITLE_LINE`、`CSV_LABEL_FMT`、`CSV_KIND_WORD`；欄位物件 `CsvColumn`：`missing` 預設 False，該來源 `meta.fields` 沒記錄此欄（P 需 V、I 都有）即為 True、整欄留空）；`cols` 有 `c:` 但缺 `hc` → 400；`name` 參數取消（檔名由對話框決定）。
+- **Viewer 端長工作互斥**：開檔（主檔、比對檔）與 CSV 匯出同一時間只跑一個（`viewer.html` `longOp`）；進行中再點會被忽略，使 Cancel、進度列與 `activeReq` 永遠對應唯一的進行中操作。這是 Viewer 內部規則，不改 HTTP 契約。
 - 寫檔（`/save`、`/export/csv`、`/prefs`）一律 `storage.atomic_write_*`（§6.3）：**同目標互斥＋唯一暫存檔**——持有該目標（`Path.resolve()` 後）的程序內鎖期間，寫 `<目標>.<secrets.token_hex(4)>.part`（`PART_SUFFIX`）→ `os.replace`；失敗或取消只刪自己的暫存檔，原檔不動。同目標的併發請求依序執行、後者覆蓋前者（`/prefs` 為 last-writer-wins）。CSV 為串流寫入，不受 `MAX_RESPONSE_BYTES` 限制。
 - server 為每次 `/open` 持有一個引用：**接手 `core.open_handle` 帶回的那一個**（§6.5，不另呼叫 `acquire_handle`），`/release` 放掉；每個請求處理期間另外 acquire/release 一次（pin）。`release_resources()`：放掉所有持有，再 `core.close_all()`，回其結果。
 - 移除舊的 `SimpleHTTPRequestHandler(directory=...)`；非白名單一律 404。
@@ -479,7 +480,7 @@ stat 比對**無法完全防止**此情況；v1 處理方式＝**最佳努力，
 
 ### 7.1 回應量上限（HTTP 層 T4、核心層 T3）
 
-見 `contracts.py` limits 區：`DEFAULT_BUCKETS 1800`、`MAX_BUCKETS 8192`、`MAX_KEYS 12`（查詢端點）、`MAX_CSV_KEYS 24`（CSV 匯出，主檔＋比對檔）、`MAX_SAMPLES_SPAN 2,000,000`、`MAX_RESPONSE_BYTES 64 MiB`、`MAX_JSON_BODY_BYTES 64 KiB`、`MAX_UPLOAD_BYTES 64 MiB`、`MAX_MARKERS_FILE_BYTES 4 MiB`、`MAX_PREFS_BYTES 64 KiB`、`MAX_CONCURRENT_JOBS 4`（只限 JOB 路由）、`SAMPLE_BYTES 4`、`META_RESERVE_BYTES 64 KiB`、`CORE_CHUNK_RECORDS 1,000,000`、`CORE_MAX_VALUES_SPAN 4,000,000`、`CSV_ROWS_PER_CHUNK 20,000`。
+見 `contracts.py` limits 區：`DEFAULT_BUCKETS 1800`、`MAX_BUCKETS 8192`、`MAX_KEYS 12`（查詢端點）、`MAX_CSV_KEYS 24`（CSV 匯出，主檔＋比對檔）、`MAX_SAMPLES_SPAN 2,000,000`、`MAX_RESPONSE_BYTES 64 MiB`、`MAX_JSON_BODY_BYTES 64 KiB`、`MAX_UPLOAD_BYTES 64 MiB`、`MAX_MARKERS_FILE_BYTES 4 MiB`、`MAX_PREFS_BYTES 64 KiB`、`MAX_CONCURRENT_JOBS 4`（只限 JOB 路由）、`SAMPLE_BYTES 4`、`META_RESERVE_BYTES 64 KiB`、`CORE_CHUNK_RECORDS 1,000,000`、`CORE_MAX_VALUES_SPAN 4,000,000`、`CSV_ROWS_PER_CHUNK 20,000`、`DLOG_MAX_HEADER_BYTES 1 MiB`（`parse_dlog` 只在檔頭此範圍內搜尋 `</dlog>`，超過視為檔案損壞；實際檔頭僅數 KB）。
 
 `/samples` 回應大小算式（`contracts.samples_response_bytes`）：`META_RESERVE_BYTES`(64 KiB) ＋ `span × n_keys × SAMPLE_BYTES`(4)，`span = hi-lo+1`。
 
@@ -629,7 +630,7 @@ RSS 預算算式：`2 × 原始 V/I 位元組（來源 memmap＋快取 memmap �
   - 可改：只有 `src/n6705c_seq/analysis/web/viewer.html`、`src/n6705c_seq/analysis/web/shell_stub.html`。
   - **1. `alert()` 改 Viewer 自己的 `#toast`**。依據：pywebview 的 iframe 內原生 `alert()` 會阻塞或被 WebView 擋掉，且樣式與 SEQ 不一致。761aef0 共 8 處（`viewer.html:1801、1824、1865、2302、2414、3048、3147、3175`；動工前以 `grep -n "alert(" viewer.html` 重新確認，以 grep 結果為準）。做法：沿用既有 `flashMessage(msg)`（`viewer.html:3179`，寫 `#toast`），加選填第二參數 `ms`（預設 2200，行為不變）；8 處一律改 `flashMessage(<原訊息字串>, TOAST_ERROR_MS)`，`TOAST_ERROR_MS = 6000`（Viewer 內常數）。訊息文字、`T(...)` 鍵與 `err.code!=='cancelled'` 判斷原樣保留；不新增字典鍵、不新增 DOM。錯誤 toast 可加 `.toast.error` 樣式（同檔 CSS，非必要）。`shell_stub.html` 若有 `alert(` 一併改為頁內文字。
     驗收：`grep -c "alert(" viewer.html shell_stub.html` 皆為 0（`confirm(`、`prompt(` 現況亦為 0，維持）；在 `shell_stub.html` 下觸發「未開主檔就開比對檔」（原 1824）與一次開檔失敗（例：給損壞 .dlog → 422），畫面出現 toast 約 6 s 後消失，頁面不阻塞；成功類訊息仍 2.2 s。
-  - **2. `/open` 進度條（§3.3「`/open` 進度」）**：`apiOpen` 移除現在寫死的 `onProgress('lod', 50)`／`('lod', 100)`，改為：送 `/open` 後以 `setInterval(PROGRESS_POLL_MS=300)` 對同一 `req` 呼叫 `apiFetch('/progress?req='+req, {}, true)`（CONTROL，不佔 slot），`ok:true` 時 `showParseProgress(stage, pct)`；`finally` 清掉 interval。`showParseProgress` 加 `hash` 的標籤（Viewer 字典新鍵，例 `progressHash`：「計算檔案指紋」／"Hashing"）；§6.6「請勿動來源檔」提示在 `hash`／`parse`／`lod` 三階段都顯示。輪詢錯誤靜默忽略。
+  - **2. `/open` 進度條（§3.3「`/open` 進度」）**：`apiOpen` 移除現在寫死的 `onProgress('lod', 50)`／`('lod', 100)`，改為：送 `/open` 後以 `setInterval(PROGRESS_POLL_MS=300)` 對同一 `req` 呼叫 `apiFetch('/progress?req='+req, {}, true, true)`（第 3 參數 `control`＝CONTROL，不佔 slot；第 4 參數 `json`＝true 回已讀完並解析的 body，否則回 `ArrayBuffer`；JOB 路由的 slot 要到 body 讀完才釋放），`ok:true` 時 `showParseProgress(stage, pct)`；`finally` 清掉 interval。`showParseProgress` 加 `hash` 的標籤（Viewer 字典新鍵，例 `progressHash`：「計算檔案指紋」／"Hashing"）；§6.6「請勿動來源檔」提示在 `hash`／`parse`／`lod` 三階段都顯示。輪詢錯誤靜默忽略。
     驗收：在 `shell_stub.html`＋真 server 開 10M 合成檔（`make_big`，冷快取）時進度列依序顯示 hash→parse→lod 且數字遞增；快取命中時只見 hash 後即完成；按取消後輪詢停止（DevTools Network 不再有 `/progress`）；開檔完成後不再有 `/progress` 請求。
 
 ### T6（Opus）SEQ 外殼

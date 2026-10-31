@@ -344,8 +344,8 @@ def test_sources_have_no_cjk_text():
 
 def test_translation_keys():
     source = Path(web_seq.__file__)
-    python = source.read_text()
-    js = (source.parent / "web" / "seq.js").read_text()
+    python = source.read_text(encoding="utf-8")
+    js = (source.parent / "web" / "seq.js").read_text(encoding="utf-8")
     keys = re.findall(r'tr\("([^"\n]+)"', python) + re.findall(r'App\.t\("([^"\n]+)"', js)
     keys += re.findall(r'data-i18n="([^"\n]+)"', js)
     keys += re.findall(r'el\("[^"\n]+", [^,\n]+, "([a-z_]+)"', js)
