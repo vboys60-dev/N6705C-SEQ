@@ -100,7 +100,7 @@ GUI 的第三分頁「分析」用來開啟 `.dlog` 檔（設計目標為千萬�
 - 快取與偏好放在使用者可寫目錄（Windows：`%LOCALAPPDATA%`；其他：`$XDG_CACHE_HOME` 或 `~/.cache`），不寫入安裝資料夾。
 - **開關**：`src/n6705c_seq/analysis/contracts.py` 的 `ANALYSIS_ENABLED`（第 19 行附近）。目前為 `True`（分頁顯示）；改為 `False` 則隱藏分頁，畫面與舊版相同。
 - 架構與契約：`docs/analysis-contract.md`（數字與型別以 `contracts.py` 為準）。
-- Windows 上的實機驗收尚未完成，見 `HANDOFF_WINDOWS.md` §6。
+- Windows CI（pytest 與 `build-windows`）已通過；Windows 11 實機驗收尚未完成，見 `HANDOFF_WINDOWS.md` §6。
 
 ## Windows 執行檔
 
