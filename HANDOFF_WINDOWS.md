@@ -1,6 +1,6 @@
 # N6705C-SEQ　Windows 版交接文件
 
-通用設計見 `HANDOFF.md`；本文只講 Windows 的散佈、使用、已知問題。更新：2026-10-13（v0.1.3）。
+通用設計見 `HANDOFF.md`；本文只講 Windows 的散佈、使用、已知問題。更新：2026-10-31（環境與測試見 §7）。
 
 ## 1. 三種給 Windows 用戶的形式
 
@@ -68,4 +68,27 @@ GUI 需要 Microsoft Edge WebView2 Runtime，不隨 exe 打包；Windows 11 已�
 | 15 | antivirus | 首次開檔、大檔寫快取時 | 防毒沒有隔離 `N6705C-SEQ.exe` 或 `_internal` 內的 DLL／`viewer.html`；若被擋，記錄防毒名稱與事件 |
 | 16 | 刪快取 | 關閉程式後刪除快取目錄，再開同一檔 | 重新建快取成功、不崩潰；分析中若快取被占用（`PermissionError`），該目錄應被跳過而非整個 `/open` 失敗 |
 
-回報格式：每項寫「通過／失敗／未測」＋Windows 版本、Edge WebView2 版本、是否為唯讀安裝、防毒軟體名稱。失敗項附錯誤視窗文字與 `%LOCALAPPDATA%` 下的日誌（若有）。
+回報格式（§6）：每項寫「通過／失敗／未測」＋Windows 版本、Edge WebView2 版本、是否為唯讀安裝、防毒軟體名稱。失敗項附錯誤視窗文字與 `%LOCALAPPDATA%` 下的日誌（若有）。
+
+## 7. 開發環境與測試（2026-10-31，Parallels ARM 虛擬機上的 Windows 11）
+
+專案放在 Mac 共享資料夾（`\\psf\Home\Desktop\claude-cowork\N6705C-SEQ`，UNC 路徑）。
+
+**這台機器的狀態**
+- PATH 上沒有 `python`／`py`／`git`／`node`／`winget`。Python 裝在 `%LOCALAPPDATA%\Programs\Python\Python312`（3.12.8）與 `Python313-x64`（3.13）。因為沒有 `py` 啟動器，`N6705C-SEQ.bat` 在這台會失敗（見 §3 與 bat 內 `py -3`）。
+- Git 沒裝，這台不能跑 git 指令。
+- Edge WebView2 Runtime 155.0.4283.62（GUI 需要，已有）。
+- 系統有 `visa32/64.dll` 與 `C:\Program Files\IVI Foundation\VISA`，是否只是 IVI 共用元件未確認（§3.1）。
+- 預設編碼 cp950。
+
+**開發 venv**：`C:\Users\lianshi\venvs\n6705c-seq`（Python 3.12.8，放本機磁碟，不放 UNC）。`pip install -e ".[dev]"` 已裝，版本 0.1.3，含 pywebview 6.2.1。
+```powershell
+$py = "$env:USERPROFILE\venvs\n6705c-seq\Scripts\python.exe"
+& $py -m n6705c_seq.webgui            # GUI（未在此機實際開啟驗證）
+& $py -m pytest -q --timeout=120      # 測試
+```
+ARM 虛擬機上跑的是 x64 的 Python 與 wheel（pip 取到 `win_amd64`）；pyusb／libusb 在此環境未驗，也沒有儀器。
+
+**測試結果**：799 通過、16 跳過、1 失敗（約 52 秒）。
+- 已修：`test_web_seq.py`、`test_web_list.py` 讀原始碼的 `read_text()` 沒指定編碼，在 cp950 下 `UnicodeDecodeError`；已改 `encoding="utf-8"`。
+- 未修：`tests/analysis/test_server_regressions.py::test_save_waiting_for_target_lock_is_cancellable` 約 30–40% 失敗（單獨跑 10 次：預設 3 次、`PYTHONUTF8=1` 4 次，與編碼無關），`ConnectionResetError: [WinError 10054]`。原因與待決事項見 `HANDOFF.md` §11 最後一條。
