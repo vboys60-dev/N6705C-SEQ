@@ -2,7 +2,7 @@
 
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。只做時序，不做量測。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-10-31　狀態：模擬器全過（576 tests）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
+最後更新：2026-11-05　狀態：模擬器全過（pytest 838 過／7 跳過）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
 
 | 區塊 | 狀態 |
 |---|---|
@@ -11,7 +11,8 @@
 | ARB List 模式 | **分頁目前反灰鎖定**（`app.js` `LIST_VERIFIED=false`，未實機驗證）；P0、C、A、D、H 前半、I 前半、D-EN、GUI 美化＋中英切換已 commit；等實機跑 H（§9） |
 | E36441A | 指令產生＋驗證＋實機驗證腳本已 commit（`1cfbe76`、`dca33f1`），未接 CLI／GUI，核心假設未實機驗證（§10） |
 | Codex 審查 | 第 2 輪已核准（§8） |
-| 報告分析升級版 | **只有規劃，未開工，未改任何程式碼**；計畫與素材在 `報告分析升級版/`（§11） |
+| 報告分析升級版 | T0–T8 完成，PR #1 已合併，分頁已啟用；Windows 11 實機未驗（§11） |
+| 搜尋儀器（下拉選單） | PR #8 已合併 `c7461c6`；離線與 CI 通過，**未接實機、未在 Windows 實際操作**（§12） |
 
 ## 0. 先讀這幾件事
 
@@ -204,3 +205,20 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
   - 專案改為公開 repo，Actions 不再受額度限制。PR #1–#4 全部合併（#4 加 `N6705C-SEQ.bat`），六個測試組合與 `build-windows` 全過。
   - 仍待：Windows 11 實機驗收（`HANDOFF_WINDOWS.md` §6）、`N6705C-SEQ.bat` 在 Windows 實測。
 - **不穩定測試 `test_save_waiting_for_target_lock_is_cancellable`（2026-10-31，Windows 本機 30–40% 失敗，未修）**：`ConnectionResetError`。推論（未用除錯器證實）：測試以 `wait_for(job_count()==1)` 當同步點，但 job 在讀請求內容前就已登記；若 `/cancel` 在 server 仍於 `_body_parts` 讀內容時到達，`_check_io`（`server.py:218`）拋 `_IOStopped`，`_dispatch`（`server.py:299`）不回應就關連線，測試預期的 409 變成連線重置。與編碼無關。**待決**：(1) 改測試，等內容讀完再取消；(2) 改 server，讀內容途中取消也回 409（先對照 `docs/analysis-contract.md`）。環境與其他測試結果見 `HANDOFF_WINDOWS.md` §7。同一台機器另修了兩處測試讀原始碼沒指定 UTF-8（cp950 下失敗）。
+
+## 12. 搜尋儀器下拉選單（2026-11-05，PR #8 已合併 `c7461c6`）
+按「搜尋儀器」後，機台 1、2 的下拉選單列出 `N6705C  S/N MY66102013  (USB0::...)`，點選填入純位址；手動貼上照舊。Codex 實作、Opus 審核。使用者已確認離線測試可用，並決定先合併、之後再驗實機。
+
+- **流程**：`web_seq.scan_instruments` → `_seq_start` 取 power token（與執行、分析互斥）→ `_scan_work` → `transport.scan_resources`（子行程，20 s）→ `["scan", [[address, label], ...]]` → `seq.js`。Demo 模式不掃描。
+- **別改壞的地方**：
+  - 候選後端要在**父行程**算好再傳進子行程：daemon 子行程不能再開探測行程，`_native_backend_safe` 會吞掉錯誤、悄悄丟掉原生 VISA。同理子行程內的 `VisaTransport` 要指定明確後端，不可用 `auto`。
+  - 序列埠（ASRL）要在送 `*IDN?` **之前**濾掉。`list_resources` 本身不過濾。
+  - 只送 `*IDN?`，不送 `*RST`、`*CLS`。
+  - 用 `<select>` 不用 `<datalist>`：後者會依輸入框文字過濾，已存位址會藏住其他儀器。
+  - 地址清單到手後，逾時或當機要回傳部分結果，不可拋錯；清單到手前才拋 `TransportError`。
+- **`list_resources` 行為改變**：原本第一個後端成功就停（有原生 VISA 的機器問不到 pyvisa-py），現在合併所有後端。`core` 是手動同步的複本，舊專案要同步。
+- **新依賴 `psutil`**：pyvisa-py 要有它才會在每張網卡廣播 VXI-11。未裝 `zeroconf`，所以探索不到 HiSLIP。
+- **已驗**：pytest 838 過／7 跳過；CI（三平台 × Python 3.11／3.13、`build-windows`）通過；`--selftest` exit 0；macOS 真實掃描約 1.4 s（無儀器）；真 pyvisa 連本機假儀器，只收到 `*IDN?\n`，非 ASCII 回覆解析正確。
+- **未驗**：實機 N6705C／E36441A 的 LAN 廣播與 USB 列舉；Windows 原生 VISA 當機路徑（`BrokenPipeError` 只有模擬測試）；打包後 exe 的子行程掃描；加上型號標籤後的選單版面（截圖是標籤加入之前的）。
+- **已知限制**：LAN 廣播跨不了子網路；同一台儀器可能出現兩筆（後端寫法不同，或同時接 USB 與 LAN）；列舉階段有後端卡住時，該次其他後端的結果會丟失（`scan_resources` 的 `ponytail:` 註解）。
+- **接手要做**：接實機按「搜尋儀器」，確認清單與型號；沒搜到就對照 `HANDOFF_WINDOWS.md` §3.4 判讀。v0.1.3 之後尚未發版，這功能要推 `v*` tag 才會進 exe。

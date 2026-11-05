@@ -37,9 +37,10 @@ GUI 需要 Microsoft Edge WebView2 Runtime，不隨 exe 打包；Windows 11 已�
 - GUI 在使用者機器上「測試連線／執行」走 `@py` 的完整流程（CLI 路徑已驗證不當機）。
 - **USB 實機連線**（見 §3.4）：v0.1.3 的診斷訊息尚未在 Windows 上看過。
 - v0.1.3 的 exe 由 CI 在 tag 推送後建置，尚未確認 Release 產物。
+- **搜尋儀器**（§3.2、`HANDOFF.md` §12）：原生 VISA 與 `@py` 合併掃描、子行程在打包後的 exe 內能否正常啟動、USB／LAN 儀器能否列出型號，都未實際操作。
 
 ## 5. 目前狀態
-- Windows 部分最後一次改動是 `713b47f`（診斷訊息，0.1.3），tags 有 `v0.1.0`～`v0.1.3`。目前 git 狀態和下一步見 `HANDOFF.md`。
+- Windows 相關最近一次改動是 PR #8 搜尋儀器（`c7461c6`，尚未發版）；tags 有 `v0.1.0`～`v0.1.3`。目前 git 狀態和下一步見 `HANDOFF.md`。
 - Windows 待辦：在有 Windows＋儀器的環境按「測試連線」，把錯誤視窗內容回報 → 依 §3.4 判讀；確認 CI Release 產物；在乾淨的 Windows 上驗證 exe 的 GUI。
 
 ## 6. Windows 端到端驗收清單（分析分頁，未實機驗）
