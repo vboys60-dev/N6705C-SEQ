@@ -19,12 +19,19 @@
     <div class="connection-grid">
       <label for="res-0" data-i18n="frame" data-number="1" data-first="1" data-last="4"></label>
       <input id="res-0" class="field" type="text" spellcheck="false">
+      <select id="pick-0" class="field" aria-label="">
+        <option value="" data-i18n="pick_instrument"></option>
+      </select>
       <span id="conn-0" class="muted"></span>
       <label for="res-1" data-i18n="frame" data-number="2" data-first="5" data-last="8"></label>
       <input id="res-1" class="field" type="text" spellcheck="false">
+      <select id="pick-1" class="field" aria-label="">
+        <option value="" data-i18n="pick_instrument"></option>
+      </select>
       <span id="conn-1" class="muted"></span>
     </div>
     <div class="row connection-actions">
+      <button id="btn-scan" class="btn" data-i18n="scan_instruments"></button>
       <button id="btn-test" class="btn" data-i18n="test_connection"></button>
       <label><input id="chk-demo" type="checkbox"><span data-i18n="demo"></span></label>
       <button id="btn-off" class="btn btn-danger" data-i18n="all_off_button"></button>

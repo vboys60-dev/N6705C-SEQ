@@ -25,7 +25,7 @@ class El {
 function setup({ enabled = true, selftest = false, api = {} } = {}) {
   const els = {};
   const add = (id, props) => (els[id] = new El(id, props));
-  for (const id of ['result-title', 'result-text', 'btn-lang', 'btn-off', 'btn-test', 'res-0', 'res-1', 'chk-demo',
+  for (const id of ['result-title', 'result-text', 'btn-lang', 'btn-off', 'btn-test', 'btn-scan', 'pick-0', 'pick-1', 'res-0', 'res-1', 'chk-demo',
     'seq-tab', 'tab-seq', 'tab-list']) add(id);
   add('list-tab', { hidden: true });
   add('analysis-tab', { hidden: true });
@@ -111,7 +111,7 @@ test('state seq filter and powerAllowed drive the power buttons', async () => {
   await t.poll(state('analysis', 1, 2), ['busy', false]);
   assert.equal(t.App.busy, false);
   assert.equal(t.App.powerAllowed, false);
-  assert.ok(t.els['btn-off'].disabled && t.run.disabled && t.els['res-0'].disabled && t.els['chk-demo'].disabled);
+  assert.ok(t.els['btn-off'].disabled && t.run.disabled && t.els['res-0'].disabled && t.els['pick-0'].disabled && t.els['pick-1'].disabled && t.els['btn-scan'].disabled && t.els['chk-demo'].disabled);
   await t.poll(state('idle', 1, 4));
   assert.equal(t.App.powerAllowed, true);
   assert.ok(!t.els['btn-off'].disabled && !t.run.disabled && !t.els['res-0'].disabled);

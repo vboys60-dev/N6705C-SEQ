@@ -11,7 +11,7 @@ import multiprocessing as mp
 import time
 from typing import Protocol, runtime_checkable
 
-__all__ = ["Transport", "TransportError", "VisaTransport", "list_resources"]
+__all__ = ["Transport", "TransportError", "VisaTransport", "list_resources", "scan_resources"]
 
 
 class TransportError(RuntimeError):
@@ -275,9 +275,14 @@ def native_visa_available() -> bool:
 
 def list_resources(backend: str = "auto") -> list[str]:
     """Enumerate visible VISA resources; returns [] if no backend is usable."""
+    return _list_on(_candidates(backend))
+
+
+def _list_on(candidates: list[str]) -> list[str]:
     import pyvisa
 
-    for candidate in _candidates(backend):
+    found = []
+    for candidate in candidates:
         try:
             if candidate == "@py":
                 _register_libusb()
@@ -285,9 +290,77 @@ def list_resources(backend: str = "auto") -> list[str]:
         except Exception:  # pragma: no cover - depends on host setup
             continue
         try:
-            return list(rm.list_resources())
+            for resource in rm.list_resources():
+                if resource not in found:
+                    found.append(resource)
         except Exception:  # pragma: no cover
             continue
         finally:
             rm.close()
-    return []
+    return found
+
+
+def _idn_of(resource, candidates, timeout_ms=2000) -> str:
+    for candidate in candidates:
+        try:
+            transport = VisaTransport(resource, backend=candidate, timeout_ms=timeout_ms)
+            try:
+                transport._inst.encoding = "latin-1"
+                answer = transport.query("*IDN?")
+            finally:
+                transport.close()
+            if answer:
+                return answer
+        except Exception:
+            continue
+    return ""
+
+
+def _scan_child(conn, candidates) -> None:
+    try:
+        addresses = [address for address in _list_on(candidates)
+                     if not address.upper().startswith("ASRL")]
+        conn.send(addresses)
+        for address in addresses:
+            conn.send((address, _idn_of(address, candidates)))
+    finally:
+        conn.close()
+
+
+def scan_resources(timeout_s: float = 20.0, *, _target=None) -> list[tuple[str, str]]:
+    """Discover resources in a disposable process, bounded against VISA hangs/crashes."""
+    candidates = _candidates("auto")
+    parent_conn, child_conn = mp.Pipe(duplex=False)
+    proc = mp.Process(target=_target or _scan_child, args=(child_conn, candidates), daemon=True)
+    deadline = time.monotonic() + timeout_s
+    # ponytail: a hang while listing loses other backends' results; stream per-backend if that matters.
+    found = None
+    try:
+        proc.start()
+        child_conn.close()
+        while True:
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not parent_conn.poll(remaining):
+                    if found is None:
+                        raise TransportError("Instrument search timed out")
+                    break
+                message = parent_conn.recv()
+            except (EOFError, OSError) as exc:
+                if found is None:
+                    raise TransportError("Instrument search process crashed without an answer") from exc
+                break
+            if found is None:
+                found = dict.fromkeys(message, "")
+            else:
+                address, idn = message
+                found[address] = idn
+        return list(found.items())
+    finally:
+        child_conn.close()
+        parent_conn.close()
+        if proc.pid is not None:
+            proc.join(max(0.0, deadline - time.monotonic()))
+            if proc.is_alive():
+                proc.kill()
+                proc.join(2)

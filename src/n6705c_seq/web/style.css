@@ -18,7 +18,7 @@ button, input, select, textarea { font: inherit; }
 .muted { color: #666; }
 .warn { color: #b45309; white-space: pre-wrap; }
 .connection { margin: 0 0 8px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
-.connection-grid { display: grid; grid-template-columns: auto minmax(150px, 1fr) minmax(100px, .5fr); align-items: center; gap: 6px 12px; }
+.connection-grid { display: grid; grid-template-columns: auto minmax(150px, 1fr) minmax(150px, 1fr) minmax(100px, .5fr); align-items: center; gap: 6px 12px; }
 .connection-actions { margin-top: 8px; }
 .tabs { border-bottom: 1px solid #ccc; margin-bottom: 8px; }
 .tabs .btn { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
@@ -31,5 +31,6 @@ dialog p { white-space: pre-wrap; overflow-wrap: anywhere; }
 dialog form { text-align: right; }
 @media (max-width: 700px) {
   .connection-grid { grid-template-columns: auto minmax(100px, 1fr); }
+  .connection-grid select { grid-column: 2; min-width: 0; }
   .connection-grid .muted { grid-column: 2; }
 }

@@ -85,8 +85,9 @@
   function busyButtons() {
     document.querySelectorAll("#btn-off, [data-action='run']")
       .forEach(button => { button.disabled = !App.powerAllowed; });
+    document.getElementById("btn-scan").disabled = !App.powerAllowed;
     document.getElementById("btn-test").disabled = !App.powerAllowed;
-    for (const id of ["res-0", "res-1", "chk-demo"]) document.getElementById(id).disabled = App.state === "analysis";
+    for (const id of ["res-0", "res-1", "pick-0", "pick-1", "chk-demo"]) document.getElementById(id).disabled = App.state === "analysis";
   }
   async function poll() {
     try {

@@ -104,7 +104,7 @@ v1 電源工作沒有外部停止訊號。計時範圍以 §1.4 呼叫點表為�
 - `kind` 只接受 `"power"`，其他 → `ValueError`。
 - 狀態是 `idle` → 轉 `power`，回 `Token(kind, gen=目前 gen, serial=全程序遞增)`；否則回 `None`。
 - 呼叫端拿到 `None` 時，依目前狀態選錯誤文字：`power`→既有 `busy_body`；`analysis`→`power_denied_analysis`；`draining`→`analysis_denied_draining`；`closing`→`analysis_denied_closing`；`fault`→`fault_body`。
-- 唯一取資格點；公開入口 `seq_run`、`test_connection`、`all_off`（經 `_seq_start`）、`list_run` 都只經此取得。
+- 唯一取資格點；公開入口 `seq_run`、`test_connection`、`all_off`、`scan_instruments`（經 `_seq_start`）、`list_run` 都只經此取得。
 - 現況在確認對話框**之前**取得資格——維持不變；所以對話框開著時狀態已是 `power`，`analysis_enter` 會被拒。對話框取消 → 立即 `_release(token)`。
 
 **`_finishing(token) -> None`**（webgui，委派 `Gate.finishing`）：（重新）開始 `POWER_FINISH_TIMEOUT_S` 計時，到期時刻＝本次呼叫＋60 s；token 不是目前持有者 → 無作用。
@@ -194,7 +194,7 @@ JS（T6）：
    - `contracts.SELFTEST_JS_API_DENIED`：selftest 模式下 JS 一次都不得呼叫。凡會動儀器、開原生對話框、或改動仲裁器以外狀態（config 檔、已載入計畫／量測資料、grant）的方法：
      | 方法 | 所在 | 理由 |
      |---|---|---|
-     | `seq_run`、`test_connection`、`all_off` | `web_seq.py` | 儀器 I/O（經 `_seq_start` 進 `power`） |
+     | `seq_run`、`test_connection`、`all_off`、`scan_instruments` | `web_seq.py` | 儀器 I/O（經 `_seq_start` 進 `power`） |
      | `list_run` | `web_list.py` | 儀器 I/O |
      | `analysis_open_path`、`analysis_save_path` | `webgui.py` | 原生對話框（卡住 selftest）＋發 grant |
      | `seq_open_csv`、`seq_save_csv` | `web_seq.py` | 原生對話框＋檔案 I/O |

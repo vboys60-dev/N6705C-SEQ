@@ -131,6 +131,7 @@ def test_csv_roundtrip_cancel_capacity_and_invalid_current(api, tmp_path):
     ("test_connection", ([], None)),
     ("all_off", ([1], False)),
     ("all_off", ([], 0)),
+    ("scan_instruments", (1,)),
 ])
 def test_bridge_types_raise_typeerror(api, method, args):
     with pytest.raises(TypeError):
@@ -332,7 +333,7 @@ def test_connection_errors_and_demo(api, threads, monkeypatch):
 
 def test_public_surface():
     assert {key for key in dir(SeqApi) if not key.startswith("_")} == {
-        "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "test_connection", "all_off",
+        "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "test_connection", "all_off", "scan_instruments",
     }
 
 
@@ -476,7 +477,7 @@ class Node {
   }
   appendChild(child) { child.parent = this; this.children.push(child); }
   append(child) { this.appendChild(child); }
-  replaceChildren() { this.children = []; }
+  replaceChildren(...children) { this.children = children; }
   remove() { this.parent.children.splice(this.parent.children.indexOf(this), 1); }
   get firstChild() { return this.children[0]; }
   get lastChild() { return this.children.at(-1); }
@@ -497,20 +498,25 @@ class Node {
   }
 }
 const ids = Object.fromEntries(["seq-tab", "list-tab", "res-0", "res-1", "conn-0", "conn-1",
-  "btn-test", "btn-off", "btn-lang", "chk-demo", "tab-seq", "tab-list", "result-dialog",
+  "btn-scan", "pick-0", "pick-1", "btn-test", "btn-off", "btn-lang", "chk-demo", "tab-seq", "tab-list", "result-dialog",
   "result-title", "result-text"].map(id => [id, new Node("div")]));
+for (const i of [0, 1]) {
+  const placeholder = new Node("option"); placeholder.dataset.i18n = "pick_instrument";
+  ids[`pick-${i}`].appendChild(placeholder);
+}
 const document = global.document = {getElementById: id => ids[id], createElement: tag => new Node(tag),
   documentElement: {}, querySelectorAll(selector) {
     return [...(selector === "#btn-off, [data-action='run']" ? [ids["btn-off"]] : []),
       ...Object.values(ids).flatMap(node => node.querySelectorAll(selector))];
   }};
 const meta = META, strings = STRINGS;
-let lang = "zh", lanes = 8, listOk = false;
+let lang = "zh", lanes = 8, listOk = false, scans = 0;
 const api = {
   async strings() { return {lang, strings}; },
   async config() { return {resources: [], demo: true}; },
   async set_lang(value) { lang = value; },
   async selftest_report() {},
+  async scan_instruments(demo) { assert.equal(demo, true); scans++; return {}; },
   async poll() { return events.splice(0); },
   async seq_meta() { return meta; },
   async list_meta() { return LIST_META; },
@@ -546,17 +552,40 @@ async function timer(ms) {
     await Promise.resolve();
     assert.equal(listRun.disabled, !ok);
     events.push(["busy", true]); await timer(100);
-    for (const button of [seqRun, listRun, ids["btn-off"], ids["btn-test"]]) assert(button.disabled);
+    for (const button of [seqRun, listRun, ids["btn-off"], ids["btn-test"], ids["btn-scan"]]) assert(button.disabled);
+    await ids["btn-scan"].events.click(); assert.equal(scans, 0);
     events.push(["busy", false]); await timer(100);
-    for (const button of [seqRun, ids["btn-off"], ids["btn-test"]]) assert(!button.disabled);
+    for (const button of [seqRun, ids["btn-off"], ids["btn-test"], ids["btn-scan"]]) assert(!button.disabled);
     assert.equal(listRun.disabled, !ok);
   }
+  await ids["btn-scan"].events.click(); assert.equal(scans, 1);
+  const address = "TCPIP0::<network>&::INSTR";
+  ids["res-0"].value = "saved";
+  const placeholder = ids["pick-0"].firstChild;
+  const label = `N6705C <network>&  S/N serial  (${address})`;
+  events.push(["scan", [[address, label], ["USB1", "USB1"]]]); await timer(100);
+  assert.equal(ids["res-0"].value, "saved");
+  for (const i of [0, 1]) {
+    const pick = ids[`pick-${i}`];
+    assert.equal(pick.children.length, 3);
+    assert.equal(pick.children[1].textContent, label);
+    assert.equal(pick.children[1].value, address);
+    for (let repeat = 0; repeat < 2; repeat++) {
+      pick.value = address; pick.events.change();
+      assert.equal(ids[`res-${i}`].value, address); assert.equal(pick.value, "");
+    }
+    pick.events.change(); assert.equal(ids[`res-${i}`].value, address);
+  }
+  events.push(["scan", []]); await timer(100);
+  assert.equal(ids["pick-0"].children.length, 1);
+  assert.equal(ids["pick-0"].firstChild, placeholder);
   assert(!painted.includes("delay marker") && !painted.includes("hold marker"));
   const inputs = all().filter(n => n.tagName === "input" && n.type === "text");
   const name = inputs[0]; name.value = "typed sequence";
   lanes = 1; painted.length = 0;
   await ids["btn-lang"].events.click(); await timer(30);
   assert.equal(lang, "en");
+  assert.equal(ids["pick-0"].attributes["aria-label"], `${strings.pick_instrument[1]} F1`);
   assert.equal(inputs[0], name); assert.equal(name.value, "typed sequence");
   assert(painted.includes("delay marker") && painted.includes("hold marker"));
   assert.equal(all().find(n => n.dataset.i18n === "run_sequence").textContent,
@@ -585,3 +614,68 @@ async function timer(ms) {
     script = script.replace("LIST", json.dumps(str(web / "list.js")))
     completed = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+
+def test_scan_demo_takes_no_token(api, threads, monkeypatch):
+    monkeypatch.setattr(api, "_reserve", lambda *args: pytest.fail("demo reserved a token"))
+    assert api.scan_instruments(True) == {"info": i18n.tr("off_demo")}
+    assert not threads and not _legacy_events(api)
+
+
+@pytest.mark.parametrize("found", [[("USB1", "Keysight,N6705C,MY66102013,fw"), ("TCPIP1", "")], []])
+def test_scan_success_empty_and_release(api, threads, monkeypatch, found):
+    def scan():
+        assert api._gate.state()[0] == "power"
+        assert ["status", 0, i18n.tr("scanning")] in _legacy_events(api)
+        return found
+
+    monkeypatch.setattr(web_seq, "scan_resources", scan)
+    assert api.scan_instruments(False) == {}
+    assert not api._config_path.exists() and not api._window.calls
+    threads.pop().run()
+    events = _legacy_events(api)
+    expected = [[address, web_seq._scan_label(address, idn)] for address, idn in found]
+    assert ["scan", expected] in events
+    assert (["result", "info", i18n.tr("scan_title"), i18n.tr("scan_none")] in events) is (not expected)
+    assert events[-2:] == [["status", 0, ""], ["busy", False]]
+    assert api._gate.state()[0] == "idle"
+
+
+def test_scan_failure_releases(api, threads, monkeypatch):
+    def fail():
+        raise RuntimeError("scan crashed")
+
+    monkeypatch.setattr(web_seq, "scan_resources", fail)
+    assert api.scan_instruments(False) == {}
+    threads.pop().run()
+    events = _legacy_events(api)
+    assert ["result", "error", i18n.tr("scan_title"), i18n.tr("scan_failed", error="scan crashed")] in events
+    assert not any(event[0] == "scan" for event in events)
+    assert events[-2:] == [["status", 0, ""], ["busy", False]]
+    assert api._gate.state()[0] == "idle"
+
+
+@pytest.mark.parametrize("state", ["power", "analysis"])
+def test_scan_busy_denied(api, threads, state):
+    token = api._reserve("power") if state == "power" else None
+    if state == "analysis":
+        assert api._gate.enter(lambda: None)[1] is None
+    else:
+        assert token
+    try:
+        assert "error" in api.scan_instruments(False)
+        assert not threads
+    finally:
+        api._release(token)
+
+
+@pytest.mark.parametrize("idn,label", [
+    ("Keysight,N6705C,MY66102013,fw", "N6705C  S/N MY66102013  (USB1)"),
+    ("Keysight, N6705C , ,fw", "N6705C  (USB1)"),
+    ("", "USB1"),
+    ("malformed", "USB1"),
+    ("Keysight,,serial,fw", "USB1"),
+])
+def test_scan_label(idn, label):
+    assert web_seq._scan_label("USB1", idn) == label
