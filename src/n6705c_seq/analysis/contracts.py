@@ -36,7 +36,7 @@ SELFTEST_JS_API_ALLOWED_READONLY = (
 )
 # Instrument work, native dialogs, or state outside the gate (config file, loaded plan/measured data).
 SELFTEST_JS_API_DENIED = (
-    "seq_run", "test_connection", "all_off", "list_run",              # instrument
+    "seq_run", "test_connection", "all_off", "scan_instruments", "list_run",              # instrument
     "analysis_open_path", "analysis_save_path",                        # native dialog + grant
     "seq_open_csv", "seq_save_csv", "list_open_json", "list_save_json",  # native dialog + file I/O
     "set_lang",                                                        # writes the SEQ config file

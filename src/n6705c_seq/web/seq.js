@@ -109,6 +109,18 @@
     if (capture.disabled) capture.checked = false;
   }
   App.on("kind", setKind);
+  App.on("scan", found => {
+    for (const i of [0, 1]) {
+      const pick = document.getElementById(`pick-${i}`);
+      pick.replaceChildren(pick.children[0]);
+      for (const address of found) {
+        const option = el("option", pick);
+        option.value = address;
+        option.textContent = address;
+      }
+      pick.value = "";
+    }
+  });
   App.on("status", (i, text) => {
     const status = document.getElementById(`conn-${i}`);
     if (status) status.textContent = text;
@@ -165,6 +177,17 @@
       save.addEventListener("click", async () => result(await App.api.seq_save_csv(rows()), "save_failed"));
       run.addEventListener("click", async () => result(await App.api.seq_run(
         rows(), resources(), demo(), hold.checked, capture.checked), "run_result"));
+      for (const i of [0, 1]) {
+        const pick = document.getElementById(`pick-${i}`);
+        pick.addEventListener("change", () => {
+          if (pick.value) document.getElementById(`res-${i}`).value = pick.value;
+          pick.value = "";
+        });
+      }
+      document.getElementById("btn-scan").addEventListener("click", async () => {
+        if (!App.powerAllowed) return;
+        result(await App.api.scan_instruments(demo()), "scan_title");
+      });
       document.getElementById("btn-test").addEventListener("click", async () => {
         if (!App.powerAllowed) return;
         for (let i = 0; i < meta.frames; i++) document.getElementById(`conn-${i}`).textContent = "";
@@ -182,6 +205,9 @@
       preview();
     },
     relabel() {
+      for (const i of [0, 1]) {
+        document.getElementById(`pick-${i}`).setAttribute("aria-label", `${App.t("pick_instrument")} F${i + 1}`);
+      }
       forms.forEach((form, i) => {
         form.color.setAttribute("aria-label", `${App.t("color")} CH${i + 1}`);
         for (const [key, field] of Object.entries(form.fields)) {

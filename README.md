@@ -50,7 +50,7 @@ python3 -m n6705c_seq.webgui
 
 macOS 也可雙擊 `N6705C-SEQ.command`（內容寫死用 `/opt/anaconda3` 的 conda base，環境不同請自行改）。Windows 11 雙擊 `N6705C-SEQ.bat`（第一次會建 `.venv` 並安裝，需要 Python 3.11+）。
 
-GUI 功能：編輯表格、即時預覽波形、載入／儲存 CSV、勾選 Demo 或填入 VISA 資源、執行；
+GUI 功能：編輯表格、即時預覽波形、載入／儲存 CSV、勾選 Demo，或搜尋儀器後從各機台下拉選單選擇／直接貼上 VISA 資源、執行；
 「維持高點 DC」＝忽略維持／下降，結束後輸出保持開啟；「擷取實測波形」＝用內建數位化器抓實測電壓並疊圖（黑線）；
 「■ 全部關閉」＝手動關閉所有通道輸出。
 

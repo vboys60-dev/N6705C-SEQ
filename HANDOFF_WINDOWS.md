@@ -25,7 +25,7 @@ GUI 需要 Microsoft Edge WebView2 Runtime，不隨 exe 打包；Windows 11 已�
    - 修法：`src/n6705c/core/transport.py` 的 `_native_backend_safe()` 在子行程探測（8 s 逾時、快取），不安全就只用 `@py`。`packaging/*_entry.py` 與 `run.py` 都要 `freeze_support()`。
    - 代價：第一次連線可能多等 ≤ 8 s；此時 USB 位址連不上，只有 LAN（`TCPIP0::<ip>::inst0::INSTR`）可用。要用 USB 就得完整安裝 Keysight IO Libraries 或 NI-VISA；或改走 `pyvisa-py` + `pyusb` + libusb（儀器驅動需換成 WinUSB，未實機驗證，見 `HANDOFF.md` §4.12）。
    - 診斷指令：`python -X faulthandler -c "import pyvisa; pyvisa.util.get_debug_info()"`。
-2. **GUI 已移除「掃描」按鈕**：VISA 位址改為直接貼上。舊版掃描曾在 GUI 主執行緒卡住，後來又踩到上一點的當機。`list_resources` 仍在 core 裡，GUI 不再呼叫。
+2. **GUI「搜尋儀器」按鈕已恢復**：背景執行緒持有 power token，與執行及分析分頁互斥；VISA 掃描在可拋棄的子行程內，20 s 逾時即終止，當機也只影響子行程。原生後端候選在父行程先探測（≤ 8 s），避免 daemon 子行程無法再啟動探測行程。這樣避免舊版掃描卡住 GUI 主執行緒及原生 VISA 當機拖垮 GUI；結果合併原生與 pyvisa-py，濾除序列埠，每台可從下拉選單選擇，也可直接貼上 VISA 位址。若任一後端卡住，該次其他後端結果也會丟失。
 3. PyInstaller spec 要過濾 `pyvisa_py.testsuite`，否則分析階段當掉；`build.ps1` 用絕對路徑呼叫 exe（UNC 工作目錄下相對路徑會被 PowerShell 5.1 誤判成模組）。細節見 `HANDOFF.md` §4.12–4.13。
 4. **USB 找不到設備（待驗證，2026-10-13 使用者回報）**：exe 與 `python run.py` 走 USB 都找不到，但 Keysight Connection Expert 看得到 `USB0::0x...::INSTR`。推測：`_native_backend_safe()` 探測誤判（逾時 8 s 或子行程失敗）→ 退到 `@py` → pyusb 需 WinUSB，Keysight 驅動不是 → 找不到。**這只是推測，尚無證據。**
    - v0.1.3 加了診斷：連線失敗的錯誤列出嘗試過的後端（`['@py']` 或 `['', '@py']`）與各自錯誤；USB/GPIB 位址而原生 VISA 未啟用時會明講；GUI「測試連線」失敗跳完整錯誤視窗。

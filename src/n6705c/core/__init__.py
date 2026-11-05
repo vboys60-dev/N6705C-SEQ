@@ -6,7 +6,7 @@ from .instrument import Identity, N6705C
 from .parsing import ElogFormat
 from .session import InstrumentError, ScpiError, Session
 from .status import OperationStatus
-from .transport import Transport, TransportError, VisaTransport, list_resources
+from .transport import Transport, TransportError, VisaTransport, list_resources, scan_resources
 
 __all__ = [
     "ChannelCapability",
@@ -22,4 +22,5 @@ __all__ = [
     "TransportError",
     "VisaTransport",
     "list_resources",
+    "scan_resources",
 ]

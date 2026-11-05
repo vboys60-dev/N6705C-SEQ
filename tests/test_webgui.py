@@ -122,7 +122,7 @@ def test_strings_and_public_surface(core):
     assert {name for name in dir(core) if not name.startswith("_")} == {
         "config", "strings", "set_lang", "poll", "selftest_report",
         "analysis_enter", "analysis_leave", "analysis_open_path", "analysis_save_path",
-        "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "test_connection", "all_off",
+        "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "test_connection", "all_off", "scan_instruments",
         "list_meta", "list_draft", "list_compile", "list_open_json", "list_save_json", "list_run",
     }
     translated["strings"]["title"][0] = "changed"
