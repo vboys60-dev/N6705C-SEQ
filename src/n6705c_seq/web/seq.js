@@ -113,10 +113,10 @@
     for (const i of [0, 1]) {
       const pick = document.getElementById(`pick-${i}`);
       pick.replaceChildren(pick.children[0]);
-      for (const address of found) {
+      for (const [address, label] of found) {
         const option = el("option", pick);
         option.value = address;
-        option.textContent = address;
+        option.textContent = label;
       }
       pick.value = "";
     }

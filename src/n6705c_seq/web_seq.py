@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 
 from n6705c.core.group import CHANNELS_PER_FRAME, InstrumentGroup
+from n6705c.core.instrument import Identity
 from n6705c.core.transport import scan_resources
 
 from . import form
@@ -12,6 +13,14 @@ from .e36441a import detect_model, kind_of, off_resources, run_resources
 from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected, connect_group, outputs_off, run_plan
 from .i18n import tr
 from .plan import load_csv, write_csv
+
+
+def _scan_label(address, idn):
+    identity = Identity.parse(idn)
+    if not identity.model:
+        return address
+    serial = f"  S/N {identity.serial}" if identity.serial else ""
+    return f"{identity.model}{serial}  ({address})"
 
 
 class SeqApi:
@@ -92,7 +101,7 @@ class SeqApi:
         try:
             self._finishing(token)
             self._emit(["status", 0, tr("scanning")])
-            found = [address for address in scan_resources() if not address.upper().startswith("ASRL")]
+            found = [[address, _scan_label(address, idn)] for address, idn in scan_resources()]
             self._emit(["scan", found])
             if not found:
                 self._seq_result("info", tr("scan_none"), tr("scan_title"))

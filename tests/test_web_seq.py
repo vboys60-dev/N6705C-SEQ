@@ -562,12 +562,13 @@ async function timer(ms) {
   const address = "TCPIP0::<network>&::INSTR";
   ids["res-0"].value = "saved";
   const placeholder = ids["pick-0"].firstChild;
-  events.push(["scan", [address, "USB1"]]); await timer(100);
+  const label = `N6705C <network>&  S/N serial  (${address})`;
+  events.push(["scan", [[address, label], ["USB1", "USB1"]]]); await timer(100);
   assert.equal(ids["res-0"].value, "saved");
   for (const i of [0, 1]) {
     const pick = ids[`pick-${i}`];
     assert.equal(pick.children.length, 3);
-    assert.equal(pick.children[1].textContent, address);
+    assert.equal(pick.children[1].textContent, label);
     assert.equal(pick.children[1].value, address);
     for (let repeat = 0; repeat < 2; repeat++) {
       pick.value = address; pick.events.change();
@@ -622,7 +623,7 @@ def test_scan_demo_takes_no_token(api, threads, monkeypatch):
     assert not threads and not _legacy_events(api)
 
 
-@pytest.mark.parametrize("found", [["ASRL1", "asrl2", "USB1", "TCPIP1"], [], ["ASRL1"]])
+@pytest.mark.parametrize("found", [[("USB1", "Keysight,N6705C,MY66102013,fw"), ("TCPIP1", "")], []])
 def test_scan_success_empty_and_release(api, threads, monkeypatch, found):
     def scan():
         assert api._gate.state()[0] == "power"
@@ -634,7 +635,7 @@ def test_scan_success_empty_and_release(api, threads, monkeypatch, found):
     assert not api._config_path.exists() and not api._window.calls
     threads.pop().run()
     events = _legacy_events(api)
-    expected = [value for value in found if not value.upper().startswith("ASRL")]
+    expected = [[address, web_seq._scan_label(address, idn)] for address, idn in found]
     assert ["scan", expected] in events
     assert (["result", "info", i18n.tr("scan_title"), i18n.tr("scan_none")] in events) is (not expected)
     assert events[-2:] == [["status", 0, ""], ["busy", False]]
@@ -667,3 +668,14 @@ def test_scan_busy_denied(api, threads, state):
         assert not threads
     finally:
         api._release(token)
+
+
+@pytest.mark.parametrize("idn,label", [
+    ("Keysight,N6705C,MY66102013,fw", "N6705C  S/N MY66102013  (USB1)"),
+    ("Keysight, N6705C , ,fw", "N6705C  (USB1)"),
+    ("", "USB1"),
+    ("malformed", "USB1"),
+    ("Keysight,,serial,fw", "USB1"),
+])
+def test_scan_label(idn, label):
+    assert web_seq._scan_label("USB1", idn) == label

@@ -300,29 +300,62 @@ def _list_on(candidates: list[str]) -> list[str]:
     return found
 
 
+def _idn_of(resource, candidates, timeout_ms=2000) -> str:
+    for candidate in candidates:
+        try:
+            transport = VisaTransport(resource, backend=candidate, timeout_ms=timeout_ms)
+            try:
+                transport._inst.encoding = "latin-1"
+                answer = transport.query("*IDN?")
+            finally:
+                transport.close()
+            if answer:
+                return answer
+        except Exception:
+            continue
+    return ""
+
+
 def _scan_child(conn, candidates) -> None:
     try:
-        conn.send(_list_on(candidates))
+        addresses = [address for address in _list_on(candidates)
+                     if not address.upper().startswith("ASRL")]
+        conn.send(addresses)
+        for address in addresses:
+            conn.send((address, _idn_of(address, candidates)))
     finally:
         conn.close()
 
 
-def scan_resources(timeout_s: float = 20.0, *, _target=None) -> list[str]:
+def scan_resources(timeout_s: float = 20.0, *, _target=None) -> list[tuple[str, str]]:
     """Discover resources in a disposable process, bounded against VISA hangs/crashes."""
     candidates = _candidates("auto")
     parent_conn, child_conn = mp.Pipe(duplex=False)
     proc = mp.Process(target=_target or _scan_child, args=(child_conn, candidates), daemon=True)
     deadline = time.monotonic() + timeout_s
-    # ponytail: one hung backend loses the other backends' results; stream per-backend if that matters.
+    # ponytail: a hang while listing loses other backends' results; stream per-backend if that matters.
+    found = None
     try:
         proc.start()
         child_conn.close()
-        try:
-            if not parent_conn.poll(max(0.0, deadline - time.monotonic())):
-                raise TransportError("Instrument search timed out")
-            return parent_conn.recv()
-        except (EOFError, OSError) as exc:
-            raise TransportError("Instrument search process crashed without an answer") from exc
+        while True:
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not parent_conn.poll(remaining):
+                    if found is None:
+                        raise TransportError("Instrument search timed out")
+                    break
+                message = parent_conn.recv()
+            except (EOFError, OSError) as exc:
+                if found is None:
+                    raise TransportError("Instrument search process crashed without an answer") from exc
+                break
+            if found is None:
+                found = dict.fromkeys(message, "")
+            else:
+                address, idn = message
+                found[address] = idn
+        return list(found.items())
     finally:
         child_conn.close()
         parent_conn.close()
