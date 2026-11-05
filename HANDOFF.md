@@ -221,4 +221,4 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - **已驗**：pytest 838 過／7 跳過；CI（三平台 × Python 3.11／3.13、`build-windows`）通過；`--selftest` exit 0；macOS 真實掃描約 1.4 s（無儀器）；真 pyvisa 連本機假儀器，只收到 `*IDN?\n`，非 ASCII 回覆解析正確。
 - **未驗**：實機 N6705C／E36441A 的 LAN 廣播與 USB 列舉；Windows 原生 VISA 當機路徑（`BrokenPipeError` 只有模擬測試）；打包後 exe 的子行程掃描；加上型號標籤後的選單版面（截圖是標籤加入之前的）。
 - **已知限制**：LAN 廣播跨不了子網路；同一台儀器可能出現兩筆（後端寫法不同，或同時接 USB 與 LAN）；列舉階段有後端卡住時，該次其他後端的結果會丟失（`scan_resources` 的 `ponytail:` 註解）。
-- **接手要做**：接實機按「搜尋儀器」，確認清單與型號；沒搜到就對照 `HANDOFF_WINDOWS.md` §3.4 判讀。v0.1.3 之後尚未發版，這功能要推 `v*` tag 才會進 exe。
+- **接手要做**：接實機按「搜尋儀器」，確認清單與型號；沒搜到就對照 `HANDOFF_WINDOWS.md` §3.4 判讀。這功能已隨 `v0.2.0` pre-release 發出（2026-11-05，使用者決定先預先發行）；Windows 驗收後才轉正式，見 `HANDOFF_WINDOWS.md` §5。
