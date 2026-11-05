@@ -17,7 +17,7 @@ GUI 需要 Microsoft Edge WebView2 Runtime，不隨 exe 打包；Windows 11 已�
 ## 2. 打包與發版（exe）
 - 本機：`pip install -e ".[build]"` → `.\packaging\build.ps1`（建置 → `--demo` 自我測試 → 產 zip）。只能在 Windows 打。
 - CI：`.github/workflows/ci.yml`，推 `v*` tag 才建 Release。發版：改 `pyproject.toml` version → `git tag vX.Y.Z && git push origin vX.Y.Z`。
-- ⚠️ zip 檔名取自 `pyproject.toml` 的 version（目前 0.1.3），發版前記得與 tag 一致。
+- ⚠️ zip 檔名取自 `pyproject.toml` 的 version（目前 0.2.0），發版前記得與 tag 一致。
 - 沒有程式碼簽章，SmartScreen 會警告。
 
 ## 3. 已知問題與處理
@@ -40,7 +40,7 @@ GUI 需要 Microsoft Edge WebView2 Runtime，不隨 exe 打包；Windows 11 已�
 - **搜尋儀器**（§3.2、`HANDOFF.md` §12）：原生 VISA 與 `@py` 合併掃描、子行程在打包後的 exe 內能否正常啟動、USB／LAN 儀器能否列出型號，都未實際操作。
 
 ## 5. 目前狀態
-- Windows 相關最近一次改動是 PR #8 搜尋儀器（`c7461c6`，尚未發版）；tags 有 `v0.1.0`～`v0.1.3`。目前 git 狀態和下一步見 `HANDOFF.md`。
+- Windows 相關最近一次改動是 PR #8 搜尋儀器（`c7461c6`）；tags 有 `v0.1.0`～`v0.2.0`。`v0.2.0` 是 pre-release（Latest 仍是 v0.1.3），Windows 驗收（§6）通過後再用 `gh release edit v0.2.0 --prerelease=false --latest` 轉正式。目前 git 狀態和下一步見 `HANDOFF.md`。
 - Windows 待辦：在有 Windows＋儀器的環境按「測試連線」，把錯誤視窗內容回報 → 依 §3.4 判讀；確認 CI Release 產物；在乾淨的 Windows 上驗證 exe 的 GUI。
 
 ## 6. Windows 端到端驗收清單（分析分頁，未實機驗）
