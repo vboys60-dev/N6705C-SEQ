@@ -21,6 +21,8 @@ import math
 import re
 import struct
 import time
+from datetime import datetime, timezone
+from xml.sax.saxutils import escape
 from collections import deque
 from dataclasses import dataclass, field
 import logging
@@ -167,6 +169,8 @@ class FakeN6705C:
         self.dlog_file = ""
         self.dlog_t0 = 0.0
         self.dlog_running = False
+        self._dlog_finalized = False
+        self._dlog_triggered = False
         # Output synchronisation. Non-volatile on the real thing, so it is not
         # cleared by *RST here either.
         self.coupled_channels: list[int] = []
@@ -209,6 +213,10 @@ class FakeN6705C:
 
     def _dispatch(self, command: str) -> str | bytes | None:
         self.command_log.append(command)
+        # Like the other fake acquisitions, completion is observed lazily on
+        # the next exchange. No timer or second transport thread is needed.
+        if self.dlog_running and time.monotonic() - self.dlog_t0 >= self.dlog_duration:
+            self._write_dlog_file()
         # A message may carry several units separated by ';'. Only the last
         # response is returned, which is enough for how this app talks.
         result: str | bytes | None = None
@@ -351,6 +359,7 @@ class FakeN6705C:
             if self.dlog_file and self.dlog_trigger_source == "BUS":
                 self.dlog_running = True
                 self.dlog_t0 = now
+                self._dlog_triggered = True
                 fired = True
             if not fired:
                 # Harmless on real hardware too: a trigger with nothing armed
@@ -948,6 +957,8 @@ class FakeN6705C:
             self.dlog_file = name
             self.dlog_t0 = time.monotonic()
             self.dlog_running = self.dlog_trigger_source == "IMM"
+            self._dlog_triggered = self.dlog_running
+            self._dlog_finalized = False
             return None
 
         @on("TRIGger:DLOG[:IMMediate]")
@@ -957,12 +968,13 @@ class FakeN6705C:
                 return None
             self.dlog_running = True
             self.dlog_t0 = time.monotonic()
+            self._dlog_triggered = True
             return None
 
         @on("ABORt:DLOG")
         def _abort_dlog(_: str) -> None:
-            self.dlog_running = False
             self._write_dlog_file()
+            self.dlog_running = False
             return None
 
         @on("MMEMory:EXPort:DLOG")
@@ -1576,8 +1588,61 @@ class FakeN6705C:
             self.dlog_period *= factor
 
     def _write_dlog_file(self) -> None:
-        if self.dlog_file:
-            self.files.setdefault(self.dlog_file, b"\x00DLOG-BINARY-PLACEHOLDER")
+        """Freeze a native-format, big-endian DLOG at ABOR or expiry.
+
+        This intentionally has no host recorder marker: it models a file made
+        by the instrument, independently of n6705c_seq and its recovery format.
+        """
+        if not self.dlog_file or self._dlog_finalized:
+            return
+        elapsed = (min(self.dlog_duration, max(0.0, time.monotonic() - self.dlog_t0))
+                   if self._dlog_triggered else 0.0)
+        count = int(elapsed / self.dlog_period)
+        channels = [ch for ch in self.channels.values()
+                    if ch.model and (ch.dlog_voltage or ch.dlog_current)]
+        lines = ["<!-- N6700X dlog settings -->", "<dlog>"]
+        fields = []
+        for ch in channels:
+            lines.extend([f'<channel id="{ch.number}">',
+                          f"<sense_volt>{int(ch.dlog_voltage)}</sense_volt>",
+                          f"<sense_curr>{int(ch.dlog_current)}</sense_curr>",
+                          f"<ident><model>{escape(ch.model)}</model></ident>", "</channel>"])
+            fields.extend((ch, kind) for kind, enabled in (("V", ch.dlog_voltage), ("I", ch.dlog_current))
+                          if enabled)
+        date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        lines.extend(["<frame>", f"<sense_minmax>{int(self.dlog_minmax)}</sense_minmax>",
+                      "<trig_source>1</trig_source>", f"<offset>{self.dlog_offset}</offset>",
+                      f"<tint>{self.dlog_period!r}</tint>",
+                      f"<time>{count * self.dlog_period:024.9f}</time>",
+                      f'<date>"{date}"</date>', "</frame>"])
+        for ch in channels:
+            lines.extend([f'<gui_chan id="{ch.number}">',
+                          f"<volt_trace>{int(ch.dlog_voltage)}</volt_trace>",
+                          f"<curr_trace>{int(ch.dlog_current)}</curr_trace>",
+                          "<volt_gain>2</volt_gain><volt_offset>0</volt_offset>",
+                          "<curr_gain>0.05</curr_gain><curr_offset>0</curr_offset>",
+                          "<power_trace>0</power_trace><power_gain>0.05</power_gain><power_offset>0</power_offset>",
+                          "</gui_chan>"])
+        name = escape(self.dlog_file.replace("\\", "/").rsplit("/", 1)[-1])
+        lines.extend(["<gui_frame><horiz_gain>1</horiz_gain><horiz_offset>0</horiz_offset>",
+                      f'<base_filename>"{name}"</base_filename>',
+                      "<date_time>1</date_time><marker1_pos>0</marker1_pos><marker2_pos>0</marker2_pos>",
+                      "</gui_frame>", "</dlog>", ""])
+        payload = bytearray("\n".join(lines).encode("utf-8"))
+        payload.extend(struct.pack(">II", 0, count))
+        row_format = ">" + "f" * len(fields) * (3 if self.dlog_minmax else 1)
+        for index in range(count):
+            t = index * self.dlog_period
+            row = []
+            for ch, kind in fields:
+                value = self._elog_voltage_at(ch, t) if kind == "V" else self._elog_current_at(ch, t)
+                row.append(value)
+                if self.dlog_minmax:
+                    row.extend((min(value * 0.98, value * 1.02), max(value * 0.98, value * 1.02)))
+            payload.extend(struct.pack(row_format, *row))
+        self.files[self.dlog_file] = bytes(payload)
+        self.dlog_running = False
+        self._dlog_finalized = True
 
     def _dlog_csv(self) -> bytes:
         """A CSV shaped like the instrument's export, for the demo path."""

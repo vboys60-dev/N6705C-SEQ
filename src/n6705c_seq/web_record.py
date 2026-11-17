@@ -73,6 +73,8 @@ def _failure_code(exc, phase):
 
     if isinstance(exc, _RecordFailure):
         return exc.code
+    if isinstance(exc, c.NoRecordsError):
+        return c.RecordCode.NO_RECORDING
     if isinstance(exc, ElogSinkError):
         return c.RecordCode.SINK
     if isinstance(exc, ElogFetchError):

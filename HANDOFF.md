@@ -224,7 +224,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - **已知限制**：LAN 廣播跨不了子網路；同一台儀器可能出現兩筆（後端寫法不同，或同時接 USB 與 LAN）；列舉階段有後端卡住時，該次其他後端的結果會丟失（`scan_resources` 的 `ponytail:` 註解）。
 - **接手要做**：接實機按「搜尋儀器」，確認清單與型號；沒搜到就對照 `HANDOFF_WINDOWS.md` §3.4 判讀。這功能已隨 `v0.2.0` pre-release 發出（2026-11-05，使用者決定先預先發行）；Windows 驗收後才轉正式，見 `HANDOFF_WINDOWS.md` §5。
 
-## 13. 即時資料紀錄（放進 Viewer 分頁）與 ARB 修補（2026-11-17，只有規劃，**未開工**，未改任何程式）
+## 13. 即時資料紀錄（放進 Viewer 分頁）與 ARB 修補（2026-11-17 規劃；**Wave 0–2＋C2 已 commit，Wave 3 的 B-DLOG 已審查並 commit**，見 §13.7）
 
 來源：參考舊專案 Keysight 14585A（反編譯、字串擷取），再由 Opus 與 Codex Astra 討論三輪（完整輸出在 scratchpad `r1/r2/r3_final.txt`，不在 repo 內）。Astra 引用的 Keysight 手冊頁碼（p.291、p.311、p.373-374）Opus 沒核對，**待確認**。**使用者尚未說「開工」，下列只是決策。**
 
@@ -277,5 +277,20 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 - **關鍵路徑**：T0 → A1 → S → B → I → R；實際瓶頸是硬體：H0（USB、LAN 各長錄 1 小時，至少約 2 小時）→ B，所以 H0s 放 Wave 0 先交使用者。
 - **推論待 T0 確認**：錄製沿用現有 `power` 狀態（analysis → draining → idle → power，停止後反向），`gate.py` 不加新狀態，只補約 6 個轉移測試；與 §13.1「gate 需調整」的寫法以此為準。
 
-### 13.7 接手要做
-等使用者說「開工」，從 Wave 0 起（T0 由 Opus 寫、Codex 唯讀挑錯；H0s／HAs 由 Codex 寫腳本，實測由使用者做）。
+### 13.7 進度與接手要做（2026-11-18 更新）
+**工作方式（使用者指定）**：Opus 規劃 → **Codex `gpt-6.1-sol`（`-c model_reasoning_effort=medium`；使用者 2026-11-18 起指定中檔）寫全部程式** → Opus 子代理審查 → 我在沙盒外驗證。使用者說「開工 Wave N」才開波；commit 只在使用者說時做；使用者用繁體中文。Codex 呼叫：`codex exec --skip-git-repo-check -s workspace-write -m gpt-6.1-sol -c model_reasoning_effort=medium "$(cat prompt.txt)" </dev/null > out.txt 2>&1`（`</dev/null` 必加；macOS 無 `timeout`，用 `perl -e 'alarm N; exec @ARGV'`）。Codex 沙盒禁 socket bind，HTTP 測試會失敗（約 8 failed/24 errors，是環境限制），**一律在沙盒外重跑** `/opt/anaconda3/bin/python -m pytest -q -p no:cacheprovider` 與 `node --test tests/js/*.test.js`（要用 glob，目錄形式會失敗）。
+
+**分支 `docs/handoff-live-logging`（未 push）**：
+- d6b9d2a Wave 0：契約 `docs/live-logging-contract.md`（C1–C13）、`record/contracts.py`、i18n +46 key（之後凍結）、`scripts/hw_elog_h0.py`、`scripts/hw_arb_trig_check.py`。
+- 58c1fc2 Wave 1：A1 `TRIG:ARB:SOUR IMM`＋slew 前檢、A2、C1（`ElogRecorder.run/tail/dedupe/tail_incomplete`）、W（`record/dlogfile.py`）、C2 的 DLOG 兩個 bug。
+- 7e8c738 Wave 2：S `record/snapshot.py`、G `web_record.py`（RecordApi）、K/J/V（`analysis.js`、`record.js`、`viewer.html` open_push）。Opus 審查（含 must-fix 複審）已核准。`RECORD_ENABLED=False`。
+- 7b2a494：`DlogSession.wait()` 在 ARMED/IDLE/ABORTED 不再無限迴圈（回 False）。
+- Wave 3 B-DLOG（commit 見 `git log`）：`record/backend.py`、`tests/record/test_backend_dlog.py`、`core/fake.py`（真格式 .dlog）、`NoRecordsError`（`record/contracts.py`）、`web_record._failure_code` 映射 `no_recording`。Opus＋Codex 雙審 → Codex 修六項（零筆錯誤碼、發布半途失敗旁檔 `complete=False`、下載本機寫入錯誤標 `sink`、刪檔測試假陽性、`SIGALRM` 跨平台、INIT 前失敗清空暫存檔）→ Opus 複審 APPROVED。全套 1441 passed／7 skipped，node 67 過。B-ELOG 等 H0 結果。
+
+**接手要做**
+1. ~~B-DLOG 雙審~~ 已完成（見上）。
+2. 已知缺口（B-DLOG 審查遺留，皆不擋）：原生 `.part` 無法被 `recover_part()` 復原（沒植入 run_id）；MEAS 連續失敗（3 次）會讓整個 run 失敗，已下載的完整 DLOG 只留在 `.part`，宜改成停預覽、記 gap、照常發布；契約待補：MEAS 連續失敗上限 3、gap index 用預覽序列且 count=null、`envelope.preview=True` 由 backend 設；覆寫舊檔時第二次 replace 失敗，舊錄音的 `complete=True` 旁檔會被新的 `complete=False` 取代（舊資料檔仍在，比配錯安全）；`_disk` 補欄位後無 errno 的 `OSError` 其 `str()` 顯示 `[Errno None]`；`notes` 重複記同一例外、`started_utc` 用 `+00:00` 而其他欄位用 `Z`；缺測試：發布最後一步（標 `complete=True`）失敗。
+3. **使用者要在真機跑**（Wave 3 B-ELOG 與 A3 卡在這）：`scripts/hw_elog_h0.py`（elog_arb 需 `--yes`；完整 USB＋LAN × 2 設定 × ≥1 h，總計 ≥4 h）與 `scripts/hw_arb_trig_check.py`（`slew` 項送 `*RST`，需 `--allow-reset`；`seqnum` 結果決定 A3）。H0 PASS → 做 B-ELOG（`backend.py` 目前被 B-DLOG 佔用，若兩支並存要照計畫拆成 `backend_elog.py`／`backend_dlog.py`＋分派的 `backend.py`，需重過 T0）；FAIL → 以 B-DLOG 為準，C13 上限 256 MB 生效。
+4. 待決設計：B-ELOG 是否合併 `empty_backlog` 與 `tail_incomplete` 的 gap；長錄時鐘漂移（10 h×100 ppm≈3.6 s）可能造成誤報 `tail_incomplete`；`VOLT:SLEW? MAX` 若不支援，每台每次會多約 10 s 逾時；非 demo 模式現在開兩次 VISA（`detect_model` 再 `connect_group`）。
+5. **Wave 4**（I 整合＋selftest、D 文件打包）與 **Wave 5**（R 雙審）。Wave 4 的 **core 同步清單**（`core/**` 是 `../N6705C-APP` 的手動副本，APP 不是 git 倉庫、只能 additive 同步）：`dlog.py`（`wait()` 已同步；尚缺 `start()` 的 ARMED 處理與 `_t0` 重設、`retrieve` 只刪已下載檔）、`elog.py`（ElogRecorder.run/tail/errors/dedupe/tail_incomplete、ElogSession 嚴格查錯、`fetch(max_records)`、`fetch_tail()`）、`fake.py`（`TRIG:ARB:SOUR`、`VOLT:SLEW[?]`、`VOLT:SLEW:MAX?`、真格式 .dlog）、`arb/multi.py`（arm 回滾中止當前通道）。
+6. 之後才討論 push／PR 與打開 `RECORD_ENABLED`（需實機驗收；使用者決定）。

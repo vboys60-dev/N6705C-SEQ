@@ -37,6 +37,10 @@ ELOG_FETCH_RECORDS = 16_384  # request ceiling; actual request may be smaller
 ELOG_FETCH_INTERVAL_S = 0.250
 
 
+class NoRecordsError(ValueError):
+    """A recording contains no complete persisted records."""
+
+
 class RecordCode(str, Enum):
     DISABLED = "disabled"
     POWER = "power"
