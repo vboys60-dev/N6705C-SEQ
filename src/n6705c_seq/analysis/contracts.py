@@ -71,10 +71,13 @@ ANALYSIS_ENTER_STATES = frozenset({State.IDLE})
 
 DRAINING_TIMEOUT_S = 30.0         # from analysis_leave() accepted -> jobs stopped + resources closed
 POWER_FINISH_TIMEOUT_S = 60.0     # from latest _finishing(token) (re-armable) -> successful _untimed(token)
-                                  # or _release(token). Untimed: only run_resources / run_plan / run_functions
+                                  # or _release(token). Untimed: run_resources / run_plan / run_functions,
+                                  # recording loop and DLOG download (live-logging contract C4).
 # _untimed(token) -> bool: atomic under the gate lock; True only if state is POWER and token == owner.
 # False (timer already faulted, stale/released token) -> worker skips the main work and goes to cleanup.
 # Main work is wrapped in try/finally whose finally calls _finishing(token) (re-arm on return or raise).
+# Recording calls _finishing BEFORE ABOR/tail/finalize/close; stop() only sets an Event.
+# DLOG download may re-enter _untimed, with the same try/finally: _finishing wrapper.
 # Supersedes report section 5 "timed from stop/finish signal": timing starts at each _finishing call.
 # T2 follow-up 2 (doc 1.3, pending user sign-off): run_resources / run_rows / run_plan / run_functions
 # take keyword-only on_cleanup: Callable[[], None] | None = None, called (never raising) right before
@@ -387,6 +390,7 @@ class Msg(str, Enum):
     OPEN_REQUEST = "open_request"  # iframe -> shell
     SAVE_REQUEST = "save_request"  # iframe -> shell
     OPEN_RESULT = "open_result"    # shell -> iframe
+    OPEN_PUSH = "open_push"        # shell -> iframe, unsolicited primary recording load
     SAVE_RESULT = "save_result"    # shell -> iframe
     LANG = "lang"                  # shell -> iframe
 
@@ -398,11 +402,12 @@ MSG_FIELDS: dict[Msg, frozenset[str]] = {
     Msg.OPEN_REQUEST: frozenset({"id", "purpose"}),
     Msg.SAVE_REQUEST: frozenset({"id", "purpose", "suggested"}),
     Msg.OPEN_RESULT: frozenset({"id", "ok"}),
+    Msg.OPEN_PUSH: frozenset({"grant", "name"}),
     Msg.SAVE_RESULT: frozenset({"id", "ok"}),
     Msg.LANG: frozenset({"lang"}),
 }
 MSG_TO_SHELL = frozenset({Msg.READY, Msg.OPEN_REQUEST, Msg.SAVE_REQUEST})
-MSG_TO_IFRAME = frozenset({Msg.OPEN_RESULT, Msg.SAVE_RESULT, Msg.LANG})
+MSG_TO_IFRAME = frozenset({Msg.OPEN_RESULT, Msg.OPEN_PUSH, Msg.SAVE_RESULT, Msg.LANG})
 LANGS = ("zh", "en")
 
 
@@ -431,6 +436,11 @@ class PathReply(MsgBase):  # OPEN_RESULT / SAVE_RESULT; mirrors PathResult
     cancelled: NotRequired[bool]
     grant: NotRequired[str]
     name: NotRequired[str]
+
+
+class OpenPush(MsgBase):
+    grant: str  # nonempty single-use open/dlog grant; no id/ok/purpose/path
+    name: str   # basename only; source/origin/v/gen checked before use
 
 
 class LangMsg(MsgBase):
