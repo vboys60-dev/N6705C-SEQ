@@ -292,5 +292,31 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 2. 已知缺口（B-DLOG 審查遺留，皆不擋）：原生 `.part` 無法被 `recover_part()` 復原（沒植入 run_id）；MEAS 連續失敗（3 次）會讓整個 run 失敗，已下載的完整 DLOG 只留在 `.part`，宜改成停預覽、記 gap、照常發布；契約待補：MEAS 連續失敗上限 3、gap index 用預覽序列且 count=null、`envelope.preview=True` 由 backend 設；覆寫舊檔時第二次 replace 失敗，舊錄音的 `complete=True` 旁檔會被新的 `complete=False` 取代（舊資料檔仍在，比配錯安全）；`_disk` 補欄位後無 errno 的 `OSError` 其 `str()` 顯示 `[Errno None]`；`notes` 重複記同一例外、`started_utc` 用 `+00:00` 而其他欄位用 `Z`；缺測試：發布最後一步（標 `complete=True`）失敗。
 3. **使用者要在真機跑**（Wave 3 B-ELOG 與 A3 卡在這）：`scripts/hw_elog_h0.py`（elog_arb 需 `--yes`；完整 USB＋LAN × 2 設定 × ≥1 h，總計 ≥4 h）與 `scripts/hw_arb_trig_check.py`（`slew` 項送 `*RST`，需 `--allow-reset`；`seqnum` 結果決定 A3）。H0 PASS → 做 B-ELOG（`backend.py` 目前被 B-DLOG 佔用，若兩支並存要照計畫拆成 `backend_elog.py`／`backend_dlog.py`＋分派的 `backend.py`，需重過 T0）；FAIL → 以 B-DLOG 為準，C13 上限 256 MB 生效。
 4. 待決設計：B-ELOG 是否合併 `empty_backlog` 與 `tail_incomplete` 的 gap；長錄時鐘漂移（10 h×100 ppm≈3.6 s）可能造成誤報 `tail_incomplete`；`VOLT:SLEW? MAX` 若不支援，每台每次會多約 10 s 逾時；非 demo 模式現在開兩次 VISA（`detect_model` 再 `connect_group`）。
-5. **Wave 4**（I 整合＋selftest、D 文件打包）與 **Wave 5**（R 雙審）。Wave 4 的 **core 同步清單**（`core/**` 是 `../N6705C-APP` 的手動副本，APP 不是 git 倉庫、只能 additive 同步）：`dlog.py`（`wait()` 已同步；尚缺 `start()` 的 ARMED 處理與 `_t0` 重設、`retrieve` 只刪已下載檔）、`elog.py`（ElogRecorder.run/tail/errors/dedupe/tail_incomplete、ElogSession 嚴格查錯、`fetch(max_records)`、`fetch_tail()`）、`fake.py`（`TRIG:ARB:SOUR`、`VOLT:SLEW[?]`、`VOLT:SLEW:MAX?`、真格式 .dlog）、`arb/multi.py`（arm 回滾中止當前通道）。
+5. **Wave 4：I、D 已完成並驗收**（I 整合測試 4 個、selftest 結束碼 0；全套 1445 passed／7 skipped，node 67 過；D 文件打包，同步清單已對照 diff 與 APP 現況核對）。D 已補 README 旗標／互斥／關窗說明、Windows 錄製驗收清單（`HANDOFF_WINDOWS.md` §8）及 spec 的 `collect_submodules("n6705c_seq.record")`；Windows 建置、`build-windows` CI 與實機驗收仍待完成。之後是 **Wave 5：R 雙審**。**H0 結果：尚未實測**；目前 B-DLOG 的存在不代表 H0 FAIL，也不代表 ELOG 已驗收。
+
+   **core 同步清單（`../N6705C-APP` 是手動副本，非 git，只能 additive 同步）**：本次只讀核對，未同步 APP。依 `git log`／`git diff d6b9d2a..HEAD`，core 變更來自 `58c1fc2`、`7b2a494`、`34dd510`；並直接比對 APP 現存檔案：`elog.py`、`fake.py`、`arb/multi.py` 與 `d6b9d2a` 相同，`dlog.py` 已含 `7b2a494` 的 `wait()` 修正。以下逐項合入 APP 對應函式，保留 APP 其他功能；不要整目錄覆蓋，也不要對 APP 使用 git 指令。
+
+   - **`src/n6705c/core/dlog.py`**：修改 `DlogSession.start()`，INIT 後設 ARMED 並清 `_t0=0.0`、`trigger_time_utc=""`；BUS 送 `TRIG:DLOG`、IMM 直接計時並轉 RUNNING，其餘外部來源保持 ARMED，不虛構觸發時間或完成時間。修改 `retrieve()`，用 `downloaded` 逐檔追蹤已成功寫入並關閉的本機副本，cleanup 只刪對應遠端檔；raw `.dlog` 下載失敗仍保留儀器原檔，CSV 成功仍可回傳。`wait()` 的區間變更是只在 RUNNING 輪詢，非 COMPLETE 回 False（含 IDLE／CONFIGURED／ARMED／ABORTED、等待中中止），只有 COMPLETE 才等 margin 並回 True；**此函式 APP 已同步，無須重套**。
+   - **`src/n6705c/core/elog.py`**：新增公開 `ElogSinkError`、`ElogFetchError`、`MAX_FETCH_FAILURES=3`（含 `__all__`），內部 `_ElogErrorQueueError`、`_validate_max_records()`（只收整數 1..16384），並新增 `csv`、`ScpiError` 匯入。`ElogSession` 新增 `_read_errors()`／`_check_errors()`／`_write_checked()`：以 CSV 嚴格解析 `SYST:ERR?`，須在 50 次內讀到有效 0 結尾；非零錯誤寫 notes，額外錯誤附於首個例外，格式錯誤或無法清空不能視為成功。修改 `_request_autorange()`：僅容忍 +310，記不支援訊息並查回實際 range，檢查通道數、有限值與非負值，其他錯誤仍拋出。`configure()` 的設定與週期回讀、`arm()` 的 INIT、`trigger()` 的 BUS TRIG、`stop()` 的 ABOR 改用嚴格查錯；`trigger()` 保留舊 adapter 的 `check_errors` hook，`stop()` 在 ABOR 前凍結 elapsed，finally 設 STOPPED。
+     `fetch(*, max_records=None)` 新增相容的關鍵字上限，仍只允許 RUNNING；新增 `fetch_tail(*, max_records=None)` 只允許 STOPPED，兩者共用 `_fetch()`，使用凍結後的 elapsed、讀前記 worst backlog／overflow、限制單批要求筆數，讀取／解析失敗或零筆時查錯；既有跨通道對齊邏輯保留。
+     `ElogRecorder.__init__()` 新增 `tail`（預設 `drain_then_abort`，另支援 `abort_then_drain`）、`on_event(kind,index,count)`、`max_records`、`on_cleanup` 與狀態鎖／owner。新增阻塞 `run(stop=None)`：fetch、sink、callback、尾段與 ABOR 都在同一 worker；拒絕重入，支援外部 stop Event，先呼叫 on_cleanup，再依 tail 策略收尾；保留首個錯誤，清理失敗附註，仍嘗試 ABOR。`is_running` 改為同時檢查 run owner 與背景 thread；`start()` 是背景 wrapper，防重複啟動並清內部 stop；`stop(timeout)->bool` 只設旗標及 join，不做 VISA I/O，逾時／自身執行緒回 False 且保留 thread 參照，完成才清除。直接 `run()` 不清先前 stop 旗標。
+     `_run()` 改呼叫 `run()`，ABOR 完才向 on_error 報致命錯誤；`_pump()` 每輪最多 16 批、可觀察 stop。新增 `_stopping()`、`_callback()`、`_event()`、`_fetch_one()`、`_drain_tail()`、`_note_tail_incomplete()`：sink／callback 失敗拋 `ElogSinkError`，一般 fetch 失敗先報 on_error／fetch_error，連續 3 次拋 `ElogFetchError`；錯誤佇列不可驗證立即致命，SCPI +310／+323 原樣拋出。overflow 只報新增超量，empty_backlog 超過已知缺口基線與兩個讀取間隔才報，避免重複事件；尾段最多 16 批／10 s，未清空報 tail_limit；剩餘 backlog 超過「兩個讀取間隔＋ABOR 耗時」容差則寫 notes 並報 tail_incomplete。
+   - **`src/n6705c/core/fake.py`**：`FakeChannel` 新增僅限關鍵字欄位 `voltage_slew_maximum=1e6`、`voltage_slew_rate=1e6`、`voltage_slew_override=False`、`arb_trigger_source="IMM"`（是假模型值）。`FakeN6705C.__init__()` 新增 `_dlog_finalized`／`_dlog_triggered`；`_dispatch()` 在下一次交換時觀察 DLOG 到期並產檔。指令 handler `_rst()` 重設 slew 與 ARB source；`_trg()`、`_init_dlog()`、`_trig_dlog()` 追蹤是否已觸發，INIT 清 finalized；`_abort_dlog()` 先凍結檔案再清 running。
+     新增 `_volt_slew_max_q()`（`VOLT:SLEW:MAX?` 回 override 的 0／1）、`_volt_slew_q()`（`VOLT:SLEW?` 回目前 rate，帶 MAX 回 maximum）、`_volt_slew()`（數值或 MAX／INF，驗有限值、非負與通道上限，錯誤 -224／-222）；新增 `_arb_source_q()`／`_arb_source()` 儲存及回讀 IMM／BUS／EXT／TRAN／PIN1..7，非法值 -224，**不改 INIT:TRAN 的啟動行為**。
+     `_write_dlog_file()` 取代佔位 bytes：ABOR 或到期只凍結一次，未觸發為零筆，以 elapsed／period 算筆數；產原生 XML 標頭（XML escape、UTC 日期）、大端 `>II` 索引 `(0,count)`、每通道 V 再 I 的 float32 資料，minmax 時加上下界；波形沿用 `_elog_voltage_at()`／`_elog_current_at()`。不植入 host recorder 的 run_id，不能用自家 `recover_part()` 復原。新增 `datetime`／`timezone`、`escape` 匯入。
+   - **`src/n6705c/core/arb/multi.py`**：修改 `MultiArbRunner.arm()`，在呼叫 runner.arm **之前**加入 attempted，失敗時逐一 best-effort abort 所有已嘗試通道（含當前失敗通道），清理失敗不蓋原例外。模組、`MultiArbRunner`／`GroupArbRunner` docstring 及 `arm()`、`trigger()`、`mark_triggered()`、`skew_seconds` 說明改正：這是逐通道 INIT 的 legacy 路徑，ARB 可能在 INIT 即開始，後送 `*TRG` 不保證共同起點；未設定獨立 ARB source，其影響待 HAs；跨主機 skew 僅名目 LAN 估值，不是量測上界。除 arm 回滾外，其餘是文件修正，沒有新增同步機制。
+
+   從 SEQ repo 根目錄可照抄核對（唯讀）：
+
+   ```bash
+   git log --oneline d6b9d2a..HEAD -- src/n6705c/core/
+   git diff d6b9d2a..HEAD -- src/n6705c/core/dlog.py src/n6705c/core/elog.py src/n6705c/core/fake.py src/n6705c/core/arb/multi.py
+   diff -u ../N6705C-APP/src/n6705c/core/dlog.py src/n6705c/core/dlog.py
+   diff -u ../N6705C-APP/src/n6705c/core/elog.py src/n6705c/core/elog.py
+   diff -u ../N6705C-APP/src/n6705c/core/fake.py src/n6705c/core/fake.py
+   diff -u ../N6705C-APP/src/n6705c/core/arb/multi.py src/n6705c/core/arb/multi.py
+   ```
+
+   `diff` 有差異時結束碼為 1，讀檔失敗為 2；本清單不代表 APP 已同步或實機通過。
+
 6. 之後才討論 push／PR 與打開 `RECORD_ENABLED`（需實機驗收；使用者決定）。

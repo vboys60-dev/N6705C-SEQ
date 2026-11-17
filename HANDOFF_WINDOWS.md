@@ -93,3 +93,33 @@ ARM 虛擬機上跑的是 x64 的 Python 與 wheel（pip 取到 `win_amd64`）�
 **測試結果**：799 通過、16 跳過、1 失敗（約 52 秒）。
 - 已修：`test_web_seq.py`、`test_web_list.py` 讀原始碼的 `read_text()` 沒指定編碼，在 cp950 下 `UnicodeDecodeError`；已改 `encoding="utf-8"`。
 - 未修：`tests/analysis/test_server_regressions.py::test_save_waiting_for_target_lock_is_cancellable` 約 30–40% 失敗（單獨跑 10 次：預設 3 次、`PYTHONUTF8=1` 4 次，與編碼無關），`ConnectionResetError: [WinError 10054]`。原因與待決事項見 `HANDOFF.md` §11 最後一條。
+
+## 8. 錄製驗收清單（未實機驗）
+
+> **狀態：未實機驗。** 下列項目須在 Windows 11 手動操作並記錄結果；H0 尚未實測。`src/n6705c_seq/record/contracts.py:12` 的 `RECORD_ENABLED` 預設維持 `False`，正式啟用須等實機驗收後由使用者決定。
+
+先決條件：從 repo 根目錄、已啟用的 Windows Python 3.11+ 環境執行下列 PowerShell 指令。分別以 `RECORD_ENABLED = False`／`True` 建置測試版（修改後須重建 exe、重啟程式），驗收結束恢復 `False`；分析旗標 `ANALYSIS_ENABLED` 須為 `True` 才能進入該分頁。先用 Demo 驗 UI，再接 N6705C 驗 USB／LAN 錄製與檔案行為。
+
+```powershell
+python -m pip install -e ".[build]"
+.\packaging\build.ps1
+$gui = (Resolve-Path ".\dist\N6705C-SEQ\N6705C-SEQ.exe").Path
+Start-Process -FilePath $gui -Wait
+```
+
+| # | 項目 | 操作 | 通過條件 |
+|---|---|---|---|
+| 1 | 旗標關閉 | 以 `RECORD_ENABLED = False` 啟動，進入 DLOG Viewer 分頁 | 錄製入口隱藏，無法開始錄製；既有分析功能可用 |
+| 2 | 開始／停止 | 以旗標 `True` 啟動，選單台與通道，按開始、選另存路徑，錄到有資料後按停止；另測取消另存 | 開始後顯示錄製／預覽狀態；停止後等下載、寫檔與連線清理完成才回 idle；取消不啟動錄製、不留暫存檔 |
+| 3 | `.part` 與發布 | 在可寫目錄錄製，觀察 `X.dlog.part`、`X.dlog.json.part`，停止後檢查最終檔，再於停止後、載入分析前改名及刪除檔案 | 成功後發布 `X.dlog` 與 `X.dlog.json`，旁檔 `complete=True`；暫存檔消失；改名、刪檔不受殘留 handle 阻擋（Windows 檔案鎖） |
+| 4 | 檔案鎖失敗 | 以另一程式持有目標最終檔、禁止替換／刪除，再停止錄製；解除鎖後重試一輪 | 發布失敗有錯誤提示，不能回報成功或把不完整資料標為完成；解除鎖後可重錄並正常發布，無本程式殘留鎖 |
+| 5 | 零筆不發布 | 用長取樣週期開始後立即停止，確認本次實際完整筆數為 0（若已有資料則重試） | 回報 `no_recording`，不發布本次最終 `.dlog` 或 `complete=True` 旁檔；有舊檔時舊檔不被零筆結果取代 |
+| 6 | 錄製中關窗 | 錄製中及停止收尾時按關窗，之後等停止完成再關窗 | 錄製／收尾中拒絕關窗並提示先停止；完成後可關閉，工作管理員無殘留 exe |
+| 7 | 互斥 | 錄製時切到電源分頁、嘗試執行及分析開檔；另測電源執行或分析檢視時嘗試錄製 | 電源執行、分析檢視、錄製不能同時進行；停止並收尾後才恢復可操作 |
+| 8 | exe 的 record 匯入 | 對打包 exe 執行下列清單檢查，再以旗標 `True` 的 exe 在 Demo 完整開始／停止一輪 | archive 含 `n6705c_seq.record` 的 contracts、backend、dlogfile、snapshot；實際錄製路徑無 `ModuleNotFoundError`／`ImportError`，可成功產檔（清單檢查不能取代執行驗證） |
+
+```powershell
+pyi-archive_viewer -l -r .\dist\N6705C-SEQ\N6705C-SEQ.exe | Select-String 'n6705c_seq.record'
+```
+
+回報格式（§8）：每項寫「通過／失敗／未測」＋Windows、Edge WebView2、Python 版本、旗標值、Demo／實機、USB／LAN、儀器型號、韌體、防毒名稱；檔案項目附路徑、錯誤文字與旁檔內容。`build-windows` CI、Windows exe 建置及本清單仍待驗收，不以本機靜態檢查代替。
