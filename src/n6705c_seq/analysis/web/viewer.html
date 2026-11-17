@@ -614,6 +614,7 @@
       progressLod: '建立摘要',
       progressCsv: 'CSV 匯出中...',
       errBadParent: '無法與外殼建立連線，開檔與存檔已停用',
+      openPushBusy: '目前有工作正在進行，未載入推送檔案；請完成後再試一次',
       saveFailedPrefix: '儲存失敗：',
       msgExportDataChanged: '\u532f\u51fa\u671f\u9593\u8a2d\u5b9a\u6216\u8cc7\u6599\u6709\u8b8a\u52d5\uff0c\u6216\u7d71\u8a08\u53d6\u5f97\u5931\u6557\uff0c\u8acb\u518d\u8a66\u4e00\u6b21', // zh, escaped: source stays ASCII
       compareFileBtn: '載入比對檔案',
@@ -737,6 +738,7 @@
       progressLod: 'Building overview',
       progressCsv: 'Exporting CSV...',
       errBadParent: 'Cannot reach the host shell; open and save are disabled',
+      openPushBusy: 'An operation is in progress. The pushed file was not loaded; please try again when it finishes.',
       saveFailedPrefix: 'Save failed: ',
       msgExportDataChanged: 'Settings or data changed during export, or statistics failed to load; please try again',
       compareFileBtn: 'Load Comparison File',
@@ -926,6 +928,16 @@
     if(!d || typeof d!=='object' || d.v!==1 || d.gen!==shellCtx.gen) return;
     if(d.type==='lang'){
       if(d.lang==='zh' || d.lang==='en') setLang(d.lang);
+      return;
+    }
+    if(d.type==='open_push'){
+      if(typeof d.grant!=='string' || !d.grant.trim() ||
+         typeof d.name!=='string' || !d.name.trim() || /[\/\\]/.test(d.name)) return;
+      if(longOpBusy){
+        flashMessage(T('openPushBusy'), 6000);
+        return;
+      }
+      void longOp(()=>openMainFile(d))();
       return;
     }
     if(d.type==='open_result' || d.type==='save_result'){
@@ -1795,9 +1807,10 @@
     el.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); fn(); } });
   }
   document.getElementById('parseCancelBtn').addEventListener('click', cancelActive);
-  onActivate('openMainBtn', longOp(async ()=>{
+  // Both a dialog reply and an unsolicited push use the same main-file loader.
+  async function openMainFile(g){
     try{
-      const g = await askPath('open_request', { purpose:'dlog' });
+      if(!g) g = await askPath('open_request', { purpose:'dlog' });
       if(!g) return;
       showParseProgress('parse', 0);
       const { meta, lod } = await apiOpen(g.grant, (phase,pct)=>showParseProgress(phase,pct));
@@ -1866,7 +1879,8 @@
     }finally{
       hideParseProgress();
     }
-  }));
+  }
+  onActivate('openMainBtn', longOp(()=>openMainFile()));
 
   // ---------------------------------------------------------------
   // 比對檔（MEM）載入／移除：僅供主波形圖疊圖比對，t=0 與主檔案對齊，

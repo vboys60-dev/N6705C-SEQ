@@ -22,7 +22,7 @@ class El {
   click() { return Promise.all((this.listeners.click || []).map(fn => fn())); }
 }
 
-function setup({ enabled = true, selftest = false, api = {} } = {}) {
+function setup({ enabled = true, recordEnabled = false, recordState = 'idle', selftest = false, api = {} } = {}) {
   const els = {};
   const add = (id, props) => (els[id] = new El(id, props));
   for (const id of ['result-title', 'result-text', 'btn-lang', 'btn-off', 'btn-test', 'btn-scan', 'pick-0', 'pick-1', 'res-0', 'res-1', 'chk-demo',
@@ -30,6 +30,11 @@ function setup({ enabled = true, selftest = false, api = {} } = {}) {
   add('list-tab', { hidden: true });
   add('analysis-tab', { hidden: true });
   add('tab-analysis', { hidden: true });
+  add('analysis-modes', { hidden: true });
+  add('analysis-mode-view');
+  add('analysis-mode-record');
+  add('analysis-note');
+  add('record-pane', { hidden: true });
   const results = [];
   add('result-dialog', { open: false, showModal() { this.open = true; results.push([this.dataset.kind, els['result-title'].textContent, els['result-text'].textContent]); } });
   const posts = [];
@@ -50,6 +55,9 @@ function setup({ enabled = true, selftest = false, api = {} } = {}) {
     analysis_leave: async g => { calls.push(['leave', g]); return { ok: true, gen: g }; },
     analysis_open_path: async (g, purpose) => { calls.push(['open', g, purpose]); return { ok: true, gen: g, grant: 'G', name: 'a.dlog' }; },
     analysis_save_path: async (g, purpose, suggested) => { calls.push(['save', g, purpose, suggested]); return { ok: true, gen: g, grant: 'S', name: suggested }; },
+    record_meta: async () => ({ enabled: recordEnabled }),
+    record_status: async () => { calls.push(['status']); return { state: recordState }; },
+    record_load: async g => { calls.push(['load', g]); return { ok: true, gen: g, grant: 'R', name: 'recorded.dlog' }; },
     ...api,
   };
   // Every bridge method the shell touches, to check the selftest deny list (contract 1.7.3).
@@ -75,12 +83,19 @@ function setup({ enabled = true, selftest = false, api = {} } = {}) {
   ctx.window = ctx;
   vm.createContext(ctx);
   for (const name of ['app.js', 'analysis.js']) vm.runInContext(fs.readFileSync(path.join(WEB, name), 'utf8'), ctx, { filename: name });
+  ctx.App.recordPane = {
+    show: () => { calls.push(['show']); },
+    hide: () => { calls.push(['hide']); },
+    running: () => ['starting', 'running', 'stopping'].includes(recordState),
+  };
+  ctx.App.on('record', status => { recordState = status.state; });
   const take = async ms => { const i = timers.findIndex(x => x.ms === ms); timers.splice(i, 1)[0].fn(); await flush(); };
   const fire = (type, event) => Promise.all((winListeners[type] || []).map(fn => fn(event)));
   return {
     ctx, els, run, results, posts, calls, queue, viewerWindow, touched,
     fire, timers,
     App: ctx.App,
+    setRecordState(s) { recordState = s; },
     async start() { await fire('pywebviewready'); await flush(); },
     async poll(...events) { queue.push(...events); await take(100); },
     async timeout() { await take(10000); },
@@ -222,6 +237,256 @@ test('save_request purpose csv is forwarded to analysis_save_path and answered',
   await t.message({ v: 1, gen: 1, type: 'save_request', id: 'r9', purpose: 'csv', suggested: 'out.csv' });
   assert.deepEqual(t.calls.at(-1), ['save', 1, 'csv', 'out.csv']);
   assert.deepEqual(t.posts, [[{ ok: true, gen: 1, grant: 'S', name: 'out.csv', type: 'save_result', id: 'r9', v: 1 }, VIEWER]]);
+});
+
+test('record flag off: controls and pane stay hidden, Viewer behavior and selftest are unchanged', async () => {
+  const t = setup();
+  await t.start();
+  assert.equal(t.els['analysis-modes'].hidden, true);
+  assert.equal(t.els['record-pane'].hidden, true);
+  await t.els['tab-analysis'].click();
+  await t.els['analysis-mode-record'].click();
+  await t.App.openRecorded();
+  assert.equal(t.els['analysis-frame'].hidden, false);
+  assert.equal(t.els['record-pane'].hidden, true);
+  assert.deepEqual(t.calls, [['selftest', true, ''], ['enter']]);
+  assert.ok(!t.touched.has('record_status') && !t.touched.has('record_load'));
+  const html = fs.readFileSync(path.join(WEB, 'index.html'), 'utf8');
+  assert.match(html, /id="analysis-modes"[^>]*hidden/);
+  assert.match(html, /id="record-pane"[^>]*hidden/);
+  assert.match(html, /href="record.css"/);
+  assert.match(html, /src="record.js"/);
+});
+
+test('mode switch leaves before unloading, waits for idle, then shows the recording pane', async () => {
+  const t = setup({ recordEnabled: true });
+  await t.start();
+  assert.equal(t.els['analysis-modes'].hidden, false);
+  await t.els['tab-analysis'].click();
+  await t.poll(state('analysis', 1, 1));
+  const leaving = deferred();
+  t.ctx.pywebview.api.analysis_leave = async gen => {
+    t.calls.push(['leave', gen]);
+    assert.match(t.els['analysis-frame'].src, /viewer.html/);
+    return leaving.promise;
+  };
+  t.calls.length = 0;
+  const switching = t.els['analysis-mode-record'].click();
+  await flush();
+  assert.deepEqual(t.calls, [['leave', 1]]);
+  await t.poll(state('draining', 1, 2));
+  assert.equal(t.App.currentTab, 'analysis');
+  leaving.resolve({ ok: true, gen: 1 });
+  await flush();
+  assert.equal(t.els['analysis-frame'].src, 'about:blank');
+  assert.equal(t.els['record-pane'].hidden, true);
+  await t.poll(state('idle', 1, 3));
+  await switching;
+  assert.deepEqual(t.calls, [['leave', 1], ['show']]);
+  assert.equal(t.els['record-pane'].hidden, false);
+  assert.equal(t.els['analysis-frame'].hidden, true);
+  assert.equal(t.els['analysis-note'].hidden, true);
+  t.calls.length = 0;
+  await t.els['analysis-mode-view'].click();
+  assert.deepEqual(t.calls.slice(0, 2), [['hide'], ['enter']]);
+  assert.equal(t.els['record-pane'].hidden, true);
+  assert.equal(t.els['analysis-frame'].hidden, false);
+  assert.equal(t.els['analysis-note'].hidden, false);
+});
+
+test('all active RecordStatus states restore recording without analysis enter; tab leave only hides', async () => {
+  for (const recordState of ['starting', 'running', 'stopping']) {
+    const t = setup({ recordEnabled: true, recordState });
+    await t.start();
+    await t.poll(state('power', 0, 1));
+    t.calls.length = 0;
+    await t.els['tab-analysis'].click();
+    assert.deepEqual(t.calls, [['status'], ['show']]);
+    assert.equal(t.els['record-pane'].hidden, false);
+    assert.equal(t.els['analysis-mode-view'].disabled, true);
+    await t.els['analysis-mode-view'].click(); // Exercise the guard even with a synthetic click.
+    assert.deepEqual(t.calls, [['status'], ['show']]);
+    await t.els['tab-seq'].click();
+    assert.equal(t.App.currentTab, 'seq');
+    assert.deepEqual(t.calls.at(-1), ['hide']);
+    await t.els['tab-analysis'].click();
+    assert.equal(t.App.currentTab, 'analysis');
+    assert.deepEqual(t.calls.slice(-2), [['status'], ['show']]);
+    assert.ok(!t.calls.some(c => c[0] === 'enter' || c[0] === 'leave'));
+  }
+});
+
+test('pane running guard blocks view even before a record event arrives', async () => {
+  const t = setup({ recordEnabled: true, recordState: 'done' });
+  await t.start();
+  await t.els['tab-analysis'].click();
+  await t.els['analysis-mode-record'].click();
+  t.setRecordState('running');
+  t.calls.length = 0;
+  await t.els['analysis-mode-view'].click();
+  assert.deepEqual(t.calls, []);
+  assert.equal(t.els['record-pane'].hidden, false);
+});
+
+test('openRecorded waits for terminal status AND idle, then current ready before exact-origin push', async () => {
+  const t = setup({ recordEnabled: true, recordState: 'stopping' });
+  await t.start();
+  await t.poll(state('power', 0, 1));
+  await t.els['tab-analysis'].click();
+  t.calls.length = 0;
+  const opening = t.App.openRecorded();
+  await flush();
+  assert.deepEqual(t.calls, []);
+  await t.poll(['record', { state: 'done' }]);
+  assert.deepEqual(t.calls, []);
+  await t.poll(state('idle', 0, 2));
+  assert.deepEqual(t.calls.slice(0, 2), [['hide'], ['enter']]);
+  assert.ok(!t.calls.some(c => c[0] === 'load'));
+  for (const overrides of [{ origin: SHELL }, { source: {} }]) {
+    await t.message({ v: 1, type: 'ready', gen: 1 }, overrides);
+  }
+  await t.message({ v: 1, type: 'ready', gen: 0 });
+  assert.ok(!t.calls.some(c => c[0] === 'load'));
+  assert.deepEqual(t.posts, []);
+  await t.message({ v: 1, type: 'ready', gen: 1 });
+  await opening;
+  assert.deepEqual(t.calls.at(-1), ['load', 1]);
+  assert.deepEqual(t.posts.at(-1), [{ v: 1, type: 'open_push', gen: 1, grant: 'R', name: 'recorded.dlog' }, VIEWER]);
+  assert.ok(t.posts.every(([, target]) => target === VIEWER));
+});
+
+test('openRecorded ignores a previous generation ready and does not reuse its readiness', async () => {
+  const t = setup({ recordEnabled: true });
+  await t.start();
+  await t.els['tab-analysis'].click();
+  await t.message({ v: 1, type: 'ready', gen: 1 });
+  await t.els['analysis-mode-record'].click();
+  t.posts.length = 0;
+  const opening = t.App.openRecorded();
+  await flush();
+  await t.message({ v: 1, type: 'ready', gen: 1 });
+  assert.ok(!t.calls.some(c => c[0] === 'load'));
+  assert.deepEqual(t.posts, []);
+  await t.message({ v: 1, type: 'ready', gen: 2 });
+  await opening;
+  assert.deepEqual(t.posts.at(-1), [{ v: 1, type: 'open_push', gen: 2, grant: 'R', name: 'recorded.dlog' }, VIEWER]);
+});
+
+test('record_load failure shows the PathResult error without pushing', async () => {
+  const t = setup({ recordEnabled: true, api: {
+    record_load: async gen => ({ ok: false, gen, code: 'no_recording', error: 'translated load failure' }),
+  } });
+  await t.start();
+  await t.els['tab-analysis'].click();
+  await t.els['analysis-mode-record'].click();
+  const opening = t.App.openRecorded();
+  await flush();
+  await t.message({ v: 1, type: 'ready', gen: 2 });
+  await opening;
+  assert.deepEqual(t.results, [['warning', 'record_title', 'translated load failure']]);
+  assert.ok(!t.posts.some(([msg]) => msg.type === 'open_push'));
+});
+
+test('late grant is dropped after navigation, generation change, frame replacement, URL or origin change', async () => {
+  for (const change of ['navigation', 'generation', 'frame', 'url', 'origin']) {
+    const load = deferred();
+    const t = setup({ recordEnabled: true, api: { record_load: () => load.promise } });
+    await t.start();
+    await t.els['tab-analysis'].click();
+    await t.els['analysis-mode-record'].click();
+    const opening = t.App.openRecorded();
+    await flush();
+    await t.message({ v: 1, type: 'ready', gen: 2 });
+    if (change === 'navigation' || change === 'generation') {
+      await t.els['tab-seq'].click();
+      if (change === 'generation') await t.els['tab-analysis'].click();
+    } else if (change === 'frame') {
+      t.els['analysis-frame'].contentWindow = { postMessage: () => assert.fail('replacement frame received push') };
+    } else {
+      t.els['analysis-frame'].src = change === 'url' ? `${VIEWER}/other.html` : 'http://127.0.0.1:7000/other.html';
+    }
+    load.resolve({ ok: true, gen: 2, grant: 'late', name: 'recorded.dlog' });
+    await opening;
+    assert.ok(!t.posts.some(([msg]) => msg.type === 'open_push'), change);
+  }
+});
+
+test('leaving while waiting for ready cancels loading and the ready timeout', async () => {
+  const t = setup({ recordEnabled: true });
+  await t.start();
+  await t.els['tab-analysis'].click();
+  await t.els['analysis-mode-record'].click();
+  const opening = t.App.openRecorded();
+  await flush();
+  await t.els['tab-seq'].click();
+  await opening;
+  await t.message({ v: 1, type: 'ready', gen: 2 });
+  assert.ok(!t.calls.some(c => c[0] === 'load'));
+  assert.ok(!t.timers.some(timer => timer.ms === 10000));
+  assert.deepEqual(t.results, []);
+});
+
+test('denied view switch restores the recording panel and leaves no iframe session', async () => {
+  const t = setup({ recordEnabled: true });
+  await t.start();
+  await t.els['tab-analysis'].click();
+  await t.els['analysis-mode-record'].click();
+  t.ctx.App.recordPane.hide = () => { t.els['record-pane'].hidden = true; };
+  t.ctx.pywebview.api.analysis_enter = async () => ({ ok: false, code: 'power', error: 'translated busy' });
+  await t.els['analysis-mode-view'].click();
+  assert.equal(t.els['record-pane'].hidden, false);
+  assert.equal(t.els['analysis-frame'].src, 'about:blank');
+  assert.equal(t.App.currentTab, 'analysis');
+  assert.deepEqual(t.results, [['warning', 'analysis_tab', 'translated busy']]);
+});
+
+test('late analysis_enter after leaving is released and never installs an iframe', async () => {
+  const t = setup({ recordEnabled: true });
+  await t.start();
+  await t.els['tab-analysis'].click();
+  await t.els['analysis-mode-record'].click();
+  const entered = deferred();
+  t.ctx.pywebview.api.analysis_enter = () => entered.promise;
+  const opening = t.App.openRecorded();
+  await flush();
+  await t.els['tab-seq'].click();
+  entered.resolve({ ok: true, gen: 2, url: `${VIEWER}/viewer.html#t=new&gen=2` });
+  await opening;
+  assert.deepEqual(t.calls.at(-1), ['leave', 2]);
+  assert.equal(t.els['analysis-frame'].src, 'about:blank');
+  assert.ok(!t.calls.some(c => c[0] === 'load'));
+});
+
+test('ready timeout and mismatched grant generation never send open_push', async () => {
+  for (const failure of ['timeout', 'grant']) {
+    const t = setup({ recordEnabled: true, api: {
+      record_load: async () => ({ ok: true, gen: 1, grant: 'old', name: 'recorded.dlog' }),
+    } });
+    await t.start();
+    await t.els['tab-analysis'].click();
+    await t.els['analysis-mode-record'].click();
+    const opening = t.App.openRecorded();
+    await flush();
+    if (failure === 'timeout') await t.timeout();
+    else await t.message({ v: 1, type: 'ready', gen: 2 });
+    await opening;
+    assert.deepEqual(t.results, [['warning', 'record_title', 'record_error_stale']]);
+    assert.ok(!t.posts.some(([msg]) => msg.type === 'open_push'));
+  }
+});
+
+test('a record event during the status read wins over the older status reply on tab entry', async () => {
+  const read = deferred();
+  const t = setup({ recordEnabled: true, api: { record_status: () => read.promise } });
+  await t.start();
+  const entering = t.els['tab-analysis'].click();
+  await flush();
+  await t.poll(['record', { state: 'running' }], state('power', 0, 1));
+  read.resolve({ state: 'idle' });
+  await entering;
+  assert.equal(t.els['record-pane'].hidden, false);
+  assert.equal(t.App.currentTab, 'analysis');
+  assert.ok(!t.calls.some(c => c[0] === 'enter'));
 });
 
 // Selftest deny list, read from contracts.SELFTEST_JS_API_DENIED so it cannot drift (contract 1.7.3).
@@ -481,4 +746,107 @@ test('viewer: a failing /stats request makes export retry and then abort (real r
   assert.equal(await v.ensureExportData(), false);
   assert.equal(statsCalls, 5);
   assert.deepEqual(flashes, ['msgExportDataChanged']);
+});
+
+test('record mode drain timeout warns, returns to view and restores controls', async () => {
+  const t = setup({recordEnabled: true});
+  await t.start();
+  await t.els['tab-analysis'].click();
+  await t.poll(state('analysis', 1, 1));
+  const switching = t.els['analysis-mode-record'].click();
+  await flush();
+  await t.poll(state('draining', 1, 2));
+  assert.ok(t.timers.some(x => x.ms === 10000));
+  await t.timeout();
+  await switching;
+  assert.equal(t.els['record-pane'].hidden, true);
+  assert.equal(t.els['analysis-frame'].hidden, false);
+  assert.equal(t.els['analysis-mode-view'].attrs['aria-pressed'], 'true');
+  assert.equal(t.els['analysis-mode-record'].disabled, false);
+  assert.equal(t.results.length, 1);
+});
+
+test('record mode leave rejection or exception returns to view without showing recording', async () => {
+  for (const failure of ['reply', 'exception']) {
+    const t = setup({recordEnabled: true, api: {analysis_leave: async () => {
+      if (failure === 'exception') throw new Error('leave unavailable');
+      return {ok: false, error: 'leave rejected'};
+    }}});
+    await t.start();
+    await t.els['tab-analysis'].click();
+    await t.els['analysis-mode-record'].click();
+    assert.equal(t.els['record-pane'].hidden, true, failure);
+    assert.equal(t.els['analysis-frame'].hidden, false, failure);
+    assert.equal(t.els['analysis-mode-record'].disabled, false, failure);
+    assert.equal(t.els['analysis-mode-view'].attrs['aria-pressed'], 'true', failure);
+    assert.ok(!t.calls.some(c => c[0] === 'show'), failure);
+    assert.equal(t.results.length, 1, failure);
+  }
+});
+
+test('view entry survives record_status exception and treats it as idle', async () => {
+  const t = setup({recordEnabled: true, api: {record_status: async () => { throw new Error('status unavailable'); }}});
+  await t.start();
+  assert.equal(await t.App.selectTab('analysis'), true);
+  assert.equal(t.els['record-pane'].hidden, true);
+  assert.equal(t.els['analysis-frame'].hidden, false);
+  assert.ok(t.calls.some(c => c[0] === 'enter'));
+});
+
+test('openRecorded reports a pending mode change and a rejected tab selection', async () => {
+  const leaving = deferred();
+  const t = setup({recordEnabled: true, api: {analysis_leave: () => leaving.promise}});
+  await t.start();
+  await t.els['tab-analysis'].click();
+  const switching = t.els['analysis-mode-record'].click();
+  await flush();
+  await t.App.openRecorded();
+  assert.equal(t.results.length, 1);
+  leaving.resolve({ok: true, gen: 1});
+  await switching;
+  const k = setup({recordEnabled: true});
+  await k.start();
+  k.App.selectTab = async () => false;
+  await k.App.openRecorded();
+  assert.equal(k.results.length, 1);
+});
+
+test('openRecorded rejects whitespace-only basenames and grants like the viewer', async () => {
+  for (const invalid of [{name: '  \t '}, {grant: ' \t '}]) {
+    const t = setup({recordEnabled: true, api: {record_load: async gen => ({ok: true, gen, grant: 'R', name: 'run.dlog', ...invalid})}});
+    await t.start();
+    await t.els['tab-analysis'].click();
+    await t.message({v: 1, type: 'ready', gen: 1});
+    await t.App.openRecorded();
+    assert.equal(t.results.length, 1);
+    assert.ok(!t.posts.some(([msg]) => msg.type === 'open_push'));
+  }
+});
+
+test('viewer: open_push authenticates the shell and validates grants and basenames', async () => {
+  const loads = [], flashes = [], listeners = {};
+  const parent = {};
+  const ctx = {shellCtx: {ok: true, parent: SHELL, gen: 7}, window: {
+    parent, addEventListener: (name, fn) => { listeners[name] = fn; }},
+    longOpBusy: false, longOp: fn => fn,
+    openMainFile: async d => { loads.push(d); },
+    flashMessage: (...args) => flashes.push(args), T: key => key,
+  };
+  viewerSlice('let reqSeq = 0;', '// 向外殼要路徑授權', ctx, 'shellAsk');
+  const good = {v: 1, type: 'open_push', gen: 7, grant: 'G', name: 'run.dlog'};
+  const send = (data = good, extra = {}) => listeners.message({source: parent, origin: SHELL, data, ...extra});
+  send(good, {source: {}}); send(good, {origin: VIEWER});
+  for (const change of [{gen: 8}, {gen: '7'}, {v: 2}, {name: 'dir/run.dlog'}, {name: 'dir\\run.dlog'},
+    {name: ' \t '}, {grant: ' '}, {grant: null}]) send({...good, ...change});
+  assert.equal(loads.length, 0);
+  assert.equal(flashes.length, 0);
+  send(); await flush();
+  assert.equal(loads.length, 1); // No pending reply or request id is required.
+  assert.equal(loads[0], good);
+  ctx.longOpBusy = true;
+  send(); await flush();
+  assert.equal(loads.length, 1);
+  assert.deepEqual(flashes, [['openPushBusy', 6000]]);
+  assert.doesNotMatch(VIEWER_HTML.slice(VIEWER_HTML.indexOf("if(d.type==='open_push')"),
+    VIEWER_HTML.indexOf("if(d.type==='open_result'")), /Number\.isInteger\(d\.gen\)/);
 });
