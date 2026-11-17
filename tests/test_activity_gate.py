@@ -263,6 +263,7 @@ def test_all_contract_edges_are_exercised(monkeypatch):
     token = gate.reserve("power")
     gate.finishing(token)
     wait_for(lambda: gate.state()[0] == c.State.FAULT)
+    gate.release(token)  # a live power worker would veto the close
     gate.on_closing()
     record(events)
     gate, events = make_gate()
@@ -342,3 +343,17 @@ def test_untimed_invalidates_old_timer_and_finishing_rearms(monkeypatch):
     before = (gate.payload(), gate._finish_epoch)
     assert gate.untimed(token) is False
     assert (gate.payload(), gate._finish_epoch) == before
+
+
+def test_fault_with_live_power_worker_vetoes_close_until_it_returns(monkeypatch):
+    monkeypatch.setattr(c, "POWER_FINISH_TIMEOUT_S", 0.02)
+    gate, _ = make_gate()
+    token = gate.reserve("power")
+    gate.finishing(token)
+    wait_for(lambda: gate.state()[0] == c.State.FAULT)
+    assert gate.on_closing() == "power"
+    assert gate.state()[0] == c.State.FAULT and not gate.worker_done
+    assert gate.reserve("power") is None  # fault lock still holds
+    assert not gate.release(token) and gate.worker_done  # late return never unlocks
+    assert gate.state()[0] == c.State.FAULT
+    assert gate.on_closing() == "start"

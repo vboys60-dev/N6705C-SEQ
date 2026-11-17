@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier, Event, Lock
@@ -74,6 +75,21 @@ def test_closing_veto_and_reservation(core):
     token = core._reserve("power")
     assert token is None
     assert core._gate.state()[0] == "closing"
+
+
+def test_closing_vetoed_in_fault_while_worker_alive(core, monkeypatch):
+    monkeypatch.setattr(contracts, "POWER_FINISH_TIMEOUT_S", 0.02)
+    token = core._reserve("power")
+    core._gate.finishing(token)
+    deadline = time.monotonic() + 2
+    while core._gate.state()[0] != "fault":
+        assert time.monotonic() < deadline
+        time.sleep(0.005)
+    assert core._on_closing() is False  # worker not returned: keep the window
+    assert core._gate.state()[0] == "fault"
+    core._release(token)  # late return marks the worker done, never unlocks
+    assert core._gate.state()[0] == "fault"
+    assert core._on_closing() is True
 
 
 @pytest.mark.parametrize("result, expected", [(None, None), ("", None), ((), None), ([], None),
