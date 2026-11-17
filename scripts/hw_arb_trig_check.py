@@ -13,10 +13,10 @@ source: if modified, cleanup restores its as-found value (or IMM if unreadable).
 Cleanup aborts TRAN/ACQ and disables the selected output, even after an
 exception. Other channels are left alone except for the whole-frame reset in
 slew. Disconnect the DUT before using this tool.
-The current fake does not recognize TRIG:ARB:SOUR: all --demo stops during
-arbsrc cleanup when restoring the source; it must wait for A1's fake support.
-Use seqnum --demo for a subcheck that does not change the ARB source. Demo
-refusals are evidence of simulator limitations, never a hardware verdict.
+residual_bus compares a script-local pre-A1 control with the current
+execute.start_together; both start with residual ARB source BUS and retain
+separate samples and command evidence. Demo refusals are evidence of simulator
+limitations, never a hardware verdict.
 CSV files are overwritten in
 --out (default hw_arb_results). Exit 0 = checks completed, 1 = FAIL/INCONCLUSIVE
 or cancelled; demo always reports INCONCLUSIVE.
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from contextlib import contextmanager
 import math
 from pathlib import Path
 import re
@@ -352,42 +353,129 @@ def wait_finished(check):
         time.sleep(0.05)
 
 
+def start_pre_a1(check, trigger_acquisition=False):
+    """Single-frame pre-A1 control: leave ARB source alone, set only TRAN IMM."""
+    check.write(f"TRIG:TRAN:SOUR IMM,{check.chan}")
+    check.write(f"INIT:TRAN {check.chan}")
+    if trigger_acquisition:
+        check.write("*TRG")
+
+
+@contextmanager
+def record_start(check, path, phase):
+    """Record actual start I/O, including raw error replies, without extra I/O.
+
+    Session.read_errors accesses its transport directly. Temporarily wrap that
+    transport so the real start_together's checked writes are also in the CSV.
+    Its workers join before this scope exits; always restore on failure too.
+    """
+    transport = check.session._transport
+
+    class Recorder:
+        def __getattr__(self, name):
+            return getattr(transport, name)
+
+        def exchange(self, command, query=False):
+            row = {"elapsed_s": time.monotonic() - check.started,
+                   "path": path, "phase": phase, "command": command,
+                   "reply": "", "errors": ""}
+            check.commands.append(row)
+            try:
+                if query:
+                    row["reply"] = transport.query(command)
+                    return row["reply"]
+                transport.write(command)
+            except BaseException as exc:
+                row["exception"] = str(exc)
+                raise
+
+        def write(self, command):
+            self.exchange(command)
+
+        def query(self, command):
+            return self.exchange(command, query=True)
+
+    try:
+        check.session._transport = Recorder()
+        yield
+    finally:
+        check.session._transport = transport
+
+
 def residual_bus(check):
+    """Compare residual BUS before and after A1, with/without capture *TRG.
+
+    pre_a1 is a script-local historical control, NOT execute.start_together:
+    only TRAN is set to IMM. BUS must remain the ARB source; either INIT or
+    BUS release is an observation, not an assumed hardware outcome. Without
+    capture *TRG, a late rescue *TRG exposes waiting on residual BUS.
+
+    current calls the real execute.start_together. PASS requires ARB/TRAN IMM,
+    completion without timeout and a measured edge at INIT in both modes.
+    A source mismatch, timeout or observed wrong timing is FAIL. Missing edges
+    or ambiguous pre-A1 timing are INCONCLUSIVE; neither is a false PASS.
+    PASS also requires usable pre-A1 observations in both modes. Exceptions
+    remain INCONCLUSIVE (cleanup failures are FAIL); demo is always INCONCLUSIVE.
+    Each path/mode retains source/status/timestamps, raw samples and start I/O.
+    """
     check.remember_arb_source()
-    timings = []
-    for capture_trigger in (False, True):
+    verdicts = []
+    for path, capture_trigger in ((path, flag) for path in ("pre_a1", "current")
+                                  for flag in (False, True)):
         cleanup(check)
         fn = waveform(check)
         check.set_arb_source("BUS")
+        source_before = check.query(f"TRIG:ARB:SOUR? {check.chan}").strip().strip('"').upper()
+        if source_before != "BUS":
+            raise RuntimeError(f"cannot establish residual BUS: readback {source_before!r}")
         window = execute.GRACE_SECONDS + 2 * DURATION + 0.75
         tint, origin = arm_capture(check, fn, window)
         started = time.monotonic() - origin
-        # Deliberately exercise the CURRENT implementation, including its
-        # single-frame worker. No I/O overlaps it: start_together joins first.
-        execute.start_together(check.group, [fn], trigger_acquisition=capture_trigger)
-        check.session.check_errors("start_together")
+        label = "with_capture_trigger" if capture_trigger else "without_capture_trigger"
+        if path == "pre_a1":
+            first_command = len(check.commands)
+            try:
+                start_pre_a1(check, capture_trigger)
+            finally:
+                for row in check.commands[first_command:]:
+                    row.update(path=path, phase=label)
+        else:
+            # Exercise the real implementation, including its worker and error
+            # checks. No I/O overlaps it: start_together joins before returning.
+            with record_start(check, path, label):
+                execute.start_together(check.group, [fn], trigger_acquisition=capture_trigger)
         source = check.query(f"TRIG:ARB:SOUR? {check.chan}").strip().strip('"').upper()
-        if source != "BUS":
-            raise RuntimeError(f"start_together changed ARB source to {source}; residual BUS case no longer applies")
+        tran_source = check.query(f"TRIG:TRAN:SOUR? {check.chan}").strip().strip('"').upper()
         timed_out, status_before = wait_finished(check)
         rescue = math.nan
-        if not capture_trigger:
+        if path == "pre_a1" and not capture_trigger:
             rescue = time.monotonic() - origin
             check.write("*TRG")
             time.sleep(DURATION + 0.05)
         status_after = check.query(f"STAT:OPER:COND? {check.chan}")
-        label = "with_capture_trigger" if capture_trigger else "without_capture_trigger"
-        volts = fetch_capture(check, fn, tint, origin, label)
+        volts = fetch_capture(check, fn, tint, origin, f"{path}_{label}")
         edge = edge_time(volts, tint)
         timing = classify_edge(edge, started, rescue, tint)
-        timings.append(timing)
-        check.event(phase=label, timed_out=timed_out, status_before=status_before,
+        if source != ("BUS" if path == "pre_a1" else "IMM") or tran_source != "IMM":
+            verdict = "FAIL"
+        elif path == "current" and (timed_out or timing not in ("at_init", "no_observed_edge")):
+            verdict = "FAIL"
+        elif timing not in ("at_init", "at_bus_trigger"):
+            verdict = "INCONCLUSIVE"
+        else:
+            verdict = "PASS"
+        verdicts.append(verdict)
+        check.event(path=path, phase=label, verdict=verdict,
+                    source_before=source_before, arb_source_after=source, tran_source_after=tran_source,
+                    timed_out=timed_out, status_before=status_before,
                     status_after=status_after, start_call_s=started, rescue_trigger_s=rescue,
                     edge_s=edge, timing=timing,
                     observation=("released_by_late_bus" if timing == "at_bus_trigger" else
                                  "waveform_observed" if math.isfinite(edge) else "no_waveform_observed"))
-    status = "PASS" if all(t in ("at_init", "at_bus_trigger") for t in timings) else "INCONCLUSIVE"
-    return status, "observations collected: compare timeout, waveform and late-BUS release; no assumed correct outcome"
+    status = ("FAIL" if "FAIL" in verdicts else
+              "INCONCLUSIVE" if "INCONCLUSIVE" in verdicts else "PASS")
+    return status, ("pre-A1 control observes residual BUS; current start_together must replace BUS "
+                    "with IMM and finish at INIT; compare per-path verdicts, sources and raw evidence")
 
 
 CHECKS = {"arbsrc": arbsrc, "bus_delay": bus_delay, "residual_bus": residual_bus,

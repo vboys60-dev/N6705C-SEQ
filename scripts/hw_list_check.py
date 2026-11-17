@@ -100,8 +100,17 @@ def function(channel, levels, count=1):
 
 
 def capture_run(group, functions, offset_points=0):
+    """Use run_functions' source checks and output enable, and always stop.
+
+    run_functions checks trigger sources before _apply_levels enables outputs,
+    then loads the ARB and arms capture, preserving the measured hardware order.
+    Keep the script's off guarantee even when called outside main().
+    """
     capture = {}
-    execute.run_functions(group, functions, wait=True, keep_on=False, capture=capture)
+    try:
+        execute.run_functions(group, functions, wait=True, keep_on=False, capture=capture)
+    finally:
+        execute.outputs_off(group)
     if "error" in capture:
         raise RuntimeError(capture["error"])
     result = {}

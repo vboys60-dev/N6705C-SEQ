@@ -160,7 +160,9 @@ class ListApi:
                 return
             try:
                 execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap,
-                                      on_cleanup=lambda: self._finishing(token))
+                                      on_cleanup=lambda: self._finishing(token),
+                                      on_warning=lambda text: self._emit(
+                                          ["result", "warning", tr("run_result"), text]))
             finally:
                 self._finishing(token)
             text = tr("list_hold_done") if plan.hold_last else tr("list_done")

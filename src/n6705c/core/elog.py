@@ -20,6 +20,7 @@ Sequence (PLAN.md section 5.2)::
 
 from __future__ import annotations
 
+import csv
 import logging
 import math
 import threading
@@ -41,6 +42,7 @@ from .capability import (
 from .instrument import N6705C
 from .parsing import ElogSelection
 from .scpi import format_channel_list
+from .session import ScpiError
 
 __all__ = [
     "ElogConfig",
@@ -49,6 +51,9 @@ __all__ = [
     "ElogState",
     "ElogSession",
     "ElogRecorder",
+    "ElogSinkError",
+    "ElogFetchError",
+    "MAX_FETCH_FAILURES",
     "BUFFER_SECONDS",
     "MAX_RECORDS_PER_FETCH",
 ]
@@ -60,6 +65,25 @@ MAX_RECORDS_PER_FETCH = 16_384
 
 #: Fetch this often by default: a 5x margin against the 10-second buffer.
 DEFAULT_FETCH_INTERVAL = 2.0
+MAX_FETCH_FAILURES = 3
+
+
+class ElogSinkError(RuntimeError):
+    """A sink or persistence callback failed; the original error is the cause."""
+
+
+class ElogFetchError(RuntimeError):
+    """Fetching cannot safely continue; the original error is the cause."""
+
+
+class _ElogErrorQueueError(RuntimeError):
+    """The error queue could not be verified empty."""
+
+
+def _validate_max_records(max_records: int) -> None:
+    if type(max_records) is not int or not 1 <= max_records <= MAX_RECORDS_PER_FETCH:
+        raise ValueError(f"max_records must be an integer in 1..{MAX_RECORDS_PER_FETCH}")
+
 
 VALID_TRIGGER_SOURCES = ("BUS", "EXT", "IMM", "PIN1", "PIN2", "PIN3", "PIN4",
                          "PIN5", "PIN6", "PIN7")
@@ -257,6 +281,43 @@ class ElogSession:
     #: unlike the standard negative codes -- do not test errors with ``< 0``.
     UNSUPPORTED = 310
 
+    def _read_errors(self, context: str) -> list[ScpiError]:
+        """Require a valid zero terminator, rather than silently truncating."""
+        errors: list[ScpiError] = []
+        for _ in range(50):
+            try:
+                response = self.instrument.session.query("SYST:ERR?")
+                row = next(csv.reader([response], strict=True, skipinitialspace=True))
+                if len(row) != 2 or not row[1].strip():
+                    raise ValueError(f"malformed error response: {response!r}")
+                code = int(row[0].strip())
+            except Exception as exc:
+                raise _ElogErrorQueueError(
+                    f"cannot drain ELOG error queue after {context}"
+                ) from exc
+            if code == 0:
+                return errors
+            error = ScpiError(code, row[1].strip(), context)
+            self.notes.append(str(error))
+            errors.append(error)
+        raise _ElogErrorQueueError(
+            f"ELOG error queue did not reach zero in 50 reads after {context}"
+        )
+
+    def _check_errors(self, context: str) -> None:
+        errors = self._read_errors(context)
+        if errors:
+            for extra in errors[1:]:
+                errors[0].add_note(str(extra))
+            raise errors[0]
+
+    def _write_checked(self, command: str) -> None:
+        # Even a failed write may have left an instrument error behind.
+        try:
+            self.instrument.session.write(command)
+        finally:
+            self._check_errors(command)
+
     def _request_autorange(self, quantity: str, command: str) -> None:
         """Ask for measurement autoranging, tolerating a model that lacks it.
 
@@ -270,8 +331,13 @@ class ElogSession:
         still fatal: this must not become a general "ignore ELOG errors".
         """
         session = self.instrument.session
-        session.write(command)
-        for error in session.read_errors():
+        try:
+            session.write(command)
+        finally:
+            errors = self._read_errors(command)
+        unsupported = False
+        fatal: list[ScpiError] = []
+        for error in errors:
             if error.code == self.UNSUPPORTED:
                 note = (
                     f"this module does not support ELOG {quantity} autoranging; "
@@ -280,9 +346,25 @@ class ElogSession:
                 )
                 log.warning("%s (%s)", note, command)
                 self.notes.append(note)
+                unsupported = True
                 continue
-            error.command = command
-            raise error
+            fatal.append(error)
+        if fatal:
+            for extra in fatal[1:]:
+                fatal[0].add_note(str(extra))
+            raise fatal[0]
+        if unsupported:
+            quantity_scpi = "VOLT" if quantity == "voltage" else "CURR"
+            query = f"SENS:ELOG:{quantity_scpi}:RANG? {self.chanlist}"
+            try:
+                ranges = session.query_floats(query)
+            finally:
+                self._check_errors(query)
+            if len(ranges) != len(self.config.channels) or any(
+                not math.isfinite(value) or value < 0 for value in ranges
+            ):
+                raise RuntimeError(f"invalid ELOG {quantity} range readback: {ranges}")
+            self.notes.append(f"ELOG actual {quantity} ranges: {ranges}")
 
     def configure(self) -> None:
         """Apply the configuration and read back what the instrument accepted."""
@@ -291,32 +373,35 @@ class ElogSession:
         config = self.config
 
         # Multi-channel fetches must be binary: ASCII allows only one channel.
-        session.write("FORM REAL")
-        session.write("FORM:BORD SWAP")
+        self._write_checked("FORM REAL")
+        self._write_checked("FORM:BORD SWAP")
 
         for command in config.selection.scpi_commands(chan):
-            session.write(command)
+            self._write_checked(command)
 
         if config.voltage_range is None:
             self._request_autorange("voltage", f"SENS:ELOG:VOLT:RANG:AUTO ON,{chan}")
         else:
-            session.write(f"SENS:ELOG:VOLT:RANG:AUTO OFF,{chan}")
-            session.write(f"SENS:ELOG:VOLT:RANG {config.voltage_range:G},{chan}")
+            self._write_checked(f"SENS:ELOG:VOLT:RANG:AUTO OFF,{chan}")
+            self._write_checked(f"SENS:ELOG:VOLT:RANG {config.voltage_range:G},{chan}")
 
         if config.current_range is None:
             self._request_autorange("current", f"SENS:ELOG:CURR:RANG:AUTO ON,{chan}")
         else:
-            session.write(f"SENS:ELOG:CURR:RANG:AUTO OFF,{chan}")
-            session.write(f"SENS:ELOG:CURR:RANG {config.current_range:G},{chan}")
+            self._write_checked(f"SENS:ELOG:CURR:RANG:AUTO OFF,{chan}")
+            self._write_checked(f"SENS:ELOG:CURR:RANG {config.current_range:G},{chan}")
 
-        session.write(f"SENS:ELOG:PER {config.period:.9G},{chan}")
-        session.write(f"TRIG:ELOG:SOUR {config.trigger_source.upper()},{chan}")
-        session.check_errors("ELOG configure")
+        self._write_checked(f"SENS:ELOG:PER {config.period:.9G},{chan}")
+        self._write_checked(f"TRIG:ELOG:SOUR {config.trigger_source.upper()},{chan}")
 
         # The instrument rounds the period to a 20.48 us grid and clamps it to
         # the parameter-count floor. Using the requested value would skew every
         # timestamp, so the accepted value is the one we keep.
-        periods = session.query_floats(f"SENS:ELOG:PER? {chan}")
+        query = f"SENS:ELOG:PER? {chan}"
+        try:
+            periods = session.query_floats(query)
+        finally:
+            self._check_errors(query)
         if not periods:
             raise RuntimeError("instrument did not report the ELOG period")
         if len(set(round(p, 12) for p in periods)) > 1:
@@ -347,9 +432,7 @@ class ElogSession:
         """
         if self.state not in (ElogState.CONFIGURED, ElogState.STOPPED):
             raise RuntimeError(f"cannot arm from state {self.state.value}")
-        session = self.instrument.session
-        session.write(f"INIT:ELOG {self.chanlist}")
-        session.check_errors("INIT:ELOG")
+        self._write_checked(f"INIT:ELOG {self.chanlist}")
         self.state = ElogState.INITIATED
 
     def mark_started(self) -> None:
@@ -364,9 +447,11 @@ class ElogSession:
         if self.state is not ElogState.INITIATED:
             raise RuntimeError(f"cannot trigger from state {self.state.value}")
         if self.config.trigger_source.upper() == "BUS":
-            session = self.instrument.session
-            session.write(f"TRIG:ELOG {self.chanlist}")
-            session.check_errors("TRIG:ELOG")
+            self._write_checked(f"TRIG:ELOG {self.chanlist}")
+            # Retain the legacy trigger-completion hook used by session
+            # adapters to measure trigger latency. The strict drain above
+            # has already verified the instrument queue through zero.
+            self.instrument.session.check_errors("TRIG:ELOG")
         self.mark_started()
 
     def start(self) -> None:
@@ -377,8 +462,10 @@ class ElogSession:
     def stop(self) -> None:
         if self.state in (ElogState.IDLE, ElogState.STOPPED):
             return
+        if self.state is ElogState.RUNNING:
+            self.stats.elapsed = self.elapsed
         try:
-            self.instrument.session.write(f"ABOR:ELOG {self.chanlist}")
+            self._write_checked(f"ABOR:ELOG {self.chanlist}")
         finally:
             self.state = ElogState.STOPPED
 
@@ -394,29 +481,55 @@ class ElogSession:
         wanted = int(wanted * 1.2) + 1
         return max(1, min(wanted, MAX_RECORDS_PER_FETCH))
 
-    def fetch(self) -> ElogChunk:
+    def fetch(self, *, max_records: int | None = None) -> ElogChunk:
         """Read one batch and return the records common to every channel."""
         if self.state != ElogState.RUNNING:
             raise RuntimeError(f"cannot fetch in state {self.state.value}")
+        return self._fetch(max_records=max_records)
 
-        elapsed = time.monotonic() - self._t0
+    def fetch_tail(self, *, max_records: int | None = None) -> ElogChunk:
+        """Explicit post-ABOR fetch, using the frozen acquisition duration.
+
+        Whether hardware retains records after ABOR must be established by H0.
+        The ordinary fetch method continues to reject STOPPED sessions.
+        """
+        if self.state is not ElogState.STOPPED:
+            raise RuntimeError(f"cannot fetch tail in state {self.state.value}")
+        return self._fetch(max_records=max_records)
+
+    def _fetch(self, *, max_records: int | None) -> ElogChunk:
+        if max_records is not None:
+            _validate_max_records(max_records)
+        elapsed = self.elapsed
         self.stats.elapsed = elapsed
+        # Observe overflow before consuming the buffer. A large successful
+        # fetch can otherwise hide the evidence by reducing the backlog.
+        self.stats.worst_backlog = max(self.stats.worst_backlog, self.stats.backlog)
+        if self.stats.backlog > self.stats.buffer_capacity:
+            self.stats.overflow_detected = True
         request = self._records_to_request()
-        raw = self.instrument.session.query_binary(
-            f"FETC:ELOG? {request},{self.chanlist}"
-        )
-        per_channel = self.config.selection.parse_response(raw, "SWAP")
-        if len(per_channel) != len(self.config.channels):
-            raise RuntimeError(
-                f"expected {len(self.config.channels)} data blocks, "
-                f"got {len(per_channel)}"
-            )
+        if max_records is not None:
+            request = min(request, max_records)
+        command = f"FETC:ELOG? {request},{self.chanlist}"
+        try:
+            raw = self.instrument.session.query_binary(command)
+            per_channel = self.config.selection.parse_response(raw, "SWAP")
+            if len(per_channel) != len(self.config.channels):
+                raise RuntimeError(
+                    f"expected {len(self.config.channels)} data blocks, "
+                    f"got {len(per_channel)}"
+                )
+        except Exception:
+            self._check_errors(command)
+            raise
 
         for channel, records in zip(self.config.channels, per_channel):
             if records.shape[0]:
                 self._pending[channel].append(records)
 
         chunk = self._take_aligned()
+        if chunk.is_empty:
+            self._check_errors(command)
         self.stats.note_fetch(chunk.n_records, elapsed)
         self._last_fetch = time.monotonic()
         if self.stats.overflow_detected:
@@ -474,12 +587,11 @@ class ElogSession:
 
 
 class ElogRecorder:
-    """Runs :class:`ElogSession` on a background thread.
+    """Fetch on the calling worker, with an optional background-thread wrapper.
 
-    The fetch loop must never be blocked by downstream work, or the 10-second
-    buffer overflows.  *sink* is therefore expected to hand off quickly (a
-    queue put, not a disk write).  Exceptions from *sink* are logged and the
-    loop continues -- losing a chunk is better than losing the whole run.
+    Configure and start the session before calling run(). All fetching, sinks,
+    callbacks and final ABOR execute on that same worker. Sinks must be fast
+    enough to keep up with the instrument's ten-second buffer; failure is fatal.
     """
 
     def __init__(
@@ -489,61 +601,245 @@ class ElogRecorder:
         *,
         interval: float = DEFAULT_FETCH_INTERVAL,
         on_error: Callable[[Exception], None] | None = None,
+        tail: str = "drain_then_abort",
+        on_event: Callable[[str, int, int], None] | None = None,
+        max_records: int = MAX_RECORDS_PER_FETCH,
+        on_cleanup: Callable[[], None] | None = None,
     ) -> None:
-        if interval >= BUFFER_SECONDS:
+        if not math.isfinite(interval) or not 0 < interval < BUFFER_SECONDS:
             raise ValueError(
                 f"fetch interval {interval} s must stay well below the "
                 f"{BUFFER_SECONDS} s instrument buffer"
             )
+        if tail not in ("drain_then_abort", "abort_then_drain"):
+            raise ValueError(f"invalid ELOG tail strategy: {tail!r}")
+        _validate_max_records(max_records)
         self.session = session
         self.sink = sink
         self.interval = interval
         self.on_error = on_error
+        self.tail = tail
+        self.on_event = on_event
+        self.max_records = max_records
+        self.on_cleanup = on_cleanup
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._state_lock = threading.RLock()
+        self._run_owner: int | None = None
+        self._fetch_failures = 0
+        self._overflow_excess = 0
+        self._empty_backlog_baseline = 0
+        self._abort_delay = 0.0
 
     @property
     def is_running(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()
+        with self._state_lock:
+            return self._run_owner is not None or (
+                self._thread is not None and self._thread.is_alive()
+            )
 
     def start(self) -> None:
-        if self.is_running:
-            raise RuntimeError("recorder is already running")
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._run, name="elog-fetch", daemon=True
-        )
-        self._thread.start()
+        with self._state_lock:
+            if self.is_running:
+                raise RuntimeError("recorder is already running")
+            self._stop.clear()
+            self._thread = threading.Thread(
+                target=self._run, name="elog-fetch", daemon=True
+            )
+            self._thread.start()
 
-    def stop(self, timeout: float = 10.0) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout)
-            self._thread = None
+    def stop(self, timeout: float = 10.0) -> bool:
+        """Signal stop; join only our background thread, without instrument I/O."""
+        with self._state_lock:
+            self._stop.set()
+            thread = self._thread
+        if thread is None:
+            return True
+        if thread is threading.current_thread():
+            return False
+        thread.join(timeout)
+        with self._state_lock:
+            if thread.is_alive():
+                return False
+            if self._thread is thread:
+                self._thread = None
+        return True
+
+    def run(self, stop: threading.Event | None = None) -> ElogStats:
+        """Block until either stop event is set, then finish on this thread.
+
+        After stop(), the internal stop flag stays set: a direct run() cannot
+        resume acquisition. Use a new recorder for another blocking run, or
+        start() after restarting the session to clear the flag explicitly.
+
+        Fatal errors skip further sink calls. Cleanup failures are attached to
+        the primary error so an ABOR failure cannot hide a rejected chunk.
+        """
+        with self._state_lock:
+            if self.is_running and self._thread is not threading.current_thread():
+                raise RuntimeError("recorder is already running")
+            if self._run_owner is not None:
+                raise RuntimeError("recorder is already running")
+            self._run_owner = threading.get_ident()
+        self._fetch_failures = 0
+        self._overflow_excess = 0
+        self._empty_backlog_baseline = 0
+        self._abort_delay = 0.0
+        failure: BaseException | None = None
+
+        def remember(exc: BaseException) -> None:
+            nonlocal failure
+            if failure is None:
+                failure = exc
+            else:
+                detail = f"ELOG cleanup also failed: {exc!r}"
+                if exc.__cause__ is not None:
+                    detail += f"; caused by {exc.__cause__!r}"
+                failure.add_note(detail)
+
+        try:
+            try:
+                if self.session.state is not ElogState.RUNNING:
+                    raise RuntimeError("ELOG session must be running before recording")
+                while not self._stopping(stop):
+                    # An external Event cannot wake our Event.wait(). Keep its
+                    # observation delay bounded without busy polling VISA.
+                    deadline = time.monotonic() + self.interval
+                    while not self._stopping(stop):
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+                        self._stop.wait(min(remaining, 0.05) if stop is not None else remaining)
+                    if not self._stopping(stop):
+                        self._pump(stop=stop)
+            except BaseException as exc:
+                remember(exc)
+            finally:
+                try:
+                    self._callback(self.on_cleanup)
+                except BaseException as exc:
+                    remember(exc)
+                try:
+                    if failure is None and self.tail == "drain_then_abort":
+                        self._drain_tail(after_abort=False)
+                except BaseException as exc:
+                    remember(exc)
+                finally:
+                    abort_started = time.monotonic()
+                    try:
+                        self.session.stop()
+                    except BaseException as exc:
+                        remember(exc)
+                    finally:
+                        self._abort_delay = max(0.0, time.monotonic() - abort_started)
+                if failure is None and self.tail == "abort_then_drain":
+                    try:
+                        self._drain_tail(after_abort=True)
+                    except BaseException as exc:
+                        remember(exc)
+                if failure is None:
+                    try:
+                        self._note_tail_incomplete()
+                    except BaseException as exc:
+                        remember(exc)
+        finally:
+            with self._state_lock:
+                self._run_owner = None
+        if failure is not None:
+            raise failure
+        return self.session.stats
+
+    def _stopping(self, stop: threading.Event | None) -> bool:
+        return self._stop.is_set() or (stop is not None and stop.is_set())
+
+    @staticmethod
+    def _callback(callback: Callable | None, *args: object) -> None:
+        if callback is not None:
+            try:
+                callback(*args)
+            except Exception as exc:
+                raise ElogSinkError("ELOG sink/callback failed") from exc
+
+    def _event(self, kind: str, count: int) -> None:
+        self._callback(self.on_event, kind, self.session._next_index, count)
 
     def _run(self) -> None:
         try:
-            while not self._stop.is_set():
-                self._stop.wait(self.interval)
-                self._pump()
-            self._pump()  # final sweep so the tail of the run is not dropped
-        except Exception as exc:  # pragma: no cover - defensive
-            log.exception("ELOG fetch loop failed")
-            if self.on_error is not None:
-                self.on_error(exc)
-
-    def _pump(self) -> None:
-        if self.session.state != ElogState.RUNNING:
-            return
-        try:
-            chunks = self.session.drain()
+            self.run()
         except Exception as exc:
-            log.exception("ELOG fetch failed")
-            if self.on_error is not None:
-                self.on_error(exc)
-            return
-        for chunk in chunks:
+            log.exception("ELOG fetch loop failed")
+            # The background API has no caller to receive the exception.
+            # run() has already completed ABOR before reporting it here.
+            self._callback(self.on_error, exc)
+
+    def _pump(self, *, stop: threading.Event | None = None) -> None:
+        for _ in range(16):
+            if self._stopping(stop):
+                break
+            chunk = self._fetch_one(after_abort=False)
+            if chunk is None or chunk.is_empty or self.session.stats.backlog <= 0:
+                break
+
+    def _fetch_one(self, *, after_abort: bool) -> ElogChunk | None:
+        stats = self.session.stats
+        backlog_before = max(0, int(self.session.elapsed / stats.period) - stats.records_received)
+        excess = max(0, backlog_before - stats.buffer_capacity)
+        try:
+            fetch = self.session.fetch_tail if after_abort else self.session.fetch
+            chunk = fetch(max_records=self.max_records)
+        except Exception as exc:
+            self._fetch_failures += 1
+            if isinstance(exc, ScpiError) and exc.code in (310, 323):
+                # These describe unsupported functionality / invalid setup,
+                # rather than a transient transport failure.
+                raise
+            if isinstance(exc, _ElogErrorQueueError) or self._fetch_failures >= MAX_FETCH_FAILURES:
+                raise ElogFetchError("ELOG fetching failed") from exc
+            self._callback(self.on_error, exc)
+            self._event("fetch_error", 0)
+            return None
+        self._fetch_failures = 0
+        if excess > self._overflow_excess:
+            self._event("overflow", excess - self._overflow_excess)
+            # Lost records remain in host backlog accounting forever. Only
+            # growth beyond that known gap can establish a new empty backlog.
+            self._empty_backlog_baseline = excess
+        # Draining the buffer lowers excess, but cannot recover lost records.
+        self._overflow_excess = max(self._overflow_excess, excess)
+        if (chunk.is_empty and stats.backlog >
+                self._empty_backlog_baseline + 2 * self.interval / stats.period):
+            self._event("empty_backlog", stats.backlog)
+            self._empty_backlog_baseline = stats.backlog
+        if not chunk.is_empty:
             try:
                 self.sink(chunk)
-            except Exception:
-                log.exception("ELOG sink rejected a chunk; continuing")
+            except Exception as exc:
+                raise ElogSinkError("ELOG sink rejected a chunk") from exc
+        return chunk
+
+    def _note_tail_incomplete(self) -> None:
+        stats = self.session.stats
+        tolerance = (2 * self.interval + self._abort_delay) / stats.period
+        if stats.backlog > tolerance:
+            count = stats.backlog
+            self.session.notes.append(
+                f"ELOG tail incomplete; estimated missing records {count} "
+                f"exceed tolerance {tolerance:.1f} "
+                f"(two fetch intervals + ABOR delay {self._abort_delay:.6g} s)"
+            )
+            self._event("tail_incomplete", count)
+
+    def _drain_tail(self, *, after_abort: bool) -> None:
+        deadline = time.monotonic() + 10.0
+        for _ in range(16):
+            if time.monotonic() >= deadline:
+                break
+            chunk = self._fetch_one(after_abort=after_abort)
+            if chunk is not None and (chunk.is_empty or self.session.stats.backlog <= 0):
+                return
+        if self.session.stats.backlog > 0:
+            count = self.session.stats.backlog
+            self.session.notes.append(
+                f"ELOG tail limit reached (16 batches / 10 s); estimated backlog {count}"
+            )
+            self._event("tail_limit", count)

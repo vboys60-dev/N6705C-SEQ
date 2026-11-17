@@ -60,6 +60,11 @@ class FakeChannel:
     voltage: float = 0.0
     current_limit: float = 1.0
     output_on: bool = False
+    # Provisional model values, independent of any module's analogue capability.
+    voltage_slew_maximum: float = field(default=1e6, kw_only=True)
+    voltage_slew_rate: float = field(default=1e6, kw_only=True)
+    voltage_slew_override: bool = field(default=False, kw_only=True)
+    arb_trigger_source: str = field(default="IMM", kw_only=True)
 
     # Output sequencing delays (OUTP:DEL:RISE / :FALL). Stored as the
     # instrument would store them -- snapped to its stepped resolution grid --
@@ -304,6 +309,9 @@ class FakeN6705C:
             for channel in self.channels.values():
                 channel.output_on = False
                 channel.voltage = 0.0
+                channel.voltage_slew_rate = channel.voltage_slew_maximum
+                channel.voltage_slew_override = False
+                channel.arb_trigger_source = "IMM"
                 channel.elog_initiated = channel.elog_running = False
             self.data_format, self.byte_order = "ASC", "NORM"
             return None
@@ -1455,6 +1463,50 @@ class FakeN6705C:
         @on("[SOURce:]CURRent:MODE?")
         def _curr_mode_q(args: str) -> str:
             return self._join([c.current_mode for c in self._channels_from(args)])
+
+        @on("[SOURce:]VOLTage:SLEW:MAXimum?")
+        def _volt_slew_max_q(args: str) -> str:
+            return self._join([str(int(c.voltage_slew_override)) for c in self._channels_from(args)])
+
+        @on("[SOURce:]VOLTage:SLEW?")
+        def _volt_slew_q(args: str) -> str:
+            maximum = self._value_from(args).upper() == "MAX"
+            return self._join([str(c.voltage_slew_maximum if maximum else c.voltage_slew_rate)
+                               for c in self._channels_from(args)])
+
+        @on("[SOURce:]VOLTage:SLEW")
+        def _volt_slew(args: str) -> None:
+            raw = self._value_from(args).upper()
+            override = raw in ("MAX", "INF")
+            try:
+                rate = 0.0 if override else float(raw)
+            except ValueError:
+                self.errors.append((-224, "Illegal parameter value"))
+                return None
+            channels = self._channels_from(args)
+            if not override and (not math.isfinite(rate) or rate < 0
+                                 or any(rate > c.voltage_slew_maximum for c in channels)):
+                self.errors.append((-222, "Data out of range"))
+                return None
+            for channel in channels:
+                channel.voltage_slew_rate = channel.voltage_slew_maximum if override else rate
+                channel.voltage_slew_override = override
+            return None
+
+        @on("TRIGger:ARB:SOURce?")
+        def _arb_source_q(args: str) -> str:
+            return self._join([c.arb_trigger_source for c in self._channels_from(args)])
+
+        @on("TRIGger:ARB:SOURce")
+        def _arb_source(args: str) -> None:
+            source = self._value_from(args).upper()
+            if source not in ("IMM", "BUS", "EXT", "TRAN", "PIN1", "PIN2", "PIN3",
+                              "PIN4", "PIN5", "PIN6", "PIN7"):
+                self.errors.append((-224, "Illegal parameter value"))
+                return None
+            for channel in self._channels_from(args):
+                channel.arb_trigger_source = source
+            return None
 
         @on("TRIGger:TRANsient:SOURce?")
         def _tran_source_q(args: str) -> str:

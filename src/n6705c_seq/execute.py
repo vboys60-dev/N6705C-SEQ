@@ -8,6 +8,7 @@ off, because a rail left up half-sequenced is the case this tool exists to avoid
 
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
@@ -20,9 +21,12 @@ from n6705c.core.parsing import decode_real32, split_block_list
 from n6705c.core.scpi import format_channel_list
 from n6705c.core.transport import VisaTransport
 
+from .i18n import tr
 from .plan import SeqRow, to_functions
 
-__all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "start_together", "run_plan", "run_functions", "outputs_off"]
+__all__ = ["DEMO_SLOTS", "connect_group", "OutputsNotConfirmedOff", "PlanRejected", "fire_together", "start_together", "slew_warnings", "run_plan", "run_functions", "outputs_off"]
+
+log = logging.getLogger(__name__)
 
 #: The simulator configured like the real frames (four N6752A modules).
 DEMO_SLOTS = ("N6752A",) * 4
@@ -159,6 +163,13 @@ def _frames(group: InstrumentGroup, functions) -> list[tuple[N6705C, list[int]]]
     return list(frames.values())
 
 
+def _set_trigger_sources(group: InstrumentGroup, functions) -> None:
+    """Check every frame's sources before enabling any output or initiating."""
+    for instrument, channels in _frames(group, functions):
+        instrument.session.write_checked(f"TRIG:TRAN:SOUR IMM,{format_channel_list(channels)}")
+        instrument.session.write_checked(f"TRIG:ARB:SOUR IMM,{format_channel_list(channels)}")
+
+
 def start_together(group: InstrumentGroup, functions, trigger_acquisition: bool = False) -> None:
     """Start every channel with one ``INIT:TRAN`` per frame.
 
@@ -168,10 +179,11 @@ def start_together(group: InstrumentGroup, functions, trigger_acquisition: bool 
     start is a single list command per frame and the source is set to IMM to say
     what really happens.  The simulator agrees: IMM runs at INIT.  The digitizer
     does wait for ``*TRG``, so a capture is released right after the INIT.
+
+    Both trigger sources are checked here too, for callers that start directly.
     """
     frames = _frames(group, functions)
-    for instrument, channels in frames:
-        instrument.session.write_checked(f"TRIG:TRAN:SOUR IMM,{format_channel_list(channels)}")
+    _set_trigger_sources(group, functions)
 
     def start(instrument: N6705C, channels: list[int]):
         def go() -> None:
@@ -193,6 +205,53 @@ def _apply_levels(group: InstrumentGroup, functions) -> None:
         if fn.current:  # the table rejects a 0 A limit, so 0.0 here only ever means "none"
             instrument.session.write_checked(f"CURR {fn.current:.6G},{chan}")
     group.set_output([fn.channel for fn in functions], True)
+
+
+def slew_warnings(group: InstrumentGroup, functions) -> list[str]:
+    """Report limited voltage slew; unsupported probes are diagnostic only.
+
+    SLEW:MAX? is a boolean override, whereas SLEW? MAX is a rate in V/s.
+    Drain each probe's errors even when its reply is empty or malformed.
+    """
+    warnings = []
+    for instrument, channels in _frames(group, functions):
+        chan = format_channel_list(channels)
+        probes = []
+        for command in (f"VOLT:SLEW:MAX? {chan}", f"VOLT:SLEW? {chan}",
+                        f"VOLT:SLEW? MAX,{chan}"):
+            raw = None
+            errors = []
+            try:
+                raw = instrument.session.query(command)
+            except Exception as exc:  # noqa: BLE001 - still drain the probe's errors
+                errors.append(exc)
+            finally:
+                try:
+                    instrument.session.check_errors(command)
+                except Exception as exc:  # noqa: BLE001 - retain both query and SCPI failures
+                    errors.append(exc)
+            if errors:
+                for exc in errors:
+                    log.warning("slew query %s returned %r: %s", command, raw, exc)
+                probes.append(None)
+                continue
+            try:
+                values = [float(part) for part in raw.split(",")]
+                if len(values) != len(channels) or not all(math.isfinite(v) for v in values):
+                    raise ValueError("invalid slew reply")
+                probes.append(values)
+            except Exception as exc:  # noqa: BLE001 - optional capability probe
+                log.warning("slew query %s returned %r: %s", command, raw, exc)
+                probes.append(None)
+        if any(values is None for values in probes):
+            continue
+        overrides, rates, maxima = probes
+        frame = group.instruments.index(instrument) + 1
+        for local, override, rate, maximum in zip(channels, overrides, rates, maxima):
+            if override == 0 and rate < maximum:
+                warnings.append(tr("slew_warning", channel=GlobalChannel(frame, local).label(),
+                                   actual=rate, maximum=maximum))
+    return warnings
 
 
 def _running(runner: GroupArbRunner) -> list[int]:
@@ -263,6 +322,7 @@ def run_plan(
     hold_dc: bool = False,
     capture: dict | None = None,
     on_cleanup: Callable[[], None] | None = None,
+    on_warning: Callable[[str], None] | None = None,
 ) -> GroupArbRunner:
     """Run the table. With ``wait`` the outputs are switched off again at the end,
     unless ``hold_dc``: then each rail stops at its high level and stays on.
@@ -279,7 +339,7 @@ def run_plan(
     if any("E36441A" in m for m in models):
         raise PlanRejected(f"N6705C runner cannot drive E36441A (or a mix): {models}")
     return run_functions(group, functions, wait=wait, keep_on=hold_dc, capture=capture,
-                         on_cleanup=on_cleanup)
+                         on_cleanup=on_cleanup, on_warning=on_warning)
 
 
 def run_functions(
@@ -290,6 +350,7 @@ def run_functions(
     keep_on: bool = False,
     capture: dict | None = None,
     on_cleanup: Callable[[], None] | None = None,
+    on_warning: Callable[[str], None] | None = None,
 ) -> GroupArbRunner:
     """Run the functions. With ``wait`` the outputs are switched off at the end,
     unless ``keep_on``: then each rail stays on at its waveform's final level.
@@ -297,7 +358,8 @@ def run_functions(
     Pass a dict as ``capture`` to record every channel with the digitizer; it is
     filled with ``{channel: (sample interval, volts)}`` (plus ``"error"`` if a fetch
     failed). The capture has to finish before the outputs go off, so a captured
-    run waits for the whole record."""
+    run waits for the whole record. ``on_warning`` receives slew warnings before
+    outputs are enabled; when omitted, they are logged."""
     if not functions:
         raise PlanRejected("no enabled channels in the table")
     needed = max(GlobalChannel.from_index(fn.channel).frame for fn in functions)
@@ -312,6 +374,12 @@ def run_functions(
     except Exception as exc:  # noqa: BLE001
         raise PlanRejected(str(exc)) from exc
     try:
+        for warning in slew_warnings(group, functions):
+            if on_warning is not None:
+                on_warning(warning)
+            else:
+                log.warning("%s", warning)
+        _set_trigger_sources(group, functions)
         _apply_levels(group, functions)
         runner.load()
         window = tint = 0.0

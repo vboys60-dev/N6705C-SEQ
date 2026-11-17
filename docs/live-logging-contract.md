@@ -207,12 +207,16 @@ W 驗收：V/I 逐點往返、欄位重排、final 無 part、半筆 recover、�
 
 run(stop=None) 用 recorder 內部 Event，有外部 Event 時任一旗標 set 即停止；禁止同一 recorder 重複並行 run/start。start 保留背景相容包裝，內部呼叫同一 run；新 backend **不呼叫 start**。stop(timeout=10.0) 只設旗標、join 自己的背景 thread 並回 bool；thread 未結束回 False 且保留 `_thread`，已結束才清 None；阻塞 run 外部呼叫者用 Event 停止，由呼叫端 worker 管理存活。
 
+`stop()` 設定的內部旗標保留；同一 recorder 停過後不可直接再 `run()` 恢復錄製，該呼叫會直接進入清理。下一次阻塞錄製須建立新 recorder；背景相容路徑的 `start()` 會清旗標，但仍須先重新啟動 session。
+
 run 在離開讀取迴圈、準備尾段／ABOR（含例外）時先呼叫 on_cleanup（若有）；backend 將自己的 finishing 傳入，這是 C4 能在阻塞 run 返回前開始計時的必要掛點。callback 例外不得跳過 ABOR，完成清理後才回報。run 包 finally：最後的 ABOR:ELOG、查錯、尾段和 sink 全在呼叫 run 的執行緒。
 
 - `drain_then_abort`：停止後先 drain 可取得尾段，再 ABOR；`abort_then_drain`：先 ABOR 再嘗試讀尾段。現有 session.fetch 只允許 RUNNING，C1 必須在 core 內補出 abort 後合法尾段讀取路徑，不可直接讓 STOPPED 呼叫既有 fetch 而假稱策略完成。兩策略尾段都最多 16 個 fetch 批次且 10 s monotonic 預算（每批前檢查，單次 I/O 仍受 VISA timeout）；達上限而仍有積壓則記 gap/notes，不得聲稱完整尾段，不能 drain 無限迴圈；H0 決定可取得完整尾段者。
+- **T0 第二輪定案**：兩策略成功結束尾段與 ABOR 後，不論因 0 筆、已排空或達上限而結束，都須檢查最後估計積壓。只要大於「2 個讀取間隔的筆數＋實際 ABOR 耗時（含查錯）對應筆數」，發 `on_event("tail_incomplete", next_index, missing_estimate)` 並寫 note，不能聲稱完整尾段。`missing_estimate` 為最後估計積壓的完整筆數，不扣容許值；等於容許值不發。ABOR 耗時以 monotonic 量測，積壓使用 stop 凍結的 acquisition elapsed。既有 `tail_limit` 達上限且仍有積壓時的事件與 note 保留；超過容許值時兩事件可同時存在。contracts 新增事件常數 `ELOG_EVENT_TAIL_INCOMPLETE="tail_incomplete"`、`ELOG_EVENT_TAIL_LIMIT="tail_limit"`，不改 H0 暫定策略。
 - sink 拋錯：停止後續 sink、同 worker 嘗試 ABOR 與查錯，再以原始 sink 為 cause 拋 ElogSinkError；ABOR 失敗不能掩蓋原始 sink 例外。
 - 讀取連續失敗達 3 次：同 worker ABOR/查錯後拋 ElogFetchError；成功的合法 fetch（包括 0 筆）清連續失敗數。單次/第二次只呼叫 on_error（如有）並發 `on_event("fetch_error", next_index, 0)`；無損成功 fetch 不發 gap。
 - 積壓大於 **2 個讀取間隔**估計筆數卻讀 0：`on_event("empty_backlog",next_index,estimated_backlog)`；overflow 新增證據：`on_event("overflow",next_index,estimated_lost)`，不中止。每次觀察一個事件，不能把同一 overflow sticky flag 每輪重複當新遺失；backend 旁檔標記 count 為估計，無法估計時用 null。
+- **T0 第二輪定案**：每次錄製的 empty_backlog 缺口基準 B 初值為 0；發出事件時將 B 設為當時估計積壓，之後只有估計積壓 **大於 B 再加 2 個讀取間隔的筆數** 且讀到 0 筆才再發。overflow 事件發生時，B 重置為該次估計已丟筆數（目前溢出容量的總筆數，非事件增量）；成功讀到非 0 筆不重置 B。已丟失的資料不會再讀到，不能把同一永久缺口每輪重複寫入 gaps[]。
 - on_event(kind:str,index:int,count:int) 與 on_error 必須快且不做 VISA I/O；callback 失敗需保留 cause、ABOR 後回報，不吞掉持久化錯誤。sink 失敗即 fatal，不能繼續把資料丟掉。
 - **每一步設定、INIT、ABOR、0 筆、讀取失敗之後**讀 `SYST:ERR?` 到 0。現有 session.read_errors 有 50 次上限且遇格式錯誤可提早退出，不能宣稱一定 drain 到 0；C1 只能在自己擁有的 elog.py 補嚴格 helper：到上限仍未見 0／格式錯／讀失敗就拋錯，不可繼續當成功，不改 session.py。設定命令逐步查錯，不只整批結尾查。
 - +310 **只有 autorange 不支援**時降級為 notes，回讀實際 range，UI warning 與旁檔保存；其他 ELOG 功能不支援為 fatal elog_unsupported。+323（含 INIT 才報）是 bad_config，不能開始報 running；任何非零（正或負）都要處理，不用 `<0` 判斷。原始 code/text 留 notes/error。

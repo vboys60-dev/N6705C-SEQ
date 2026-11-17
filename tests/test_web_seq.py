@@ -184,6 +184,7 @@ def test_snapshot_frozen_before_confirmation(api, threads, monkeypatch):
     thread.run()
     assert calls[0][0][0].high_v == 12
     assert callable(calls[0][1].pop("on_cleanup"))
+    assert callable(calls[0][1].pop("on_warning"))
     assert calls[0][1] == {"hold_dc": True, "capture": {}}
     assert closed == [True] and not (api._gate.state()[0] == "power")
     assert _legacy_events(api)[-1] == ["busy", False]
@@ -222,8 +223,9 @@ def test_connection_failure_and_startup_failure_release(api, threads, monkeypatc
 def test_capture_overlay_and_capture_error(api, threads, monkeypatch):
     _group(api, monkeypatch)
 
-    def run(group, rows, *, capture, hold_dc, on_cleanup):
+    def run(group, rows, *, capture, hold_dc, on_cleanup, on_warning):
         assert callable(on_cleanup)
+        assert callable(on_warning)
         capture.update({1: (0.001, [0, 1, 2]), "error": "partial"})
 
     monkeypatch.setattr(web_seq, "run_plan", run)
@@ -236,6 +238,18 @@ def test_capture_overlay_and_capture_error(api, threads, monkeypatch):
     assert api._measured["seq"] == {1: (0.001, [0, 1, 2])}
     assert "partial" in next(e[3] for e in events if e[0] == "result")
     assert api.seq_preview(1, _raw(), False)["lanes"][0]["measured"] == [[0, 0], [1, 1], [2, 2]]
+
+
+def test_seq_worker_emits_slew_warning_before_success(api, threads, monkeypatch):
+    group = InstrumentGroup.demo(frames=1, slots=DEMO_SLOTS)
+    group.instruments[0].session.write_checked("VOLT:SLEW 2,(@1)")
+    monkeypatch.setattr(web_seq.InstrumentGroup, "demo", lambda **kwargs: group)
+    assert api.seq_run(_raw(), [], True, False, False) == {}
+    threads.pop().run()
+    results = _results(api)
+    assert [event[1] for event in results] == ["warning", "info"]
+    assert results[0][3] == i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, maximum=1e6)
+    assert not (api._gate.state()[0] == "power")
 
 
 def test_e36441a_uses_own_runner_and_refuses_capture(api, threads, monkeypatch):

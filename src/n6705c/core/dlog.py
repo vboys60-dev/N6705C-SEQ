@@ -312,17 +312,25 @@ class DlogSession:
     # -- Run control --------------------------------------------------------
 
     def start(self) -> None:
-        """Initiate the logger and, for a bus source, trigger it."""
+        """Initiate the logger and, for a bus source, trigger it.
+
+        External sources remain armed: their trigger time cannot be inferred
+        from INIT, so elapsed time and completion are not tracked for them.
+        """
         if self.state is DlogState.IDLE:
             self.configure()
         session = self.instrument.session
         session.write(f'INIT:DLOG "{self.config.filename}"')
         session.check_errors("INIT:DLOG")
         self.state = DlogState.ARMED
+        self._t0 = 0.0
+        self.trigger_time_utc = ""
 
         if self.config.normalised_source == "BUS":
             session.write("TRIG:DLOG")
             session.check_errors("TRIG:DLOG")
+        elif self.config.normalised_source != "IMM":
+            return
         self._t0 = time.monotonic()
         self.trigger_time_utc = datetime.now(timezone.utc).isoformat()
         self.state = DlogState.RUNNING
@@ -414,8 +422,9 @@ class DlogSession:
         """Export to CSV, bring both files back, then tidy the instrument.
 
         The instrument's file system is small and shared; leaving multi-hour
-        logs on it is how the next run fails for lack of space.  Deletion only
-        happens after the local copies exist.
+        logs on it is how the next run fails for lack of space.  Each remote
+        file is deleted only after its own local copy has been closed
+        successfully; a failed raw-file transfer leaves the remote .dlog.
         """
         directory = Path(local_directory)
         stem = Path(self.config.filename.replace("\\", "/")).stem
@@ -423,15 +432,17 @@ class DlogSession:
 
         results: dict[str, Path] = {}
         results["csv"] = self.transfer(remote_csv, directory / f"{stem}.csv")
+        downloaded = [remote_csv]
         try:
             results["dlog"] = self.transfer(
                 self.config.filename, directory / f"{stem}.dlog"
             )
+            downloaded.append(self.config.filename)
         except Exception as exc:
             # The CSV is the usable artefact; the raw file is a bonus.
             log.warning("could not transfer the raw .dlog file: %s", exc)
             self.instrument.session.read_errors()
 
         if cleanup:
-            self.delete_on_instrument(remote_csv, self.config.filename)
+            self.delete_on_instrument(*downloaded)
         return results

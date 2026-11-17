@@ -304,7 +304,7 @@ def test_bus_delay_reports_hypothesis_contradiction(rig, tmp_path):
     assert rows(tmp_path, "bus_delay")[0]["status"] == "FAIL"
 
 
-def test_residual_bus_uses_actual_start_together_in_both_modes(rig, tmp_path, monkeypatch):
+def test_residual_bus_records_pre_a1_and_actual_start_together_in_both_modes(rig, tmp_path, monkeypatch):
     transport, _ = rig
     original = hw.execute.start_together
     flags = []
@@ -318,8 +318,32 @@ def test_residual_bus_uses_actual_start_together_in_both_modes(rig, tmp_path, mo
     assert run("residual_bus", tmp_path) == 0
     assert flags == [False, True]
     data = [r for r in rows(tmp_path, "residual_bus") if r["phase"].endswith("capture_trigger")]
-    assert [r["timed_out"] for r in data] == ["True", "False"]
-    assert [r["observation"] for r in data] == ["released_by_late_bus", "waveform_observed"]
+    assert [(r["path"], r["phase"]) for r in data] == [
+        (path, phase) for path in ("pre_a1", "current")
+        for phase in ("without_capture_trigger", "with_capture_trigger")]
+    assert [r["timed_out"] for r in data] == ["True", "False", "False", "False"]
+    assert [r["observation"] for r in data] == ["released_by_late_bus"] + ["waveform_observed"] * 3
+    assert [r["timing"] for r in data] == ["at_bus_trigger"] + ["at_init"] * 3
+    assert {r["source_before"] for r in data} == {"BUS"}
+    assert [r["arb_source_after"] for r in data] == ["BUS", "BUS", "IMM", "IMM"]
+    assert {r["tran_source_after"] for r in data} == {"IMM"}
+    evidence = rows(tmp_path, "residual_bus_commands")
+    for event in data:
+        assert event["verdict"] == "PASS"
+        start_commands = [r["command"] for r in evidence
+                          if (r["path"], r["phase"]) == (event["path"], event["phase"])
+                          and r["command"] != "SYST:ERR?"]
+        expected = ["TRIG:TRAN:SOUR IMM,(@1)"]
+        if event["path"] == "current":
+            expected += ["TRIG:ARB:SOUR IMM,(@1)"]
+        expected += ["INIT:TRAN (@1)"]
+        if event["phase"] == "with_capture_trigger":
+            expected += ["*TRG"]
+        assert start_commands == expected
+        samples = rows(tmp_path, f"residual_bus_{event['path']}_{event['phase']}_samples")
+        assert len(samples) == hw.execute.CAPTURE_POINTS
+        assert max(float(r["voltage_V"]) for r in samples) == 1
+    assert transport.arb_source == "EXT" and not any(transport.output.values())
 
 
 def test_residual_bus_without_waveform_is_not_false_success(rig, tmp_path):
@@ -327,22 +351,72 @@ def test_residual_bus_without_waveform_is_not_false_success(rig, tmp_path):
     transport.release_bus = False
     assert run("residual_bus", tmp_path) == 1
     data = [r for r in rows(tmp_path, "residual_bus") if r["phase"].endswith("capture_trigger")]
-    assert [r["timed_out"] for r in data] == ["True", "True"]
-    assert {r["observation"] for r in data} == {"no_waveform_observed"}
+    assert [r["timed_out"] for r in data] == ["True", "True", "False", "False"]
+    assert [r["observation"] for r in data] == ["no_waveform_observed"] * 2 + ["waveform_observed"] * 2
+    assert [r["verdict"] for r in data] == ["INCONCLUSIVE"] * 2 + ["PASS"] * 2
+    assert {r["status"] for r in data} == {"INCONCLUSIVE"}
 
 
-def test_residual_bus_detects_future_start_together_change(rig, tmp_path, monkeypatch):
+def test_residual_bus_detects_start_together_regression(rig, tmp_path, monkeypatch):
     transport, _ = rig
-    original = hw.execute.start_together
 
     def patched(group, functions, trigger_acquisition=False):
-        group.instruments[0].session.write_checked("TRIG:ARB:SOUR IMM,(@1)")
-        original(group, functions, trigger_acquisition)
+        # Reintroduce the pre-A1 bug in the current path only.
+        session = group.instruments[0].session
+        session.write_checked("TRIG:TRAN:SOUR IMM,(@1)")
+        session.write("INIT:TRAN (@1)")
+        if trigger_acquisition:
+            session.write("*TRG")
+        session.check_errors("INIT:TRAN")
 
     monkeypatch.setattr(hw.execute, "start_together", patched)
     assert run("residual_bus", tmp_path) == 1
-    assert "case no longer applies" in rows(tmp_path, "residual_bus")[0]["detail"]
+    data = [r for r in rows(tmp_path, "residual_bus") if r["phase"].endswith("capture_trigger")]
+    assert [r["verdict"] for r in data] == ["PASS", "PASS", "FAIL", "FAIL"]
+    assert {r["status"] for r in data} == {"FAIL"}
+    assert [r["arb_source_after"] for r in data] == ["BUS"] * 4
+    assert data[2]["timed_out"] == "True"
+    assert data[2]["observation"] == "no_waveform_observed"
     assert not any(transport.output.values())
+
+
+def test_residual_bus_pre_a1_can_observe_hardware_ignoring_bus(rig, tmp_path):
+    transport, _ = rig
+    transport.ignore_arb_source = True
+    assert run("residual_bus", tmp_path) == 0
+    data = [r for r in rows(tmp_path, "residual_bus") if r["phase"].endswith("capture_trigger")]
+    assert len(data) == 4
+    assert {r["timing"] for r in data} == {"at_init"}
+    assert {r["verdict"] for r in data} == {"PASS"}
+
+
+@pytest.mark.parametrize("failure", ["scpi_error", "exception", "interrupt"])
+def test_residual_bus_current_start_failure_keeps_raw_evidence_and_restores_transport(
+        failure, rig, tmp_path):
+    transport, group = rig
+    command = "TRIG:ARB:SOUR IMM,(@1)"
+    if failure == "scpi_error":
+        transport.error_at[command] = ['-113,"Undefined header"', '+310,"second"']
+    else:
+        transport.fail_at = command
+        if failure == "interrupt":
+            transport.failure = KeyboardInterrupt()
+    if failure == "interrupt":
+        with pytest.raises(KeyboardInterrupt):
+            run("residual_bus", tmp_path)
+    else:
+        assert run("residual_bus", tmp_path) == 1
+    assert group.instruments[0].session._transport is transport
+    evidence = [r for r in rows(tmp_path, "residual_bus_commands") if r["path"] == "current"]
+    assert any(r["command"] == command for r in evidence)
+    if failure == "scpi_error":
+        assert [r["reply"] for r in evidence if r["command"] == "SYST:ERR?"] == [
+            '0,"No error"', '-113,"Undefined header"', '+310,"second"', '0,"No error"']
+    else:
+        assert "exception" in next(r for r in evidence if r["command"] == command)
+    assert (tmp_path / "residual_bus_pre_a1_without_capture_trigger_samples.csv").is_file()
+    assert rows(tmp_path, "residual_bus")[0]["status"] == "INCONCLUSIVE"
+    assert transport.arb_source == "EXT" and not any(transport.output.values())
 
 
 @pytest.mark.parametrize("base, lengths", [(0, [1, 2]), (1, [0, 1])])

@@ -24,6 +24,9 @@ DURATION_MAX_S = 3_599_964_000.0
 # Average V/I only: parameters = channels * enabled quantities (1..8).
 PERIOD_FLOOR_TABLE = {n: n * 102.4e-6 for n in range(1, 9)}
 EVENT_RECORD = "record"
+# Recorder gap kinds; counts are host-time estimates, not measured losses.
+ELOG_EVENT_TAIL_INCOMPLETE = "tail_incomplete"
+ELOG_EVENT_TAIL_LIMIT = "tail_limit"
 MAX_FETCH_FAILURES = 3
 
 Tail = Literal["drain_then_abort", "abort_then_drain"]

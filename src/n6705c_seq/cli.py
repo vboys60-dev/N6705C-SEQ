@@ -140,7 +140,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"connection failed: {exc}", file=sys.stderr)
         return 1
     try:
-        run_plan(group, rows, hold_dc=args.hold_dc)
+        run_plan(group, rows, hold_dc=args.hold_dc,
+                 on_warning=lambda text: print(f"WARNING: {text}"))
     except KeyboardInterrupt:
         print("interrupted; outputs forced off", file=sys.stderr)
         return 130
