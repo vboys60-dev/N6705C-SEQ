@@ -23,6 +23,7 @@
   <button data-lang="zh">lang zh</button><button data-lang="en">lang en</button>
   <button id="badGen">send lang (wrong gen)</button>
   <button id="badType">send open_request to iframe</button>
+  <button id="openPush">push main .dlog</button>
 </div>
 <div id="main"><iframe id="f" title="viewer"></iframe><pre id="log"></pre></div>
 <script>
@@ -59,6 +60,11 @@
   document.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => post({ type: 'lang', lang: b.dataset.lang })));
   document.getElementById('badGen').addEventListener('click', () => f.contentWindow.postMessage({ v: 1, gen: gen + 1, type: 'lang', lang: 'en' }, analysisOrigin));
   document.getElementById('badType').addEventListener('click', () => post({ type: 'open_request', id: 'x', purpose: 'dlog' }));
+  document.getElementById('openPush').addEventListener('click', () => {
+    const msg = { type: 'open_push', grant: document.getElementById('grant').value || ('stub-grant-' + (++n)), name: 'stub.dlog' };
+    post(msg);
+    say('-> ' + JSON.stringify(msg));
+  });
 })();
 </script>
 </body>

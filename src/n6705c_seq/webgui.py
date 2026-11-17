@@ -19,6 +19,7 @@ from .analysis import contracts
 from .analysis.gate import Gate
 from .web_list import ListApi
 from .web_seq import SeqApi
+from .web_record import RecordApi
 from .i18n import tr
 
 class _Core:
@@ -269,7 +270,7 @@ class _Core:
             self._selftest_done.set()
 
 
-class Api(SeqApi, ListApi, _Core):
+class Api(SeqApi, ListApi, RecordApi, _Core):
     pass
 
 

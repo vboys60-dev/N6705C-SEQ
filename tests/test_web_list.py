@@ -218,8 +218,9 @@ def test_worker_functions_capture_errors_and_release(api, monkeypatch, failure):
             raise ValueError("conversion failed")
         return functions
 
-    def run(got_group, got_functions, *, keep_on, capture, on_cleanup):
+    def run(got_group, got_functions, *, keep_on, capture, on_cleanup, on_warning):
         assert callable(on_cleanup)
+        assert callable(on_warning)
         assert got_group is group and got_functions is functions
         assert keep_on and capture == {}
         if failure == "run":
@@ -522,3 +523,17 @@ def test_open_numbers_use_shortest_repr(api):
     second = next(ch for ch in response["plan"]["channels"] if ch["channel"] == 2)
     assert second["current_limit"] == 0.1
     assert second["delay"] == 0.002
+
+
+def test_list_worker_emits_slew_warning_before_success(api, monkeypatch):
+    group = InstrumentGroup.demo(frames=1, slots=web_list.execute.DEMO_SLOTS)
+    group.instruments[0].session.write_checked("VOLT:SLEW 2,(@1)")
+    monkeypatch.setattr(web_list.InstrumentGroup, "demo", lambda **kwargs: group)
+    plan = list_form.plan_from_dict(_plan())
+    compiled = synth.compile_plan(plan)
+    token = api._reserve("power")
+    api._list_work(plan, compiled, 1, [], True, False, token)
+    results = [event for event in _legacy_events(api) if event[0] == "result"]
+    assert [event[1] for event in results] == ["warning", "info"]
+    assert results[0][3] == i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, maximum=1e6)
+    assert not (api._gate.state()[0] == "power")

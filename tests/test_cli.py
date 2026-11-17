@@ -89,3 +89,17 @@ def test_run_rejects_mixed_models_before_opening_runners(monkeypatch, capsys):
     monkeypatch.setattr(cli, "run_resources", lambda *a, **k: pytest.fail("settings path opened"))
     assert main(["run", str(EXAMPLE), "--resource", "first", "--resource", "second", "--yes"]) == 2
     assert "mixed instrument models" in capsys.readouterr().err
+
+
+def test_cli_prints_slew_warning_and_completes(monkeypatch, capsys):
+    from n6705c.core.group import InstrumentGroup
+    from n6705c_seq import cli, i18n
+
+    group = InstrumentGroup.demo(frames=2, slots=cli.DEMO_SLOTS)
+    group.instruments[0].session.write_checked("VOLT:SLEW 2,(@1)")
+    monkeypatch.setattr(cli, "_group", lambda args, rows: group)
+    assert main(["run", str(EXAMPLE), "--demo", "--yes"]) == 0
+    out = capsys.readouterr().out
+    warning = i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, maximum=1e6)
+    assert f"WARNING: {warning}" in out
+    assert out.index(warning) < out.index("Sequence done")

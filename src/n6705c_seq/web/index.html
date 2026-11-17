@@ -7,11 +7,13 @@
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="seq.css">
   <link rel="stylesheet" href="list.css">
+  <link rel="stylesheet" href="record.css">
   <script defer src="app.js"></script>
   <script defer src="layout.js"></script>
   <script defer src="seq.js"></script>
   <script defer src="list.js"></script>
   <script defer src="analysis.js"></script>
+  <script defer src="record.js"></script>
 </head>
 <body>
   <fieldset class="connection">
@@ -46,8 +48,13 @@
   <section id="seq-tab" role="tabpanel" aria-labelledby="tab-seq"></section>
   <section id="list-tab" role="tabpanel" aria-labelledby="tab-list" hidden></section>
   <section id="analysis-tab" role="tabpanel" aria-labelledby="tab-analysis" hidden>
-    <p class="warn analysis-note" data-i18n="analysis_crash_note"></p>
+    <div id="analysis-modes" class="row" hidden>
+      <button id="analysis-mode-view" class="btn" aria-pressed="true" data-i18n="record_mode_view"></button>
+      <button id="analysis-mode-record" class="btn" aria-pressed="false" data-i18n="record_mode_record"></button>
+    </div>
+    <p id="analysis-note" class="warn analysis-note" data-i18n="analysis_crash_note"></p>
     <iframe id="analysis-frame" class="analysis-frame" aria-labelledby="tab-analysis"></iframe>
+    <div id="record-pane" hidden></div>
   </section>
   <dialog id="result-dialog">
     <h2 id="result-title"></h2>

@@ -240,7 +240,8 @@ class SeqApi:
                     return
                 try:
                     run_plan(group, rows, hold_dc=hold_dc, capture=cap,
-                             on_cleanup=lambda: self._finishing(token))
+                             on_cleanup=lambda: self._finishing(token),
+                             on_warning=lambda text: self._seq_result("warning", text))
                 finally:
                     self._finishing(token)
                 text = tr("sequence_hold_done") if hold_dc else tr("sequence_done")

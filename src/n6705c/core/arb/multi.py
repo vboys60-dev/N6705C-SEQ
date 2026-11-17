@@ -1,20 +1,19 @@
-"""Running several channels' waveforms from one trigger.
+"""Legacy multi-channel ARB control with best-effort rollback.
 
-Arming each channel and triggering it separately leaves an unknown gap between
-them -- one network round trip each, 0.2 to 2 ms and jittering.  That is larger
-than most of the offsets the function page exists to set up, so the staggering
-someone carefully typed in would be swamped by the way it was started.
+On the N6705C tested in HANDOFF section 4.10, ARB starts at ``INIT:TRAN``
+without waiting for ``*TRG``, even when ``TRIG:TRAN:SOUR`` is not IMM.  This
+runner initiates channels separately, so their start times can differ;
+the later ``*TRG`` does not establish a shared ARB start instant.
 
-So every channel is armed first and nothing is triggered until all of them are
-waiting.  Then one ``*TRG`` releases the lot: the manual's own See Also for it
-lists ACQuire, TRANsient, DLOG and ELOG, so a single command starts every armed
-BUS system at the same instant.  This is the same mechanism the one-button test
-uses (:mod:`...app.testrun`), which is why the two compose: M10.7 arms the
-waveforms *and* the recording, then fires once.
+``TRIG:ARB:SOUR`` is separate from ``TRIG:TRAN:SOUR``.  Its setting is the
+suspected cause of the observed immediate start (HANDOFF section 13.3), pending
+HAs hardware verification.  This legacy runner only selects the transient BUS
+source; it does not configure the ARB source.  For the GUI path, SEQ's
+``start_together`` initiates all selected channels in one command per frame.
 
-Arming is unwound if it fails partway.  A channel left armed after an aborted
-setup would sit waiting, and the next ``*TRG`` -- sent for something else
-entirely -- would run a waveform nobody asked for.
+If arming fails partway, rollback attempts to abort every channel whose arm
+was attempted, including the failing channel: it may already be running or
+waiting for a trigger even though its arm call raised.
 """
 
 from __future__ import annotations
@@ -46,7 +45,7 @@ def _make_runner(instrument: N6705C, spec: ArbSpec | ArbSequence) -> Runner:
 
 @dataclass
 class MultiArbRunner:
-    """Several channels, armed together and released by one trigger."""
+    """Initiate channels in turn, with a legacy shared BUS trigger call."""
 
     instrument: N6705C
     runners: list[Runner] = field(default_factory=list)
@@ -127,19 +126,19 @@ class MultiArbRunner:
         self.state = ArbState.LOADED if self.runners else ArbState.IDLE
 
     def arm(self) -> None:
-        """Arm every channel, or none of them.
+        """Attempt to arm every channel; abort attempted channels on failure.
 
-        A channel left armed after a failure would fire on the next ``*TRG``,
-        which may have been sent for something else entirely.
+        INIT may already have started ARB before a write or error check raises.
+        Cleanup is best-effort and preserves the original arm exception.
         """
-        armed: list[Runner] = []
+        attempted: list[Runner] = []
         try:
             for runner in self.runners:
+                attempted.append(runner)
                 runner.arm()
-                armed.append(runner)
         except Exception:
-            log.exception("arming failed; standing down the channels already armed")
-            for runner in armed:
+            log.exception("arming failed; standing down the channels attempted")
+            for runner in attempted:
                 try:
                     runner.abort()
                 except Exception:
@@ -149,7 +148,10 @@ class MultiArbRunner:
         self.state = ArbState.ARMED if self.runners else ArbState.IDLE
 
     def trigger(self) -> None:
-        """One ``*TRG`` for every armed channel, so they share a start instant."""
+        """Send the legacy ``*TRG`` and update software state.
+
+        ARB may already be running from INIT; this does not synchronise starts.
+        """
         if self.state is not ArbState.ARMED:
             self.arm()
         if not self.runners:
@@ -160,10 +162,10 @@ class MultiArbRunner:
         self.mark_triggered()
 
     def mark_triggered(self) -> None:
-        """Record that the trigger has happened, without sending one.
+        """Mark software state RUNNING without sending a trigger.
 
-        For the integrated test, where the same ``*TRG`` also releases the
-        recording and is therefore sent by whoever owns both.
+        A caller coordinating other BUS-triggered systems may send ``*TRG``
+        itself.  This state update does not verify the physical ARB start.
         """
         for runner in self.runners:
             runner.state = ArbState.RUNNING
@@ -211,17 +213,16 @@ def _channel_of(runner: Runner) -> int:
 
 @dataclass
 class GroupArbRunner:
-    """The same thing across several mainframes -- with one honest difference.
+    """Legacy multi-channel control across several mainframes.
 
-    Within a frame, one ``*TRG`` releases every armed channel at the same
-    instant.  Across frames there is no such command: each frame gets its own,
-    which is a separate LAN round trip, so the frames start up to
-    :data:`~..group.TRIGGER_SKEW_SECONDS` apart.
+    Channels are initiated sequentially within each frame, and frames are
+    armed in turn.  On the tested hardware ARB starts at INIT, so subsequent
+    per-frame ``*TRG`` commands cannot align those starts.
 
-    That gap is not hidden behind a tidy interface.  :attr:`skew_seconds` says
-    how far apart the frames can be, and it is non-zero exactly when more than
-    one frame is involved.  Closing it needs the digital ports wired together
-    (M11.3), not more software.
+    :attr:`skew_seconds` retains the nominal cross-frame LAN timing estimate
+    from :data:`~..group.TRIGGER_SKEW_SECONDS`; it is not a measured bound on
+    start differences through this sequential legacy path.  Hardware trigger
+    synchronisation still requires separate verification.
     """
 
     group: InstrumentGroup
@@ -266,7 +267,7 @@ class GroupArbRunner:
 
     @property
     def skew_seconds(self) -> float:
-        """How far apart the frames can start. Zero within a single frame."""
+        """Nominal cross-frame LAN estimate; zero for a single frame."""
         return 0.0 if self.frames <= 1 else TRIGGER_SKEW_SECONDS
 
     @property
@@ -301,7 +302,7 @@ class GroupArbRunner:
         self.state = ArbState.ARMED
 
     def trigger(self) -> None:
-        """One ``*TRG`` per frame -- which is where the skew comes from."""
+        """Send the legacy ``*TRG`` per frame and update software state."""
         if self.state is not ArbState.ARMED:
             self.arm()
         for runner in self.runners:

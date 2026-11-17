@@ -102,6 +102,12 @@ GUI 的第三分頁「分析」用來開啟 `.dlog` 檔（設計目標為千萬�
 - 架構與契約：`docs/analysis-contract.md`（數字與型別以 `contracts.py` 為準）。
 - Windows CI（pytest 與 `build-windows`）已通過；Windows 11 實機驗收尚未完成，見 `HANDOFF_WINDOWS.md` §6。
 
+## 即時紀錄（預設關閉）
+
+DLOG Viewer 分頁的「錄製」模式可獨立錄下儀器資料、顯示預覽並儲存 `.dlog`。
+功能旗標為 `src/n6705c_seq/record/contracts.py:12` 的 `RECORD_ENABLED = False`，需實機驗收後才由使用者決定打開。
+錄製與電源執行／分析檢視互斥；**錄製中不能關窗，必須先停止並等收尾完成**。Windows 錄製驗收清單見 `HANDOFF_WINDOWS.md` §8（未實機驗）。
+
 ## Windows 執行檔
 
 **使用者（不需要 Python）：** 從 GitHub Releases 下載 `N6705C-SEQ-<版本>-windows-x64.zip`，解壓縮後執行 `N6705C-SEQ.exe`（GUI）；命令列版是同資料夾的 `n6705c-seq-cli.exe`。

@@ -67,7 +67,7 @@ def test_outputs_are_forced_off_if_the_start_fails(monkeypatch):
     group = demo(2)
     import n6705c_seq.execute as ex
 
-    def boom(*_):
+    def boom(*_, **kwargs):
         raise RuntimeError("link dropped")
 
     monkeypatch.setattr(ex, "start_together", boom)
@@ -271,3 +271,257 @@ def test_run_plan_switches_off_even_if_cleanup_callback_fails(monkeypatch):
     with pytest.raises(RuntimeError, match="wait failed") as info:
         run_plan(group, [row(1)], on_cleanup=bad_callback)
     assert offs == [group] and "callback broke" in info.value.__notes__[0]
+
+
+def test_all_sources_are_checked_before_enabling_outputs(monkeypatch):
+    from n6705c_seq import execute
+
+    group = demo(2)
+    set_output = group.set_output
+    apply_levels = execute._apply_levels
+
+    def apply(*args):
+        for inst in group.instruments:
+            commands = sent(inst)
+            assert "TRIG:TRAN:SOUR IMM,(@1)" in commands
+            assert "TRIG:ARB:SOUR IMM,(@1)" in commands
+            assert not any(c.startswith(("VOLT ", "CURR ", "OUTP ON", "ARB:")) for c in commands)
+        apply_levels(*args)
+
+    def enable(channels, on):
+        if on:
+            for inst in group.instruments:
+                assert "TRIG:ARB:SOUR IMM,(@1)" in sent(inst)
+                assert not any(c.startswith("INIT:TRAN") for c in sent(inst))
+        set_output(channels, on)
+
+    monkeypatch.setattr(group, "set_output", enable)
+    monkeypatch.setattr(execute, "_apply_levels", apply)
+    run_plan(group, [row(1), row(5)])
+    for inst in group.instruments:
+        cmds = sent(inst)
+        assert cmds.index("TRIG:ARB:SOUR IMM,(@1)") < cmds.index("OUTP ON,(@1)")
+        assert cmds.index("OUTP ON,(@1)") < cmds.index("INIT:TRAN (@1)")
+
+
+@pytest.mark.parametrize("capture_enabled", [False, True])
+@pytest.mark.parametrize("entry", ["plan", "functions"])
+def test_trigger_sources_levels_output_load_and_init_keep_hardware_order(monkeypatch, entry, capture_enabled):
+    from n6705c.core.arb import GroupArbRunner
+    from n6705c_seq import execute
+    from n6705c_seq.plan import to_functions
+
+    group = demo(2)
+    load = GroupArbRunner.load
+    loaded = []
+
+    def load_after_output_on(runner):
+        for inst in group.instruments:
+            commands = sent(inst)
+            assert "OUTP ON,(@1)" in commands
+            assert not any(c.startswith(("ARB:", "INIT:")) for c in commands)
+        loaded.append(runner)
+        load(runner)
+
+    monkeypatch.setattr(GroupArbRunner, "load", load_after_output_on)
+    rows = [row(1, limit=0.5), row(5, limit=0.5)]
+    capture = {} if capture_enabled else None
+    if entry == "plan":
+        execute.run_plan(group, rows, capture=capture)
+    else:
+        execute.run_functions(group, to_functions(rows), capture=capture)
+    assert len(loaded) == 1
+    for inst in group.instruments:
+        commands = sent(inst)
+        tran = "TRIG:TRAN:SOUR IMM,(@1)"
+        arb = "TRIG:ARB:SOUR IMM,(@1)"
+        voltage, current = commands.index("VOLT 0,(@1)"), commands.index("CURR 0.5,(@1)")
+        output = commands.index("OUTP ON,(@1)")
+        arb_settings = [i for i, c in enumerate(commands) if c.startswith("ARB:")]
+        init = commands.index("INIT:TRAN (@1)")
+        assert commands.index(tran) < commands.index(arb) < voltage < current < output
+        assert output < min(arb_settings) <= max(arb_settings) < init
+        assert commands.count(tran) == commands.count(arb) == 2
+        assert max(arb_settings) < max(i for i, c in enumerate(commands) if c == tran)
+        assert max(i for i, c in enumerate(commands) if c == tran) < max(
+            i for i, c in enumerate(commands) if c == arb) < init
+        if capture_enabled:
+            assert max(arb_settings) < commands.index("INIT:IMM:ACQ (@1)") < init
+
+
+@pytest.mark.parametrize("rejected_frame", [0, 1])
+def test_rejected_arb_source_aborts_before_output_on_and_forces_all_off(monkeypatch, rejected_frame):
+    group = demo(2)
+    # Include a pre-existing output: the failure must still force it off.
+    group.instruments[0].set_output([2], True)
+    before = [len(sent(inst)) for inst in group.instruments]
+    fake = group.instruments[rejected_frame].session._transport
+    write = fake.write
+
+    def reject(command):
+        if command.startswith("TRIG:ARB:SOUR"):
+            fake.errors.append((-113, "Undefined header"))
+        else:
+            write(command)
+
+    monkeypatch.setattr(fake, "write", reject)
+    with pytest.raises(Exception, match="-113"):
+        run_plan(group, [row(1), row(5)])
+    for index, inst in enumerate(group.instruments):
+        commands = sent(inst)[before[index]:]
+        assert not any(c.startswith(("VOLT ", "CURR ", "OUTP ON", "ARB:", "INIT:")) for c in commands)
+        assert any(c.startswith("OUTP OFF") for c in commands)
+        assert not any(inst.output_state(inst.populated_channels).values())
+
+
+@pytest.mark.parametrize("override,rate,maximum,expected", [
+    (0, 2, 100, True), (1, 2, 100, False), (0, 100, 100, False),
+    (1, 100, 100, False),
+])
+def test_slew_warning_uses_override_and_numeric_rate_limit(override, rate, maximum, expected):
+    from n6705c_seq.execute import slew_warnings
+    from n6705c_seq.i18n import tr
+    from n6705c_seq.plan import to_functions
+
+    group = demo(2)
+    channel = group.instruments[1].session._transport.channels[2]
+    channel.voltage_slew_override = bool(override)
+    channel.voltage_slew_rate = rate
+    channel.voltage_slew_maximum = maximum
+    warnings = slew_warnings(group, to_functions([row(1), row(6)]))
+    assert warnings == ([tr("slew_warning", channel="F2:CH2", actual=float(rate),
+                            maximum=float(maximum))] if expected else [])
+
+
+def test_warning_callback_precedes_output_on_and_run_continues():
+    from n6705c_seq.execute import run_functions
+    from n6705c_seq.plan import to_functions
+
+    group = demo(1)
+    inst = group.instruments[0]
+    inst.session.write_checked("VOLT:SLEW 2,(@1)")
+    warnings = []
+
+    def warning(text):
+        assert not any(c.startswith("OUTP ON") for c in sent(inst))
+        warnings.append(text)
+
+    run_functions(group, to_functions([row(1)]), on_warning=warning)
+    assert len(warnings) == 1
+    assert any(c.startswith("INIT:TRAN") for c in sent(inst))
+    assert not any(inst.output_state(inst.populated_channels).values())
+
+
+def test_missing_warning_callback_logs_warning(caplog):
+    group = demo(1)
+    group.instruments[0].session.write_checked("VOLT:SLEW 2,(@1)")
+    run_plan(group, [row(1)])
+    assert "F1:CH1" in caplog.text
+    record = next(record for record in caplog.records if "F1:CH1" in record.getMessage())
+    assert record.msg == "%s" and len(record.args) == 1
+
+
+@pytest.mark.parametrize("query", ["VOLT:SLEW:MAX? (@1)", "VOLT:SLEW? (@1)",
+                                    "VOLT:SLEW? MAX,(@1)"])
+@pytest.mark.parametrize("code", [-113, 323])
+def test_rejected_slew_probe_logs_raw_reply_and_error_but_run_continues(monkeypatch, caplog, query, code):
+    group = demo(1)
+    inst = group.instruments[0]
+    inst.session.write_checked("VOLT:SLEW 2,(@1)")
+    fake = inst.session._transport
+    original = fake.query
+
+    def reject(command):
+        if command == query:
+            fake.errors.append((code, "Probe rejected"))
+            return "2"  # Even a numeric response must not hide the SCPI error.
+        return original(command)
+
+    monkeypatch.setattr(fake, "query", reject)
+    warnings = []
+    run_plan(group, [row(1)], on_warning=warnings.append)
+    assert warnings == []
+    assert query in caplog.text and "'2'" in caplog.text and str(code) in caplog.text
+    assert "Probe rejected" in caplog.text
+    assert not fake.errors
+    assert "INIT:TRAN (@1)" in sent(inst)
+
+
+@pytest.mark.parametrize("check_fails", [False, True])
+def test_slew_timeout_logs_query_and_error_check_failures_but_run_continues(monkeypatch, caplog, check_fails):
+    group = demo(1)
+    inst = group.instruments[0]
+    fake = inst.session._transport
+    query = fake.query
+    command = "VOLT:SLEW? (@1)"
+
+    def timeout(probe):
+        if probe == command:
+            if check_fails:
+                fake.errors.append((-113, "Slew error check rejected"))
+            raise TimeoutError("Slew query timed out")
+        return query(probe)
+
+    monkeypatch.setattr(fake, "query", timeout)
+    warnings = []
+    run_plan(group, [row(1)], on_warning=warnings.append)
+    assert warnings == []
+    records = [r for r in caplog.records if command in r.getMessage()]
+    assert len(records) == (2 if check_fails else 1)
+    assert any("Slew query timed out" in r.getMessage() for r in records)
+    if check_fails:
+        assert any("-113" in r.getMessage() and "Slew error check rejected" in r.getMessage()
+                   for r in records)
+    assert not fake.errors
+    assert "INIT:TRAN (@1)" in sent(inst)
+    assert not any(inst.output_state(inst.populated_channels).values())
+
+
+@pytest.mark.parametrize("reply", ["", "nan", "1,2"])
+def test_malformed_slew_reply_is_nonfatal(monkeypatch, caplog, reply):
+    group = demo(1)
+    session = group.instruments[0].session
+    original = session.query
+    monkeypatch.setattr(session, "query", lambda command: reply if command == "VOLT:SLEW? (@1)"
+                        else original(command))
+    warnings = []
+    run_plan(group, [row(1)], on_warning=warnings.append)
+    assert warnings == [] and "slew query VOLT:SLEW? (@1)" in caplog.text
+    assert repr(reply) in caplog.text
+
+
+def test_fake_slew_defaults_coupling_prefixes_and_channel_order():
+    from n6705c.core.fake import FakeN6705C
+
+    fake = FakeN6705C()
+    assert fake.query("VOLT:SLEW? (@2,1)") == fake.query("VOLT:SLEW? MAX,(@2,1)")
+    assert fake.query("SOUR:VOLT:SLEW:MAX? (@2,1)") == "0,0"
+    fake.write("SOURCE:VOLTAGE:SLEW 2,(@1)")
+    fake.write("VOLT:SLEW 3,(@2)")
+    assert fake.query("SOURCE:VOLTAGE:SLEW? (@2,1)") == "3.0,2.0"
+    assert fake.query("VOLT:SLEW:MAX? (@2,1)") == "0,0"
+    for value in ("MAX", "INF"):
+        fake.write(f"VOLT:SLEW {value},(@1)")
+        assert fake.query("VOLT:SLEW? (@1)") == fake.query("SOUR:VOLT:SLEW? MAX,(@1)")
+        assert fake.query("VOLT:SLEW:MAX? (@2,1)") == "0,1"
+    fake.write("VOLT:SLEW 4,(@1)")
+    assert fake.query("VOLT:SLEW:MAX? (@1)") == "0"
+    assert fake.query("SYST:ERR?").startswith("+0,")
+    fake.write("UNKNOWN:HEADER")
+    assert fake.query("SYST:ERR?").startswith("-113,")
+
+
+def test_fake_arb_source_storage_does_not_change_init_behavior():
+    from n6705c.core.fake import FakeN6705C
+
+    fake = FakeN6705C()
+    assert fake.query("TRIG:ARB:SOUR? (@2,1)") == "IMM,IMM"
+    fake.write("TRIG:ARB:SOUR BUS,(@1)")
+    assert fake.query("TRIGGER:ARB:SOURCE? (@2,1)") == "IMM,BUS"
+    fake.write("ARB:FUNC:SHAP RAMP,(@1,2)")
+    fake.write("TRIG:TRAN:SOUR IMM,(@1)")
+    fake.write("TRIG:TRAN:SOUR BUS,(@2)")
+    fake.write("INIT:TRAN (@1,2)")
+    assert fake.channels[1].tran_running
+    assert not fake.channels[2].tran_running
+    assert fake.query("SYST:ERR?").startswith("+0,")

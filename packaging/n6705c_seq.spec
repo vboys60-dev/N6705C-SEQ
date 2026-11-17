@@ -24,6 +24,7 @@ hidden.append("pyvisa.resources")
 hidden += collect_submodules("usb") + ["libusb_package"]
 # analysis.server is imported lazily (webgui._ensure_analysis_server); collect it explicitly.
 hidden += collect_submodules("n6705c_seq.analysis")
+hidden += collect_submodules("n6705c_seq.record")
 usb_binaries = collect_dynamic_libs("libusb_package")
 # datas does not recurse; list files explicitly.  shell_stub.html is dev-only (not shipped).
 datas = [(str(ROOT / "src" / "n6705c_seq" / "web" / "*"), "n6705c_seq/web"),

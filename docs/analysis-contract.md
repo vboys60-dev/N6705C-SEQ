@@ -128,6 +128,7 @@ v1 電源工作沒有外部停止訊號。計時範圍以 §1.4 呼叫點表為�
 | `_list_work`（`web_list.py:139`） | 外層 `try:`（`:141`）內第一行 `_finishing` | 偵測 `e36441a.detect_model`（`:143`）、`execute.connect_group`（`:149`）、`synth.to_functions`（`:154`） | ⚠ |
 | `_list_work` | `execute.run_functions`（`:158`）前 `if not self._untimed(token): return`（經 `:171` 的 `finally` 關儀器）；`run_functions` 包 `try/finally`，`finally` 呼叫 `_finishing` | 主工作不計時；返回後計時涵蓋結果處理 `:159–165`、`except` 分支 `:166–170` | ⚠ |
 | `_list_work` | `finally` 內關儀器迴圈前 `_finishing`（`:173`） | `inst.close()` 迴圈 | ✔ |
+| 錄製 worker（`web_record.py`，G 待實作） | 進入即 `_finishing`；錄製主迴圈與 DLOG 下載各自 `_untimed` → `try/finally: _finishing`；backend 在停止後、ABOR／尾段前先呼叫 `finishing()` | 延伸 §1.3／1.4「只有三個主工作」的舊限制：錄製迴圈、DLOG 下載也不計時；設定／連線、ABOR、尾段、finalize、關連線都計時 60 s，停止入口只設 Event。完整規格以 `live-logging-contract.md` C4 為準 | Wave 0 契約 |
 
 demo 模式走同一組呼叫（`InstrumentGroup.demo` 視同連線）。單段卡住超過 60 s → `fault`；依據：實碼 I/O 逾時 10 s（`e36441a.py:150` `timeout_ms=10_000`），正常單段遠低於 60 s。
 
@@ -323,8 +324,9 @@ Viewer：讀 fragment 的 `t`、`gen`、`lang`、`parent`，讀完 `history.repl
 | `save_request` | 外殼 | `id` 同上；`purpose ∈ SavePurpose`；`suggested` 為字串（長度與字元由 `analysis_save_path` 再驗） |
 | `open_result`／`save_result` | iframe | `id` 在自己待回覆清單中，**且**該 id 當初送出的是對應的 `open_request`／`save_request`；`ok` 為布林；處理後自清單移除（同 id 第二次回覆丟棄） |
 | `lang` | iframe | `lang ∈ LANGS`（`"zh"`、`"en"`）；**不驗 `id`** |
+| `open_push` | iframe | `grant` 非空字串；`name` 為非空 basename 字串（不得含 `/`、`\\`）；通過 source/origin/v/gen 檢查，不驗 `id`、不依賴 pending request。長工作中忽略並顯示 Viewer toast |
 
-只有 `*_result` 以 `id` 配對；`ready`、`lang` 沒有 `id`。
+只有 `*_result` 以 `id` 配對；`ready`、`lang`、`open_push` 沒有 `id`。
 
 | type | 方向 | 欄位 | 處理 |
 |---|---|---|---|
@@ -333,6 +335,7 @@ Viewer：讀 fragment 的 `t`、`gen`、`lang`、`parent`，讀完 `history.repl
 | `save_request` | iframe→外殼 | `id, purpose`(SavePurpose), `suggested` | 外殼呼叫 `analysis_save_path(gen, purpose, suggested)`，以 `save_result` 回覆 |
 | `open_result` / `save_result` | 外殼→iframe | `id, ok, error?, code?, cancelled?, grant?, name?` | 欄位即 `PathResult`；iframe 依 `id` 對回 Promise |
 | `lang` | 外殼→iframe | `lang`("zh"/"en") | Viewer 即時切語言；Viewer 自己的語言切換 UI 隱藏 |
+| `open_push` | 外殼→iframe | `grant, name` | K 的 `App.openRecorded()`：等停止完成且 idle → `analysis_enter` → 等同世代 Viewer `ready` → `record_load(gen)` 取最後完成檔授權 → 送推送。V 共用主檔載入流程，以 grant 呼叫 `/open`，沒有原生對話框；JS 不傳檔案路徑，server 不改 |
 
 - `id`：iframe 每次載入內唯一（例 `"r"+遞增數`），≤64 字元。不設逾時（對話框可能開很久）；iframe 重載即全部作廢。
 - 拿到 `grant` 後，iframe 再呼叫對應 HTTP 路由（§3.3）。

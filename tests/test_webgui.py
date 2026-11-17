@@ -124,6 +124,7 @@ def test_strings_and_public_surface(core):
         "analysis_enter", "analysis_leave", "analysis_open_path", "analysis_save_path",
         "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "test_connection", "all_off", "scan_instruments",
         "list_meta", "list_draft", "list_compile", "list_open_json", "list_save_json", "list_run",
+        "record_meta", "record_start", "record_stop", "record_status", "record_snapshot", "record_load",
     }
     translated["strings"]["title"][0] = "changed"
     assert core.strings()["strings"]["title"][0] == i18n.STRINGS["title"][0]

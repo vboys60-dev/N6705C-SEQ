@@ -189,8 +189,8 @@ def test_align_failure_restores_arm_and_turns_outputs_off(tmp_path, monkeypatch)
         nonlocal calls
         calls += 1
         assert hw.execute._arm_capture is not original_arm
+        assert all(group.output_state([1, 2, 3, 4]).values())
         if calls == 2:
-            assert all(group.output_state([1, 2, 3, 4]).values())
             raise RuntimeError("injected align failure")
         return original_start(*args, **kwargs)
 
@@ -200,6 +200,23 @@ def test_align_failure_restores_arm_and_turns_outputs_off(tmp_path, monkeypatch)
             hw.align(group, tmp_path)
         assert calls == 2
         assert hw.execute._arm_capture is original_arm
+        assert not any(group.output_state([1, 2, 3, 4]).values())
+    finally:
+        group.close()
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("injected capture failure"), KeyboardInterrupt()])
+def test_capture_run_finally_disables_outputs_without_runner_cleanup(failure, monkeypatch):
+    group = hw.InstrumentGroup.demo(frames=1, slots=hw.execute.DEMO_SLOTS)
+
+    def fail(group, functions, **kwargs):
+        group.set_output([fn.channel for fn in functions], True)
+        raise failure
+
+    monkeypatch.setattr(hw.execute, "run_functions", fail)
+    try:
+        with pytest.raises(type(failure)):
+            hw.capture_run(group, [hw.function(1, [0, 1, 0])])
         assert not any(group.output_state([1, 2, 3, 4]).values())
     finally:
         group.close()
