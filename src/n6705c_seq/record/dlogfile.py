@@ -215,9 +215,18 @@ def _fsync_directory(path):
 
 def _publish(paths, meta):
     final, part, side, side_part = paths
-    _write_sidecar(side_part, meta)
+    incomplete = dict(meta, complete=False, ended_utc=None)
+    _write_sidecar(side_part, incomplete)
     os.replace(side_part, side)
     os.replace(part, final)
+    try:
+        _write_sidecar(side, meta)
+    except Exception as exc:
+        exc.add_note(
+            f"DLOG data is already in place at {final}, but the completion marker "
+            "was not written; the sidecar remains complete=False and no .part remains."
+        )
+        raise
     _fsync_directory(final.parent)
     return final
 
@@ -416,8 +425,9 @@ def _recovery_layout(meta, final):
 def recover_part(part: Path) -> Path | None:
     """Recover a closed, matching recording part; reject foreign files unchanged.
 
-    Invalid/unsafe inputs return None. Real I/O failures propagate and leave the
-    data part available, including when sidecar publication already succeeded.
+    Invalid/unsafe inputs return None. Real I/O failures propagate. The data part
+    remains available until replaced into final; a later completion-marker
+    failure leaves the data in final with an incomplete sidecar and no part.
     No pathname from the JSON is ever used to select an input or output file.
     """
     part = Path(part)

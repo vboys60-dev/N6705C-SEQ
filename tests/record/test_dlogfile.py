@@ -391,12 +391,132 @@ def test_finalize_closes_handle_fsyncs_and_publishes_sidecar_first(tmp_path, mon
     monkeypatch.setattr(dlogfile.os, "replace", replace)
     monkeypatch.setattr(dlogfile.os, "fsync", fsync)
     writer.finalize()
-    expected = ["fsync", "fsync", "record.dlog.json", "record.dlog"]
+    expected = ["fsync", "fsync", "record.dlog.json", "record.dlog",
+                "fsync", "record.dlog.json"]
     if dlogfile.os.name != "nt":
         expected.append("directory_fsync")
     assert events == expected
     with pytest.raises(RuntimeError):
         writer.append(np.ones((1, 4), dtype=np.float32))
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("recover", [False, True])
+def test_publication_marks_complete_only_after_matching_data(tmp_path, monkeypatch, overwrite, recover):
+    final = tmp_path / "record.dlog"
+    part, side, side_part = _paths(final)
+    if overwrite:
+        previous = _writer(tmp_path, sidecar={"run_id": "previous-run"})
+        previous.append(np.zeros((1, 4), dtype=np.float32))
+        previous.finalize()
+    writer = _writer(tmp_path, sidecar={"run_id": "new-run"})
+    rows = np.arange(12, dtype=np.float32).reshape(3, 4)
+    writer.append(rows)
+    if recover:
+        writer.abort()
+    real_replace = dlogfile.os.replace
+    events = []
+
+    def replace(source, dest):
+        if Path(dest) == side:
+            meta = _metadata(Path(source))
+            events.append(meta["complete"])
+            assert meta["run_id"] == "new-run"
+            if meta["complete"]:
+                assert b"record_run_id=new-run" in final.read_bytes()
+                assert meta["ended_utc"] is not None
+            else:
+                assert meta["ended_utc"] is None
+        elif Path(dest) == final:
+            assert _metadata(side)["complete"] is False
+            events.append("data")
+        return real_replace(source, dest)
+
+    monkeypatch.setattr(dlogfile.os, "replace", replace)
+    assert (recover_part(part) if recover else writer.finalize()) == final
+    assert events == [False, "data", True]
+    np.testing.assert_array_equal(parse_dlog(final.read_bytes())["V"][1], rows[:, 0])
+    assert not part.exists() and not side_part.exists()
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("recover", [False, True])
+@pytest.mark.parametrize("failure", ["data", "complete_sidecar"])
+def test_sharing_violation_keeps_incomplete_sidecar_and_correct_data_location(
+        tmp_path, monkeypatch, overwrite, recover, failure):
+    final = tmp_path / "record.dlog"
+    part, side, side_part = _paths(final)
+    if overwrite:
+        previous = _writer(tmp_path, sidecar={"run_id": "previous-run"})
+        previous.append(np.zeros((1, 4), dtype=np.float32))
+        previous.finalize()
+    old_data = final.read_bytes() if overwrite else None
+    writer = _writer(tmp_path, sidecar={"run_id": "new-run"})
+    rows = np.arange(12, dtype=np.float32).reshape(3, 4)
+    writer.append(rows)
+    if recover:
+        writer.abort()
+    real_replace = dlogfile.os.replace
+
+    def replace(source, dest):
+        if ((failure == "data" and Path(dest) == final)
+                or (failure == "complete_sidecar" and Path(dest) == side
+                    and _metadata(Path(source))["complete"])):
+            raise PermissionError("Windows sharing violation")
+        return real_replace(source, dest)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dlogfile.os, "replace", replace)
+        with pytest.raises(PermissionError, match="sharing violation") as error:
+            recover_part(part) if recover else writer.finalize()
+    assert not side_part.exists()
+    meta = _metadata(side)
+    assert meta["complete"] is False and meta["ended_utc"] is None
+    assert meta["run_id"] == "new-run"
+    if failure == "data":
+        assert part.exists()
+        assert (final.read_bytes() if final.exists() else None) == old_data
+    else:
+        assert not part.exists()
+        assert b"record_run_id=new-run" in final.read_bytes()
+        np.testing.assert_array_equal(parse_dlog(final.read_bytes())["V"][1], rows[:, 0])
+        assert any("data is already in place" in note and "completion marker" in note
+                   for note in error.value.__notes__)
+    if not recover:
+        assert writer._closed and writer._stream.closed
+        with pytest.raises(RuntimeError, match="closed"):
+            writer.finalize()
+    if failure == "data":
+        # The claim is released, and the retained source is still safe to recover.
+        assert recover_part(part) == final
+        assert _metadata(side)["complete"] is True
+    else:
+        before = _snapshot(tmp_path)
+        assert recover_part(part) is None
+        assert _snapshot(tmp_path) == before
+    assert not part.exists() and not side_part.exists()
+
+
+@pytest.mark.parametrize("matching_run", [False, True])
+def test_recovery_from_incomplete_formal_sidecar_still_checks_run_id(tmp_path, matching_run):
+    writer = _writer(tmp_path, sidecar={"run_id": "new-run"})
+    writer.append(np.ones((2, 4), dtype=np.float32))
+    writer.abort()
+    final = tmp_path / "record.dlog"
+    part, side, side_part = _paths(final)
+    side_part.rename(side)  # Crash after publishing the incomplete sidecar.
+    assert _metadata(side)["complete"] is False
+    assert _metadata(side)["ended_utc"] is None
+    if not matching_run:
+        _change_metadata(side, lambda meta: meta.update(run_id="bad-run"))
+    before = _snapshot(tmp_path)
+    if matching_run:
+        assert recover_part(part) == final
+        assert _metadata(side)["complete"] is True
+        assert _metadata(side)["recovered"] is True
+    else:
+        assert recover_part(part) is None
+        assert _snapshot(tmp_path) == before
 
 
 @pytest.mark.skipif(dlogfile.os.name == "nt", reason="Windows skips directory fsync")
