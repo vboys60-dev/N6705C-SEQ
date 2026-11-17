@@ -168,7 +168,10 @@ class Gate:
 
     def on_closing(self):
         with self._lock:
-            if self._state == c.State.POWER:
+            # A power fault (finishing timeout) leaves the owner set: its worker may still
+            # be mid-ABOR/download, and os._exit would strand the instrument and files.
+            if self._state == c.State.POWER or (
+                    self._state == c.State.FAULT and self._owner is not None and not self.worker_done):
                 return "power"
             if self._state == c.State.CLOSING:
                 return "closing"

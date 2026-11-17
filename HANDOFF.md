@@ -324,7 +324,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
    - **登記待辦（使用者決定先不修）**：
      - ~~**B（擋接上 B-ELOG）**~~ **已修（2026-11-18，分支 fix/dlogwriter-publish-order）**：`record/dlogfile.py` 的 `_publish()` 改為先 `complete=False` 旁檔 → `os.replace(part, final)` → `complete=True` 旁檔，writer 與 `recover_part()` 共用；契約 C6 已改。資料換好後最後一步旁檔失敗時，資料在 final、旁檔停在 `complete=False`、無 `.part`，會拋錯並附 note（保守，不複製大檔）。測試補新檔、覆寫、第二步與第三步 sharing violation、半發布恢復。全套 1480 passed／7 skipped。
      - **D（擋打開旗標，需 Windows 實測）** `backend.py:394-395`、`dlogfile.py:185、219-220`：Windows 上 `os.replace` 遇 Defender 等暫時鎖檔（WinError 5／32）沒有重試，run 失敗、檔停在 `.part`；建議有限次退避重試，並在 `HANDOFF_WINDOWS.md` §8 加實測項。
-     - **F（擋打開旗標，要動凍結的 gate／關窗界面，需回 T0）** `web_record.py:154、305`、`analysis/gate.py:169`、`webgui.py:165、219`：收尾逾 60 s 進 fault 後 worker 仍活著，但 fault→closing 讓關窗放行，daemon worker 被 `os._exit` 終止，ABOR、關檔、釋放 token 都不保證；fault 不應等於 worker 已停；需新增整合測試「fault＋worker 仍活＋關窗」。
+     - ~~**F（擋打開旗標）**~~ **已修（2026-11-18，分支 fix/record-fault-close）**：`Gate.on_closing()` 在 fault 且 owner 仍在、`worker_done` 為 False 時回 `"power"`（沿用既有「忙碌」提示並擋關窗）；worker 遲到返回後 `worker_done=True` 才放行（仍不解鎖故障）。純分析逾時 fault（owner 為空）行為不變。測試：`test_activity_gate.py`、`test_webgui.py` 各補一個。限制：worker 若永遠卡死，視窗關不掉，只能強殺行程（刻意取捨，優先保護儀器與檔案）。
      - Minor：`analysis.js:147` 從檢視切到錄製只等 idle 10 s，比 draining 逾時 30 s 短，可能停在空白 Viewer；旗標關閉時 analysis 初始化仍 await `record_meta`（唯讀、無 I/O，風險低）。
    - 兩份審查一致確認沒問題：互斥無繞過路徑（異常路徑、對話框取消、關窗皆釋放 token，F 例外）、儀器 I/O 全在單一 worker 且 `record_stop` 只設 Event、import 邊界符合契約、i18n 齊全、旗標關閉時面板隱藏、`open_push` 驗證完整。`core/elog.py` 因 B-ELOG 未接線只審了 import 邊界。
 7. 之後才討論 push／PR 與打開 `RECORD_ENABLED`（需實機驗收；使用者決定）。
