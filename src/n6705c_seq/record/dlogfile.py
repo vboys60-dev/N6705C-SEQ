@@ -143,7 +143,7 @@ def _header(name, run_id, channels, sense_volt, sense_curr, tint, models, starte
 
 def _paths(final):
     final = Path(final)
-    if not final.name.endswith(".dlog") or final.name == ".dlog" or "\\" in final.name:
+    if not final.name.lower().endswith(".dlog") or final.name.lower() == ".dlog" or "\\" in final.name:
         raise ValueError("Expected a .dlog basename")
     if ".." in final.parts:
         raise ValueError("Parent traversal is not allowed")

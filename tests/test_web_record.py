@@ -66,9 +66,10 @@ def rig(tmp_path, monkeypatch):
     class Backend:
         preview = False
 
-        def __init__(self, inst, cfg, path, *, untimed, finishing):
+        def __init__(self, inst, cfg, path, *, untimed, finishing, target_state=None):
             r.calls.append(("factory", threading.get_ident()))
             self.cfg, self.path = cfg, path
+            self.target_state = target_state
             self.untimed, self.finishing = untimed, finishing
             if r.factory_error:
                 raise r.factory_error
@@ -232,7 +233,7 @@ def test_dialog_lock_busy_and_exception_release(rig):
 def test_suffix_and_confirmation_of_data_and_sidecar(rig, suffix):
     selected = rig.path.with_suffix(suffix)
     rig.dialog = lambda: str(selected)
-    expected = selected if suffix.lower() == ".dlog" else Path(str(selected) + ".dlog")
+    expected = selected.with_suffix(".dlog") if suffix.lower() == ".dlog" else Path(str(selected) + ".dlog")
     expected.write_bytes(b"old")
     Path(str(expected) + ".json").write_text("old sidecar")
     assert rig.start() == {}
@@ -560,3 +561,33 @@ def test_missing_result_field_cannot_leave_state_stopping(rig, monkeypatch, miss
     assert rig.api._record_last_path is None
     assert rig.api._record_exception is not None
     assert rig.api._gate.state()[0] == 'idle'
+
+
+@pytest.mark.parametrize('suffix', ['.DLOG', '.DlOg'])
+def test_dialog_extension_is_normalized_before_worker(rig, suffix):
+    rig.dialog = lambda: [str(rig.path.with_suffix(suffix))]
+    def confirm(title, text):
+        assert not any(call[0] == 'connect' for call in rig.calls)
+        return True
+    rig.path.write_bytes(b'old')
+    rig.api._window.create_confirmation_dialog = confirm
+    assert rig.start() == {}
+    assert rig.entered.wait(1)
+    assert rig.backends[0].path == rig.path
+    assert rig.backends[0].target_state[rig.path].st_size == 3
+    assert rig.finish()['state'] == 'done'
+
+
+def test_target_snapshot_is_taken_after_confirmation_before_connect(rig):
+    rig.path.write_bytes(b'old')
+    def confirm(title, text):
+        assert not any(call[0] == 'connect' for call in rig.calls)
+        rig.path.write_bytes(b'confirmed version')
+        return True
+    rig.api._window.create_confirmation_dialog = confirm
+    assert rig.start() == {}
+    assert rig.entered.wait(1)
+    targets = rig.backends[0].target_state
+    assert targets[rig.path].st_size == len(b'confirmed version')
+    assert targets[Path(str(rig.path) + '.json')] is None
+    assert rig.finish()['state'] == 'done'

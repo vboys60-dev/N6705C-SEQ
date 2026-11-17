@@ -215,9 +215,9 @@ def test_download_failure_keeps_remote_and_part_and_original_cause(rig, clock):
     assert caught.value is original
     assert str(caught.value.__cause__) == "transport cause"
     assert rig.transport.fake.dlog_file in rig.transport.fake.files
-    assert Path(str(rig.final) + ".part").exists()
+    assert not Path(str(rig.final) + ".part").exists()
     assert not rig.final.exists()
-    assert read_meta(rig, True)["complete"] is False
+    assert not Path(str(rig.final) + ".json.part").exists()
     assert not any(cmd.startswith("MMEM:DEL") for cmd, _ in rig.transport.calls)
     from n6705c_seq.web_record import _failure_code
     assert original.filename is None
@@ -256,38 +256,33 @@ def test_actual_size_estimate_is_checked_again_before_init(rig, monkeypatch):
     assert not any(cmd.startswith("INIT:DLOG") for cmd, _ in rig.transport.calls)
 
 
-def test_meas_failure_is_a_preview_gap_and_capture_recovers(rig, clock):
+def test_meas_failure_is_only_a_note_and_capture_recovers(rig, clock):
     rig.cfg["duration_s"] = 1
     rig.transport.meas_errors = {3, 10}
     backend = rig.build()
     result = backend.run(clock, lambda status: None)
-    assert result["gaps"] == 2
+    assert result["gaps"] == 0
     assert result["records"] == parse_dlog(rig.final.read_bytes())["nRecords"]
     assert result["records"] > len(backend.snapshot(-1)["keys"]["V1"]["min"])
     meta = read_meta(rig)
-    assert all(gap["kind"] == "preview_meas_error" and gap["count"] is None for gap in meta["gaps"])
+    assert meta["gaps"] == []
     assert sum("MEAS preview failed" in note for note in meta["notes"]) == 2
 
 
-def test_repeated_meas_error_saves_part_and_raises_original(rig, clock, monkeypatch):
-    error = RuntimeError("persistent MEAS failure")
-    query = rig.transport.query
-    def failure(command):
-        if command.startswith("MEAS:") and clock.now >= 100.1:
-            raise error
-        return query(command)
-    monkeypatch.setattr(rig.transport, "query", failure)
-    with pytest.raises(RuntimeError) as caught:
-        rig.build().run(clock, lambda status: None)
-    assert caught.value is error
-    assert not rig.final.exists()
-    part = Path(str(rig.final) + ".part")
-    assert parse_dlog(part.read_bytes())["nRecords"] > 0
-    assert read_meta(rig, True)["complete"] is False
-    assert len(read_meta(rig, True)["gaps"]) == c.MAX_FETCH_FAILURES
-    assert rig.transport.fake.dlog_file in rig.transport.fake.files
-    calls = [cmd for cmd, _ in rig.transport.calls]
-    assert calls[calls.index("ABOR:DLOG") - 1] == "finishing"
+def test_repeated_meas_error_stops_preview_and_publishes(rig, clock, monkeypatch):
+    rig.cfg["duration_s"] = 1
+    rig.transport.meas_errors = {1, 2, 3, 4}
+    statuses = []
+    result = rig.build().run(clock, statuses.append)
+    assert rig.transport.meas_count == c.MAX_FETCH_FAILURES
+    assert result["records"] == 1000
+    assert result["gaps"] == 0
+    assert all(status["gaps"] == 0 for status in statuses)
+    meta = read_meta(rig)
+    assert meta["complete"] is True and meta["gaps"] == []
+    assert sum("MEAS preview failed" in note for note in meta["notes"]) == 3
+    assert any("preview stopped" in note for note in result["notes"])
+    assert not rig.transport.fake.files
 
 
 def test_emit_exception_still_aborts_and_saves_without_publication(rig, clock):
@@ -462,8 +457,12 @@ def test_download_sink_error_preserves_original_and_is_mapped(rig, clock, monkey
     from n6705c_seq.web_record import _failure_code
     assert _failure_code(failure, "fetch") is c.RecordCode.SINK
     assert not rig.final.exists()
-    assert part.exists()
-    assert read_meta(rig, True)["complete"] is False
+    if operation == "write":
+        assert not part.exists()
+        assert not Path(str(rig.final) + ".json.part").exists()
+    else:
+        assert part.exists()
+        assert read_meta(rig, True)["complete"] is False
     assert rig.transport.fake.dlog_file in rig.transport.fake.files
     assert not any(cmd.startswith("MMEM:DEL") for cmd, _ in rig.transport.calls)
 
@@ -567,8 +566,8 @@ def test_zero_complete_records_are_not_published_and_bridge_maps_no_recording(ri
     from n6705c_seq.web_record import _failure_code
     assert _failure_code(caught.value, phase) is c.RecordCode.NO_RECORDING
     assert not rig.final.exists()
-    assert Path(str(rig.final) + ".part").exists()
-    assert read_meta(rig, True)["complete"] is False
+    assert not Path(str(rig.final) + ".part").exists()
+    assert not Path(str(rig.final) + ".json.part").exists()
     assert rig.transport.fake.dlog_file in rig.transport.fake.files
 
 
@@ -591,4 +590,165 @@ def test_bridge_worker_reports_no_recording_from_real_backend(rig, clock, monkey
     assert status["code"] == c.RecordCode.NO_RECORDING.value
     assert api._record_last_path is None
     assert not rig.final.exists()
-    assert read_meta(rig, True)["complete"] is False
+    assert not Path(str(rig.final) + ".part").exists()
+    assert not Path(str(rig.final) + ".json.part").exists()
+
+
+@pytest.mark.parametrize('suffix', ['.DLOG', '.DlOg'])
+def test_uppercase_extension_is_accepted_before_instrument_config(rig, clock, suffix):
+    rig.final = rig.final.with_suffix(suffix)
+    rig.cfg['duration_s'] = 1
+    assert not rig.transport.calls
+    backend = make_backend(rig.inst, rig.cfg, rig.final,
+                           untimed=lambda: True, finishing=lambda: None)
+    assert not rig.transport.calls
+    assert backend.run(clock, lambda status: None)['records'] == 1000
+    assert rig.final.is_file()
+
+
+@pytest.mark.parametrize('name', ['bad.txt', '.dlog', 'bad\\name.dlog'])
+def test_invalid_path_rejected_before_instrument_config(rig, name):
+    backend = make_backend(rig.inst, rig.cfg, rig.final.with_name(name),
+                           untimed=lambda: True, finishing=lambda: None)
+    with pytest.raises(OSError):
+        backend.run(Event(), lambda status: None)
+    assert rig.transport.calls == []
+
+
+def test_abort_error_queue_is_only_a_note(rig, clock, monkeypatch):
+    rig.cfg['duration_s'] = 1
+    write = rig.transport.write
+    def abort_error(command):
+        write(command)
+        if command == 'ABOR:DLOG':
+            rig.transport.fake.errors.append((-221, 'Not logging'))
+    monkeypatch.setattr(rig.transport, 'write', abort_error)
+    result = rig.build().run(clock, lambda status: None)
+    assert result['records'] == 1000 and result['gaps'] == 0
+    meta = read_meta(rig)
+    assert meta['complete'] is True and meta['gaps'] == []
+    assert any('-221' in note and 'ABOR:DLOG' in note for note in meta['notes'])
+
+
+@pytest.mark.parametrize('suffix', ['', '.json'])
+@pytest.mark.parametrize('initial', [False, True])
+def test_target_created_or_replaced_during_capture_is_preserved(rig, clock, suffix, initial):
+    rig.cfg['duration_s'] = 1
+    target = Path(str(rig.final) + suffix)
+    if initial:
+        target.write_bytes(b'confirmed original')
+    foreign = b'created by someone else'
+    changed = False
+    def emit(status):
+        nonlocal changed
+        if status['state'] == 'running' and not changed:
+            replacement = target.with_name('replacement')
+            replacement.write_bytes(foreign)
+            replacement.replace(target)
+            changed = True
+    with pytest.raises(FileExistsError, match='created or changed') as caught:
+        rig.build().run(clock, emit)
+    assert target.read_bytes() == foreign
+    part = Path(str(rig.final) + '.part')
+    assert parse_dlog(part.read_bytes())['nRecords'] == 1000
+    assert read_meta(rig, True)['complete'] is False
+    assert target.name in str(caught.value) and str(part) in str(caught.value)
+    assert not any(cmd.startswith('MMEM:DEL') for cmd, _ in rig.transport.calls)
+    assert rig.transport.fake.dlog_file in rig.transport.fake.files
+
+
+def test_unchanged_confirmed_targets_are_overwritten(rig, clock):
+    rig.cfg['duration_s'] = 1
+    rig.final.write_bytes(b'confirmed original')
+    Path(str(rig.final) + '.json').write_bytes(b'confirmed sidecar')
+    assert rig.build().run(clock, lambda status: None)['records'] == 1000
+    assert parse_dlog(rig.final.read_bytes())['nRecords'] == 1000
+    assert read_meta(rig)['complete'] is True
+
+
+def test_starting_stop_cancels_before_init_and_allows_retry(rig, clock):
+    rig.cfg['duration_s'] = 1
+    def emit(status):
+        if status['state'] == 'starting':
+            clock.set()
+    with pytest.raises(c.NoRecordsError, match='before INIT'):
+        rig.build().run(clock, emit)
+    assert not any(cmd.startswith(('INIT:DLOG', 'ABOR:DLOG')) for cmd, _ in rig.transport.calls)
+    assert not Path(str(rig.final) + '.part').exists()
+    assert not Path(str(rig.final) + '.json.part').exists()
+    clock.clear()
+    assert rig.build().run(clock, lambda status: None)['records'] == 1000
+
+
+def test_init_failure_without_downloaded_data_cleans_parts(rig, clock, monkeypatch):
+    write = rig.transport.write
+    def fail(command):
+        if command.startswith('INIT:DLOG'):
+            raise RuntimeError('INIT failed')
+        write(command)
+    monkeypatch.setattr(rig.transport, 'write', fail)
+    with pytest.raises(RuntimeError, match='INIT failed'):
+        rig.build().run(clock, lambda status: None)
+    assert not Path(str(rig.final) + '.part').exists()
+    assert not Path(str(rig.final) + '.json.part').exists()
+
+
+def test_snapshot_from_dialog_is_used_even_if_target_changes_before_backend_run(rig, clock):
+    rig.cfg['duration_s'] = 1
+    paths = (rig.final, Path(str(rig.final) + '.json'))
+    targets = module._target_state(paths)
+    rig.final.write_bytes(b'foreign file created during connect')
+    backend = make_backend(rig.inst, rig.cfg, rig.final, target_state=targets,
+                           untimed=lambda: True, finishing=lambda: None)
+    with pytest.raises(FileExistsError) as caught:
+        backend.run(clock, lambda status: None)
+    from n6705c_seq.web_record import _failure_code
+    assert _failure_code(caught.value, 'fetch') is c.RecordCode.SINK
+    assert rig.final.read_bytes() == b'foreign file created during connect'
+    assert read_meta(rig, True)['complete'] is False
+
+
+def test_target_identity_falls_back_to_mtime_and_size():
+    def info(mtime=1, size=2):
+        return SimpleNamespace(st_mtime=mtime, st_size=size)
+    assert module._same_target(info(), info())
+    assert not module._same_target(info(), info(mtime=2))
+    assert not module._same_target(info(), info(size=3))
+    assert not module._same_target(None, info())
+
+
+def test_zero_records_cleanup_allows_same_name_retry(rig, clock):
+    rig.cfg.update(duration_s=1, period_s=60)
+    with pytest.raises(c.NoRecordsError):
+        rig.build().run(clock, lambda status: None)
+    rig.cfg['period_s'] = 0.001
+    assert rig.build().run(clock, lambda status: None)['records'] == 1000
+
+
+def test_abort_transport_error_does_not_discard_valid_download(rig, clock, monkeypatch):
+    rig.cfg['duration_s'] = 1
+    write = rig.transport.write
+    def fail(command):
+        write(command)
+        if command == 'ABOR:DLOG':
+            raise OSError('ABOR transport failed')
+    monkeypatch.setattr(rig.transport, 'write', fail)
+    result = rig.build().run(clock, lambda status: None)
+    assert result['records'] == 1000 and result['gaps'] == 0
+    assert read_meta(rig)['complete'] is True
+    assert any('ABOR transport failed' in note for note in result['notes'])
+
+
+def test_preview_error_drain_failure_is_only_a_note(rig, clock, monkeypatch):
+    rig.cfg['duration_s'] = 1
+    rig.transport.meas_errors = {1}
+    check = module._CheckedSession.check_errors
+    def fail(self, context=''):
+        if context == 'MEAS failure':
+            raise OSError('preview error drain failed')
+        return check(self, context)
+    monkeypatch.setattr(module._CheckedSession, 'check_errors', fail)
+    result = rig.build().run(clock, lambda status: None)
+    assert result['records'] == 1000 and result['gaps'] == 0
+    assert rig.transport.meas_count == 1
+    assert any('preview error drain failed' in note for note in result['notes'])

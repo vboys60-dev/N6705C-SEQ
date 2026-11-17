@@ -129,9 +129,8 @@ def test_zero_records_return_no_recording_without_final_file(recording):
     assert recording.api._record_last_path is None
     assert not recording.path.exists()
     assert not Path(str(recording.path) + ".json").exists()
-    # Failed native downloads retain partial evidence without publishing it.
-    partial = Path(str(recording.path) + ".json.part")
-    assert json.loads(partial.read_text())["complete"] is False
+    assert not Path(str(recording.path) + ".part").exists()
+    assert not Path(str(recording.path) + ".json.part").exists()
     assert recording.api.record_stop()["code"] == "no_recording"
 
 

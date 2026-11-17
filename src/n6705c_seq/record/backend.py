@@ -75,6 +75,25 @@ def _transfer(session, remote, part):
         part.write_bytes(payload)
 
 
+def _target_state(paths):
+    result = {}
+    for path in paths:
+        try:
+            result[path] = path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            result[path] = None
+    return result
+
+
+def _same_target(before, after):
+    if before is None or after is None:
+        return before is after
+    # stat fields are portable; fall back to mtime/size without inode support.
+    fields = ("st_dev", "st_ino", "st_mtime_ns", "st_size")
+    return all(getattr(before, field, None) == getattr(after, field, None)
+               for field in fields) and before.st_mtime == after.st_mtime
+
+
 class _CheckedSession:
     """Add strict, bounded per-command checks without changing core signatures."""
 
@@ -105,6 +124,9 @@ class _CheckedSession:
         self.raw.write(command)
         errors = self._errors()
         if not errors:
+            return
+        if command == "ABOR:DLOG":
+            self.notes.extend(f"{code:+d},{text} (after {command})" for code, text in errors)
             return
         if ":RANG:AUTO ON," in command and all(code == 310 for code, _ in errors):
             quantity = "VOLT" if ":VOLT:" in command else "CURR"
@@ -194,12 +216,13 @@ def _layout(part, cfg, period):
 
 
 class _DlogBackend:
-    def __init__(self, inst, cfg, final_path, *, untimed, finishing):
+    def __init__(self, inst, cfg, final_path, *, untimed, finishing, target_state=None):
         self._inst = inst
         self._cfg = deepcopy(cfg)
         self._cfg.setdefault("run_id", uuid.uuid4().hex)
         self._cfg["channels"] = sorted(self._cfg["channels"])
         self._final = Path(final_path)
+        self._target_state = target_state
         self._untimed = untimed
         self._finishing = finishing
         self._used = False
@@ -241,6 +264,15 @@ class _DlogBackend:
         _bounds(cfg["period_s"], cfg["duration_s"], fields)
         if any(ch not in self._inst.populated_channels for ch in cfg["channels"]):
             raise _bad_config("Selected DLOG channel is not populated")
+        try:
+            paths = _paths(self._final)
+        except ValueError as exc:
+            raise OSError(errno.EINVAL, str(exc), str(self._final)) from exc
+        final, part, side, side_part = paths
+        if not _safe_paths(paths):
+            raise OSError(errno.EINVAL, "Unsafe DLOG path", str(final))
+        targets = (self._target_state if self._target_state is not None
+                   else _target_state((final, side)))
         remote = f"internal:\\record_{uuid.uuid4().hex}.dlog"
         checked = _CheckedSession(self._inst.session, notes, ranges)
         session = DlogSession(SimpleNamespace(session=checked, populated_channels=self._inst.populated_channels),
@@ -255,10 +287,6 @@ class _DlogBackend:
                 or not math.isclose(duration, cfg["duration_s"], rel_tol=1e-6)):
             raise _bad_config("DLOG period/duration readback differs from the request")
         idn = checked.query("*IDN?")
-        paths = _paths(self._final)
-        final, part, side, side_part = paths
-        if not _safe_paths(paths):
-            raise OSError(errno.EINVAL, "Unsafe DLOG path", str(final))
         meta = dict(schema_version=1, producer="n6705c_seq.record", run_id=cfg["run_id"],
                     backend="dlog", preview=True, name=final.name, requested=deepcopy(cfg),
                     actual=dict(channels=list(cfg["channels"]), sense_volt=cfg["sense_volt"],
@@ -273,6 +301,7 @@ class _DlogBackend:
         notes.append("No reliable remote size query is available; the preflight assumes a header no larger than 1 MiB.")
         owned_part = owned_side = False
         attempted = False
+        no_records = False
         error = None
 
         def remember(exc):
@@ -301,19 +330,26 @@ class _DlogBackend:
                 if not self._untimed():
                     raise RuntimeError("record owner is no longer active")
                 try:
+                    if stop.is_set():
+                        raise c.NoRecordsError("Recording cancelled before INIT:DLOG")
                     attempted = True
                     session.start()
                     started = time.monotonic()
                     meta["started_utc"] = session.trigger_time_utc
                     status("running")
                     next_sample = started
-                    failures = index = 0
+                    failures = 0
+                    preview_enabled = True
                     chanlist = format_channel_list(cfg["channels"])
                     while True:
                         now = time.monotonic()
                         elapsed = now - started
                         if stop.is_set() or elapsed >= duration:
                             break
+                        if not preview_enabled:
+                            status("running")
+                            stop.wait(min(_PREVIEW_PERIOD, max(0.0, duration - elapsed)))
+                            continue
                         try:
                             columns = {}
                             for kind, quantity, enabled in (("V", "VOLT", cfg["sense_volt"]),
@@ -326,21 +362,21 @@ class _DlogBackend:
                         except Exception as exc:
                             # Failures concern only the preview, not persisted DLOG.
                             notes.append(f"MEAS preview failed: {exc!r}")
-                            gaps.append(dict(kind="preview_meas_error", index=index, count=None))
                             failures += 1
                             try:
                                 checked.check_errors("MEAS failure")
                             except Exception as check_exc:
-                                exc.add_note(f"MEAS error drain failed: {check_exc!r}")
-                                raise exc
+                                notes.append(f"MEAS error drain failed: {check_exc!r}")
+                                preview_enabled = False
                             if failures == 1:
                                 notes.append("Preview omits failed MEAS rounds; its uniform time axis compresses those gaps.")
                             if failures >= c.MAX_FETCH_FAILURES:
-                                raise
+                                preview_enabled = False
+                            if not preview_enabled:
+                                notes.append("MEAS preview stopped after errors; native DLOG capture continues.")
                         else:
                             failures = 0
                             self._envelope.append(np.array([[columns[key] for key in self._keys]], dtype=np.float32))
-                            index += 1
                         status("running")
                         next_sample += _PREVIEW_PERIOD
                         # I/O may be slower than 40 Hz; never spin to catch up.
@@ -363,6 +399,8 @@ class _DlogBackend:
             if attempted:
                 try:
                     session.abort()
+                except Exception as exc:
+                    notes.append(f"ABOR:DLOG failed; attempting native DLOG download: {exc!r}")
                 except BaseException as exc:
                     remember(exc)
                 try:
@@ -379,7 +417,11 @@ class _DlogBackend:
                         with part.open("r+b") as stream:
                             stream.flush()
                             os.fsync(stream.fileno())
-                    meta.update(_layout(part, cfg, period))
+                    try:
+                        meta.update(_layout(part, cfg, period))
+                    except c.NoRecordsError:
+                        no_records = True
+                        raise
                     meta["layout_pending"] = False
                     records = meta["records"]
                 except BaseException as exc:
@@ -387,6 +429,14 @@ class _DlogBackend:
             meta.update(elapsed_s=elapsed, ended_utc=_utc())
             if error is not None:
                 raise error
+            current = _target_state(targets)
+            conflicts = [path for path, before in targets.items()
+                         if not _same_target(before, current[path])]
+            if conflicts:
+                names = ", ".join(path.name for path in conflicts)
+                raise FileExistsError(errno.EEXIST,
+                                      f"Target created or changed by another writer: {names}; "
+                                      f"recording retained at {part} and {side_part}", str(final))
             with _disk(final):
                 # Publish an incomplete sidecar first, including on overwrite.
                 # Only mark it complete once the matching data is in place.
@@ -410,7 +460,12 @@ class _DlogBackend:
             return dict(run_id=cfg["run_id"], final_path=self._final, elapsed_s=elapsed,
                         records=records, gaps=len(gaps), preview=True, notes=list(notes))
         except BaseException as exc:
-            if not attempted:
+            try:
+                empty = owned_part and part.stat().st_size == 0
+            except OSError as cleanup_exc:
+                empty = False
+                exc.add_note(f"Could not inspect DLOG temporary file: {cleanup_exc!r}")
+            if not attempted or no_records or empty:
                 for path, owned in ((part, owned_part), (side_part, owned_side)):
                     if owned:
                         try:
@@ -431,6 +486,6 @@ class _DlogBackend:
 
 
 def make_backend(inst, cfg: c.Config, final_path: Path, *,
-                 untimed: c.Untimed, finishing: c.Finishing) -> c.Backend:
+                 untimed: c.Untimed, finishing: c.Finishing, target_state=None) -> c.Backend:
     """Construct an inert backend; caller retains instrument/token ownership."""
-    return _DlogBackend(inst, cfg, final_path, untimed=untimed, finishing=finishing)
+    return _DlogBackend(inst, cfg, final_path, untimed=untimed, finishing=finishing, target_state=target_state)

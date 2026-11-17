@@ -20,6 +20,7 @@ from . import e36441a
 from .execute import DEMO_SLOTS, connect_group
 from .i18n import tr
 from .record import contracts as c
+from .record.dlogfile import _paths, _safe_paths
 
 
 class _RecordFailure(RuntimeError):
@@ -139,6 +140,12 @@ class RecordApi:
             path = self._record_save_path()
             if path is None:
                 return {"cancelled": True}
+            target_state = {}
+            for target in (path, Path(str(path) + ".json")):
+                try:
+                    target_state[target] = target.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    target_state[target] = None
             stop = threading.Event()
             with self._record_lock:
                 self._record_backend = None
@@ -151,7 +158,7 @@ class RecordApi:
                 self._emit([c.EVENT_RECORD, deepcopy(self._record_state)])
                 try:
                     worker = threading.Thread(target=self._record_work,
-                                              args=(cfg, resources, demo, path, stop, token), daemon=True)
+                                              args=(cfg, resources, demo, path, stop, token, target_state), daemon=True)
                     self._record_thread = worker
                     worker.start()
                 except Exception as exc:
@@ -183,7 +190,9 @@ class RecordApi:
                 webview.FileDialog.SAVE, file_types=(tr("record_file_type"),)))
             if not path:
                 return None
-            if Path(path).suffix.lower() != ".dlog":
+            if Path(path).suffix.lower() == ".dlog":
+                path = str(Path(path).with_suffix(".dlog"))
+            else:
                 path += ".dlog"
             final = Path(path)
             try:
@@ -202,6 +211,12 @@ class RecordApi:
                 if existing.exists() and not self._confirm(
                         tr("confirm"), tr("overwrite_confirm", name=existing.name)):
                     return None
+            try:
+                paths = _paths(final)
+            except ValueError as exc:
+                raise _RecordFailure(c.RecordCode.SINK, str(exc)) from exc
+            if not _safe_paths(paths):
+                raise _RecordFailure(c.RecordCode.SINK, f"Unsafe DLOG path: {final.name}")
             return final
         finally:
             self._dialog_lock.release()
@@ -262,7 +277,7 @@ class RecordApi:
             self._record_state.update(deepcopy(update))
             self._emit([c.EVENT_RECORD, deepcopy(self._record_state)])
 
-    def _record_work(self, cfg, resources, demo, final_path, stop, token):
+    def _record_work(self, cfg, resources, demo, final_path, stop, token, target_state=None):
         inst = None
         result = error = None
         phase = "connect"
@@ -281,7 +296,8 @@ class RecordApi:
             if e36441a.kind_of([inst.identity.model]) == "E36441A":
                 raise _RecordFailure(c.RecordCode.BAD_CONFIG, "E36441A cannot record DLOG")
             phase = "config"
-            backend = make_backend(inst, cfg, final_path,
+            target_options = {} if target_state is None else {"target_state": target_state}
+            backend = make_backend(inst, cfg, final_path, **target_options,
                                    untimed=lambda: self._untimed(token),
                                    finishing=lambda: self._finishing(token))
             with self._record_lock:

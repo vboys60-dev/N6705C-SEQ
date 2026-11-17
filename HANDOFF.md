@@ -289,7 +289,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 
 **接手要做**
 1. ~~B-DLOG 雙審~~ 已完成（見上）。
-2. 已知缺口（B-DLOG 審查遺留，皆不擋）：原生 `.part` 無法被 `recover_part()` 復原（沒植入 run_id）；MEAS 連續失敗（3 次）會讓整個 run 失敗，已下載的完整 DLOG 只留在 `.part`，宜改成停預覽、記 gap、照常發布；契約待補：MEAS 連續失敗上限 3、gap index 用預覽序列且 count=null、`envelope.preview=True` 由 backend 設；覆寫舊檔時第二次 replace 失敗，舊錄音的 `complete=True` 旁檔會被新的 `complete=False` 取代（舊資料檔仍在，比配錯安全）；`_disk` 補欄位後無 errno 的 `OSError` 其 `str()` 顯示 `[Errno None]`；`notes` 重複記同一例外、`started_utc` 用 `+00:00` 而其他欄位用 `Z`；缺測試：發布最後一步（標 `complete=True`）失敗。
+2. 已知缺口（B-DLOG 審查遺留，皆不擋）：原生 `.part` 無法被 `recover_part()` 復原（沒植入 run_id）；（MEAS 連續失敗讓整個 run 失敗的缺口已於 Wave 5 修正，見第 6 項）契約待補：MEAS 連續失敗上限 3、gap index 用預覽序列且 count=null、`envelope.preview=True` 由 backend 設；覆寫舊檔時第二次 replace 失敗，舊錄音的 `complete=True` 旁檔會被新的 `complete=False` 取代（舊資料檔仍在，比配錯安全）；`_disk` 補欄位後無 errno 的 `OSError` 其 `str()` 顯示 `[Errno None]`；`notes` 重複記同一例外、`started_utc` 用 `+00:00` 而其他欄位用 `Z`；缺測試：發布最後一步（標 `complete=True`）失敗。
 3. **使用者要在真機跑**（Wave 3 B-ELOG 與 A3 卡在這）：`scripts/hw_elog_h0.py`（elog_arb 需 `--yes`；完整 USB＋LAN × 2 設定 × ≥1 h，總計 ≥4 h）與 `scripts/hw_arb_trig_check.py`（`slew` 項送 `*RST`，需 `--allow-reset`；`seqnum` 結果決定 A3）。H0 PASS → 做 B-ELOG（`backend.py` 目前被 B-DLOG 佔用，若兩支並存要照計畫拆成 `backend_elog.py`／`backend_dlog.py`＋分派的 `backend.py`，需重過 T0）；FAIL → 以 B-DLOG 為準，C13 上限 256 MB 生效。
 4. 待決設計：B-ELOG 是否合併 `empty_backlog` 與 `tail_incomplete` 的 gap；長錄時鐘漂移（10 h×100 ppm≈3.6 s）可能造成誤報 `tail_incomplete`；`VOLT:SLEW? MAX` 若不支援，每台每次會多約 10 s 逾時；非 demo 模式現在開兩次 VISA（`detect_model` 再 `connect_group`）。
 5. **Wave 4：I、D 已完成並驗收**（I 整合測試 4 個、selftest 結束碼 0；全套 1445 passed／7 skipped，node 67 過；D 文件打包，同步清單已對照 diff 與 APP 現況核對）。D 已補 README 旗標／互斥／關窗說明、Windows 錄製驗收清單（`HANDOFF_WINDOWS.md` §8）及 spec 的 `collect_submodules("n6705c_seq.record")`；Windows 建置、`build-windows` CI 與實機驗收仍待完成。之後是 **Wave 5：R 雙審**。**H0 結果：尚未實測**；目前 B-DLOG 的存在不代表 H0 FAIL，也不代表 ELOG 已驗收。
@@ -319,4 +319,12 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 
    `diff` 有差異時結束碼為 1，讀檔失敗為 2；本清單不代表 APP 已同步或實機通過。
 
-6. 之後才討論 push／PR 與打開 `RECORD_ENABLED`（需實機驗收；使用者決定）。
+6. **Wave 5 R 雙審結果**（2026-11-18；報告 `docs/live-logging-review-opus.md`、`docs/live-logging-review-codex.md`；兩份都是 CHANGES REQUIRED、無 Blocker；`RECORD_ENABLED=False` 可合併，**打開旗標前下列必修項要清完**）：
+   - **已修並驗收（全套 1466 passed／7 skipped，node 67 過）**：A `.DLOG` 大小寫（對話框接受、backend 拒絕，且在儀器設定後才失敗）；C MEAS 預覽連續失敗／ABOR 後錯誤不得讓已下載的完整 DLOG 失敗；E 長錄結束時才覆蓋他人新建或更換的正式檔（開始時記身分，發布前比對，衝突保留 `.part`）；m1 零筆或 INIT 後失敗的空 `.part`／`.json.part` 殘留擋同名重錄。實作要點：A 在對話框回傳後統一成小寫 `.dlog` 並於碰儀器前驗證；C 預覽失敗只停預覽記 notes、不算 gap，`ABOR:DLOG` 後的錯誤只記 notes，`session.abort()` 例外也只記 notes 並嘗試下載（靠 `_layout` 驗證把關）；E 開始時（確認覆寫之後、連線之前）由 `web_record` 記正式檔與旁檔的 `stat`，`backend` 發布前比對，衝突回 `sink`、保留 `.part` 與 `complete=False` 旁檔（**比對與 replace 之間仍有極短競態窗口，非跨行程鎖**）；m1 零筆或空 `.part` 一律清除，starting 階段停止不送 INIT／ABOR。`web_record` 現在匯入 `record.dlogfile` 的 `_paths`、`_safe_paths`（私有名稱，之後可改成公開）。
+   - **登記待辦（使用者決定先不修）**：
+     - **B（擋接上 B-ELOG）** `record/dlogfile.py:216-221、319-323、469`：`DlogWriter.finalize()`／`recover_part()` 先發布 `complete=True` 旁檔才換資料檔，覆寫時第二步失敗會配錯舊資料；B-DLOG 已改成先 `complete=False` 後 `True`，writer 要比照，且契約 C6 的寫法要改（需回 T0），並補新檔、覆寫、sharing violation、最後一次旁檔更新失敗的測試。
+     - **D（擋打開旗標，需 Windows 實測）** `backend.py:394-395`、`dlogfile.py:185、219-220`：Windows 上 `os.replace` 遇 Defender 等暫時鎖檔（WinError 5／32）沒有重試，run 失敗、檔停在 `.part`；建議有限次退避重試，並在 `HANDOFF_WINDOWS.md` §8 加實測項。
+     - **F（擋打開旗標，要動凍結的 gate／關窗界面，需回 T0）** `web_record.py:154、305`、`analysis/gate.py:169`、`webgui.py:165、219`：收尾逾 60 s 進 fault 後 worker 仍活著，但 fault→closing 讓關窗放行，daemon worker 被 `os._exit` 終止，ABOR、關檔、釋放 token 都不保證；fault 不應等於 worker 已停；需新增整合測試「fault＋worker 仍活＋關窗」。
+     - Minor：`analysis.js:147` 從檢視切到錄製只等 idle 10 s，比 draining 逾時 30 s 短，可能停在空白 Viewer；旗標關閉時 analysis 初始化仍 await `record_meta`（唯讀、無 I/O，風險低）。
+   - 兩份審查一致確認沒問題：互斥無繞過路徑（異常路徑、對話框取消、關窗皆釋放 token，F 例外）、儀器 I/O 全在單一 worker 且 `record_stop` 只設 Event、import 邊界符合契約、i18n 齊全、旗標關閉時面板隱藏、`open_push` 驗證完整。`core/elog.py` 因 B-ELOG 未接線只審了 import 邊界。
+7. 之後才討論 push／PR 與打開 `RECORD_ENABLED`（需實機驗收；使用者決定）。
