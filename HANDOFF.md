@@ -2,7 +2,7 @@
 
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。只做時序，不做量測。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-11-05　狀態：模擬器全過（pytest 838 過／7 跳過）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
+最後更新：2026-11-17　狀態：模擬器全過（pytest 838 過／7 跳過）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
 
 | 區塊 | 狀態 |
 |---|---|
@@ -13,6 +13,7 @@
 | Codex 審查 | 第 2 輪已核准（§8） |
 | 報告分析升級版 | T0–T8 完成，PR #1 已合併，分頁已啟用；Windows 11 實機未驗（§11） |
 | 搜尋儀器（下拉選單） | PR #8 已合併 `c7461c6`；離線與 CI 通過，**未接實機、未在 Windows 實際操作**（§12） |
+| 即時資料紀錄＋ARB 修補 | **只有規劃與決策，尚未開工**（§13） |
 
 ## 0. 先讀這幾件事
 
@@ -222,3 +223,42 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - **未驗**：實機 N6705C／E36441A 的 LAN 廣播與 USB 列舉；Windows 原生 VISA 當機路徑（`BrokenPipeError` 只有模擬測試）；打包後 exe 的子行程掃描；加上型號標籤後的選單版面（截圖是標籤加入之前的）。
 - **已知限制**：LAN 廣播跨不了子網路；同一台儀器可能出現兩筆（後端寫法不同，或同時接 USB 與 LAN）；列舉階段有後端卡住時，該次其他後端的結果會丟失（`scan_resources` 的 `ponytail:` 註解）。
 - **接手要做**：接實機按「搜尋儀器」，確認清單與型號；沒搜到就對照 `HANDOFF_WINDOWS.md` §3.4 判讀。這功能已隨 `v0.2.0` pre-release 發出（2026-11-05，使用者決定先預先發行）；Windows 驗收後才轉正式，見 `HANDOFF_WINDOWS.md` §5。
+
+## 13. 即時資料紀錄（放進 Viewer 分頁）與 ARB 修補（2026-11-17，只有規劃，**未開工**，未改任何程式）
+
+來源：參考舊專案 Keysight 14585A（反編譯、字串擷取），再由 Opus 與 Codex Astra 討論三輪（完整輸出在 scratchpad `r1/r2/r3_final.txt`，不在 repo 內）。Astra 引用的 Keysight 手冊頁碼（p.291、p.311、p.373-374）Opus 沒核對，**待確認**。**使用者尚未說「開工」，下列只是決策。**
+
+### 13.1 使用者決策
+1. 即時紀錄放進 **DLOG Viewer 分頁**（雙方原建議另開第四分頁，使用者否決）。分頁內分「檢視／錄製」兩模式、互斥；錄製拿 power token。**`analysis/*` 仍不得 import `n6705c`**（§11），錄製程式放 analysis 之外、經 bridge 呼叫；停止後釋放 token 並把 .dlog 載入同分頁。gate 現在只允許從 IDLE 進分析（`analysis/gate.py:107-117`），需調整並補測試。
+2. 硬體閘門 H0 失敗時，接受退路：DLOG 錄完下載 + 約 40 Hz `MEAS:VOLT?`／`MEAS:CURR?` 預覽（畫面要標「預覽」）。
+3. 「邊上電邊錄」延到 P4，v1 只做獨立錄製。
+4. ARB 必要修補另立一軌，排在即時紀錄 P2 之前。
+
+### 13.2 .dlog 實測（2026-11-17，兩個真實檔）
+- 格式：XML 標頭（`</dlog>\n` 結尾）→ 兩個大端 UInt32（trigger index、write index）→ 大端 float32 環形資料。官方公式 `OffsetTime = (-Count + write - trigger) * Period`。
+- 兩檔 trigger=0、write=筆數，資料區長度剛好整除，**現有 Viewer 的 `>Q`（`analysis/core.py` 約 93 行）在這兩檔上正確**。前觸發、環形繞回、`sense_minmax=1` **沒有樣本，未驗證**。檔一宣告 3001 s 但只錄 932.5 s（提前中止，Viewer 以實際筆數為準，是對的）。
+- 另開小修（不擋即時紀錄）：Viewer 改讀兩個 `>I` 並依索引重排；或先拒絕 trigger≠0 的檔，比靜默讀錯安全。
+
+### 13.3 ARB 差距（對 14585A）
+- **必要**：`start_together` 在 `INIT:TRAN` 前補送 `TRIG:ARB:SOUR IMM` 並查錯（現只設 `TRIG:TRAN:SOUR`，`execute.py:174`；這很可能是 §4.10「ARB 在 INIT 就開跑」的原因），fake 補指令；執行前檢查 `VOLT:SLEW?` 與 `VOLT:SLEW:MAX?`，非最大值就警告。
+- **可選**：priority／emulation 前檢（`sour:func?`、`diag:emul?`，只對 SMU）；.dlog 回放成 CDW。
+- **啟用前必修（GUI 路徑碰不到）**：sequence 步驟編號官方 0..99、程式送 1..100（`arb/sequence.py:185`，推論）；`multi.py:137-144` 回滾漏掉當前通道；`multi.py:1-18,151-160` 文件仍說 `*TRG` 釋放 ARB，與 §4.10 矛盾。
+- **不建議**：delta modulation、公式波形庫。
+- **未決（要實機）**：`TRIG:ARB:SOUR` 殘留 BUS 時的後果（Opus：逾時；Astra：勾擷取時 `*TRG` 可能放出 ARB；最糟為沒波形卻回報成功）；CDW 65,535 點用 ASCII 約 650 KB，傳輸時間待測。
+
+### 13.4 即時紀錄設計重點
+- **風險**：舊專案 `N6705C-APP/HANDOFF.md:464-486` §4.0.2：`FETC:ELOG?` 有時回 4 bytes 空區塊且錯誤佇列乾淨；2 s 取 20–50 筆穩，4–16 s 要 500–2000 筆一律 0 筆，成因不明。**未過 H0 前 ELOG 長錄不可信。**
+- 現況：core 已有 `ElogSession`／`ElogRecorder`（`elog.py`）、`DlogSession`（`dlog.py`），fake 已模擬 ELOG／DLOG／MMEM；GUI 沒接。
+- v1 用 ELOG 串流；每次 `FETC:ELOG?` 上限 16384 筆（待核手冊）；單一 worker 做所有 VISA I/O；停止只設旗標，同一 worker 送 `ABOR:ELOG` 後才釋放 token；每步讀 `SYST:ERR?` 到 0（`+323` 在 `INIT:ELOG` 才報；`+310` 表示不支援 autorange，要上 UI 並寫進標頭）。
+- 圖：JS 每 250–500 ms 向 Python 取最新快照（每條 ≤2000 點 min/max 包絡，帶 generation）；全解析度直接寫檔。4 通道 V+I 最短週期 819.2 µs ≈ 39 KB/s ≈ 140 MB/台/小時。
+- 存檔：寫 `.dlog` 相容格式、每台一檔；trigger=0、write=筆數；欄位每通道先 V 後 I（`analysis/core.py:63-71`，要把 ELOG 順序 `parsing.py:35` 重排）；v1 `sense_minmax=0`；原始值不套負電流替換；錄製中用 `.part`，只對自家 `.part` 截尾（Viewer 會把 write index 之後殘段排到最前，通用截尾不安全）；額外旁檔存要求值／回讀值、主機 IDN、notes、缺口、UTC。
+- 要先修：`ElogRecorder` 吞 sink 錯誤、`join` 逾時仍清執行緒（`elog.py:518-522,545-549`）；DLOG 外部觸發未到就標 RUNNING（`dlog.py:323-328`）；DLOG 下載失敗仍刪儀器原檔（`dlog.py:430-436`）。
+- 多台：各自時間軸；跨台 skew（`group.py` `TRIGGER_SKEW_SECONDS` 只是估計）與長時間漂移要量測留證。
+
+### 13.5 階段與硬體驗證
+P0 H0＋`TRIG:ARB:SOUR` 驗證 → P1 core 修補 → P2 Viewer 分頁單台 ELOG（H0 失敗改 DLOG＋MEAS）→ P3 多台 → P4 邊上電邊錄 → P5 DLOG 串流下載／ACQ → 最後 HIST。ARB 修補另軌，slew 前檢在 P2 前完成。
+
+H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只改一個變數（首讀立即 vs 延後 5 s、ASCII vs REAL、要求數小於 vs 等於 16384）；另測停讀 5／12／25 s 後 fetch（緩衝深度與溢位丟新或舊）、`ABOR:ELOG` 後尾段是否保留。其他：`TRIG:ARB:SOUR BUS`→`INIT:TRAN`→延後 `*TRG` 與 EXT 共用 BNC（示波器看）；`ARB:SEQ:RES` 後寫 step 0／1 查 `LEN?`；ELOG 與 ARB 並行；USB／LAN 各長錄 1 小時以上；自寫 .dlog 分別用 Viewer 與 14585A 開。
+
+### 13.6 接手要做
+等使用者說「開工」並指定軌：(a) ARB 修補軌（不需實機）、(b) P1 core 修補、(c) H0（需接 N6705C，只能先寫腳本）。
