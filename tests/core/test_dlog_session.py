@@ -2,6 +2,8 @@
 
 from datetime import datetime
 from pathlib import Path
+import signal
+from threading import Thread
 
 import pytest
 
@@ -121,6 +123,114 @@ def test_failed_init_or_bus_trigger_does_not_mark_running(instrument, monkeypatc
     assert not session.is_complete
     if context == "INIT:DLOG":
         assert "TRIG:DLOG" not in transport.fake.command_log
+
+
+@pytest.fixture
+def wait_timeout():
+    """Fail a regressed wait loop instead of hanging the test suite."""
+    def timed_out(signum, frame):
+        pytest.fail("DlogSession.wait() did not return within 5 seconds")
+
+    previous_handler = signal.signal(signal.SIGALRM, timed_out)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, 5)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        signal.setitimer(signal.ITIMER_REAL, *previous_timer)
+
+
+@pytest.mark.parametrize("source", [s for s in VALID_DLOG_SOURCES if s not in ("BUS", "IMM")])
+def test_wait_armed_returns_false_without_sleep(instrument, monkeypatch, wait_timeout, source):
+    inst, _ = instrument
+    session = DlogSession(inst, DlogConfig(channels=[1], trigger_source=source))
+    session.start()
+
+    def unexpected_sleep(seconds):
+        pytest.fail("an armed session must return without sleeping")
+
+    monkeypatch.setattr(dlog.time, "sleep", unexpected_sleep)
+
+    assert session.wait() is False
+    assert session.state is DlogState.ARMED
+
+
+@pytest.mark.parametrize("state", [DlogState.IDLE, DlogState.CONFIGURED, DlogState.ABORTED])
+def test_wait_inactive_returns_false_without_sleep(instrument, monkeypatch, wait_timeout, state):
+    inst, _ = instrument
+    session = DlogSession(inst, DlogConfig(channels=[1]))
+    if state is DlogState.CONFIGURED:
+        session.configure()
+    elif state is DlogState.ABORTED:
+        session.start()
+        session.abort()
+
+    def unexpected_sleep(seconds):
+        pytest.fail("an inactive session must return without sleeping")
+
+    monkeypatch.setattr(dlog.time, "sleep", unexpected_sleep)
+
+    assert session.wait() is False
+    assert session.state is state
+
+
+@pytest.mark.parametrize("source", ["BUS", "IMM"])
+def test_wait_running_completes_with_margin(instrument, monkeypatch, wait_timeout, source):
+    inst, _ = instrument
+    now = [100.0]
+    sleeps = []
+    monkeypatch.setattr(dlog.time, "monotonic", lambda: now[0])
+    session = DlogSession(inst, DlogConfig(channels=[1], trigger_source=source, duration=1))
+    session.start()
+
+    def advance_clock(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(dlog.time, "sleep", advance_clock)
+
+    assert session.wait(poll=0.4, margin=0.1) is True
+    assert session.state is DlogState.COMPLETE
+    assert sleeps == pytest.approx([0.4, 0.4, 0.2, 0.1])
+
+
+def test_wait_already_complete_still_sleeps_margin(instrument, monkeypatch, wait_timeout):
+    inst, _ = instrument
+    now = [100.0]
+    sleeps = []
+    monkeypatch.setattr(dlog.time, "monotonic", lambda: now[0])
+    session = DlogSession(inst, DlogConfig(channels=[1], duration=1))
+    session.start()
+    now[0] += 1
+    assert session.is_complete
+    monkeypatch.setattr(dlog.time, "sleep", sleeps.append)
+
+    assert session.wait(margin=0.1) is True
+    assert sleeps == [0.1]
+
+
+def test_wait_aborted_by_another_thread_returns_false(instrument, monkeypatch, wait_timeout):
+    inst, transport = instrument
+    monkeypatch.setattr(dlog.time, "monotonic", lambda: 100.0)
+    session = DlogSession(inst, DlogConfig(channels=[1], trigger_source="IMM"))
+    session.start()
+    sleeps = []
+
+    def abort_during_sleep(seconds):
+        sleeps.append(seconds)
+        assert session.state is DlogState.RUNNING
+        worker = Thread(target=session.abort, daemon=True)
+        worker.start()
+        worker.join(timeout=1)
+        assert not worker.is_alive()
+
+    monkeypatch.setattr(dlog.time, "sleep", abort_during_sleep)
+
+    assert session.wait(poll=0.25, margin=0.1) is False
+    assert session.state is DlogState.ABORTED
+    assert "ABOR:DLOG" in transport.fake.command_log
+    assert sleeps == [0.25]
 
 
 @pytest.fixture

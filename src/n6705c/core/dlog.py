@@ -372,9 +372,17 @@ class DlogSession:
         return False
 
     def wait(self, poll: float = 0.5, margin: float = 2.0) -> bool:
-        """Block until the run finishes, plus a small settling margin."""
-        while not self.is_complete:
+        """Wait while running, then allow a settling margin after completion.
+
+        Return False without sleeping if idle, configured, armed or aborted;
+        also return False if aborted while waiting. For external triggers,
+        completion time cannot be inferred; callers must determine completion
+        themselves.
+        """
+        while self.state is DlogState.RUNNING and not self.is_complete:
             time.sleep(min(poll, max(0.05, self.remaining)))
+        if self.state is not DlogState.COMPLETE:
+            return False
         time.sleep(margin)
         return True
 
