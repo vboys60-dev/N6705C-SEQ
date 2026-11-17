@@ -128,6 +128,8 @@ def test_failed_init_or_bus_trigger_does_not_mark_running(instrument, monkeypatc
 @pytest.fixture
 def wait_timeout():
     """Fail a regressed wait loop instead of hanging the test suite."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("SIGALRM is unavailable on this platform")
     def timed_out(signum, frame):
         pytest.fail("DlogSession.wait() did not return within 5 seconds")
 

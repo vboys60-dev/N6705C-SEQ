@@ -626,7 +626,7 @@ async function timer(ms) {
     script = script.replace("SOURCE", json.dumps(str(web / "seq.js")))
     script = script.replace("LAYOUT", json.dumps(str(web / "layout.js")))
     script = script.replace("LIST", json.dumps(str(web / "list.js")))
-    completed = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
+    completed = subprocess.run([node, "-"], input=script, capture_output=True, text=True, encoding="utf-8", timeout=20)
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 

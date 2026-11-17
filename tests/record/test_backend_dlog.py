@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import signal
 from threading import Event, Thread, get_ident
@@ -606,7 +607,11 @@ def test_uppercase_extension_is_accepted_before_instrument_config(rig, clock, su
     assert rig.final.is_file()
 
 
-@pytest.mark.parametrize('name', ['bad.txt', '.dlog', 'bad\\name.dlog'])
+@pytest.mark.parametrize('name', [
+    'bad.txt', '.dlog',
+    pytest.param('bad\\name.dlog', marks=pytest.mark.skipif(
+        os.name == 'nt', reason='backslash is a path separator on Windows')),
+])
 def test_invalid_path_rejected_before_instrument_config(rig, name):
     backend = make_backend(rig.inst, rig.cfg, rig.final.with_name(name),
                            untimed=lambda: True, finishing=lambda: None)

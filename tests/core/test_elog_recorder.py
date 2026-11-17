@@ -121,8 +121,10 @@ def test_sink_failure_keeps_cause_and_aborts_on_calling_thread_even_if_abort_fai
     assert session.state is elog.ElogState.STOPPED
 
 
-def test_three_consecutive_fetch_failures_are_fatal_after_abort(rig):
+def test_three_consecutive_fetch_failures_are_fatal_after_abort(rig, monkeypatch):
     session, io, _ = rig
+    # Wall-clock elapsed would change the requested record count on slow runners.
+    monkeypatch.setattr(elog.ElogSession, "elapsed", property(lambda self: 0.0))
     failures = [TimeoutError(f"fetch {i}") for i in range(elog.MAX_FETCH_FAILURES)]
     io.actions.extend(failures)
     errors, events = [], []
@@ -140,8 +142,9 @@ def test_three_consecutive_fetch_failures_are_fatal_after_abort(rig):
     ]
 
 
-def test_single_error_recovers_and_success_including_zero_resets_failure_count(rig):
+def test_single_error_recovers_and_success_including_zero_resets_failure_count(rig, monkeypatch):
     session, io, _ = rig
+    monkeypatch.setattr(elog.ElogSession, "elapsed", property(lambda self: 0.0))
     stop = threading.Event()
     failures = [TimeoutError(str(i)) for i in range(4)]
     io.actions.extend([failures[0], failures[1], block(0),
