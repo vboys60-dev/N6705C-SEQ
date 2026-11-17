@@ -188,7 +188,7 @@ elog_block 輸入對應 ElogChunk.data/fields（每通道 n×len(fields)）；�
 
 **time 二選一決策：固定寬度回填，不能省略**。從建檔就保留 24 個 ASCII bytes，初值 `f"{0:024.9f}"`；finalize／recover 用 `f"{N*tint:024.9f}"` 回填並驗長度仍=24，單位秒。這是已保存樣本的長度；有 gap 時不是牆鐘總時間。旁檔另記實際 elapsed_s。tint 用讀回值，輸出精度足以 float roundtrip。前觸發、環形覆寫和 sense_minmax=1 不在 v1 writer 範圍；14585A 相容性仍需 HW-P2，Viewer 往返不能代替它。
 
-命名固定：final X.dlog；暫存 X.dlog.part；旁檔 final X.dlog.json、暫存 X.dlog.json.part。建檔使用 exclusive create，拒絕既有暫存。索引初始 trigger=write=0，append 時不更新 write。finalize 只允許 N≥1 且 ≤2^32-1；關閉一切可阻止 Windows rename 的 handle，回填兩個 >I=(0,N) 和 time、flush/fsync data；寫入並 fsync 旁檔，再 `os.replace` 旁檔、最後 `os.replace` 資料檔。只有兩者成功才回 final_path；配對 rename **不是原子交易**，以兩次 replace 都成功返回作本次完成標誌，失敗不能宣稱 done。覆寫情境中舊 final 可能已存在，不能只憑 final 存在判斷本次成功；重啟／recover 需核對資料標頭的 run_id 與旁檔。abort(keep_part=True) 關 handle 並保留可恢復檔；False 只刪本 writer 這次建立的暫存，不能刪 final 或別人的檔。
+命名固定：final X.dlog；暫存 X.dlog.part；旁檔 final X.dlog.json、暫存 X.dlog.json.part。建檔使用 exclusive create，拒絕既有暫存。索引初始 trigger=write=0，append 時不更新 write。finalize 只允許 N≥1 且 ≤2^32-1；關閉一切可阻止 Windows rename 的 handle，回填兩個 >I=(0,N) 和 time、flush/fsync data；先以 `complete=False`、`ended_utc=None` 寫入並 fsync 旁檔暫存，再 `os.replace` 到正式旁檔；接著 `os.replace` 資料檔；最後將 `complete=True` 的旁檔寫入暫存並 fsync，再 replace 到正式旁檔。資料檔 replace 失敗時，保留 `.part` 與 `complete=False` 的正式旁檔並拋錯。資料已就位但最後旁檔更新失敗時，正式旁檔停在 `complete=False`（保守，Viewer 視為未完成），仍拋錯；此時沒有 `.part`，資料在 final，可由使用者／後續流程重寫旁檔。三步成功並 fsync 目錄後才回 final_path；配對 rename **不是原子交易**，以三步發布都成功返回作本次完成標誌，失敗不能宣稱 done。覆寫情境中舊 final 可能已存在，不能只憑 final 存在判斷本次成功；重啟／recover 需核對資料標頭的 run_id 與旁檔。abort(keep_part=True) 關 handle 並保留可恢復檔；False 只刪本 writer 這次建立的暫存，不能刪 final 或別人的檔。
 
 旁檔 schema v1（UTC 用 ISO 8601 的 Z 或 +00:00）：
 
