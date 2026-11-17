@@ -13,7 +13,7 @@
 | Codex 審查 | 第 2 輪已核准（§8） |
 | 報告分析升級版 | T0–T8 完成，PR #1 已合併，分頁已啟用；Windows 11 實機未驗（§11） |
 | 搜尋儀器（下拉選單） | PR #8 已合併 `c7461c6`；離線與 CI 通過，**未接實機、未在 Windows 實際操作**（§12） |
-| 即時資料紀錄＋ARB 修補 | **只有規劃與決策，尚未開工**（§13） |
+| 即時資料紀錄＋ARB 修補 | **規劃與任務表完成，尚未開工**（§13、`docs/live-logging-task-plan.md`） |
 
 ## 0. 先讀這幾件事
 
@@ -260,5 +260,22 @@ P0 H0＋`TRIG:ARB:SOUR` 驗證 → P1 core 修補 → P2 Viewer 分頁單台 ELO
 
 H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只改一個變數（首讀立即 vs 延後 5 s、ASCII vs REAL、要求數小於 vs 等於 16384）；另測停讀 5／12／25 s 後 fetch（緩衝深度與溢位丟新或舊）、`ABOR:ELOG` 後尾段是否保留。其他：`TRIG:ARB:SOUR BUS`→`INIT:TRAN`→延後 `*TRG` 與 EXT 共用 BNC（示波器看）；`ARB:SEQ:RES` 後寫 step 0／1 查 `LEN?`；ELOG 與 ARB 並行；USB／LAN 各長錄 1 小時以上；自寫 .dlog 分別用 Viewer 與 14585A 開。
 
-### 13.6 接手要做
-等使用者說「開工」並指定軌：(a) ARB 修補軌（不需實機）、(b) P1 core 修補、(c) H0（需接 N6705C，只能先寫腳本）。
+### 13.6 施工任務表（2026-11-17，Opus high 規劃；全文 `docs/live-logging-task-plan.md`，**尚未開工**）
+**使用者定案（2026-11-17，全採建議）**：(1) H0 結果出來前**不做** B-ELOG（H0 失敗會整支白做；若實機要等很久可改成先做、合併時再看 H0）；(2) A2 與 Wave 1 一起做，A3 等 HAs 實測結果；(3) 錄製檔在按「開始」時跳原生另存對話框（同 `seq_save_csv`）。
+
+| 波次 | 開始條件 | 任務 | 最大並行 |
+|---|---|---|---|
+| Wave 0 | 使用者說「開工」 | T0 契約、H0s／HAs 驗證腳本 | 3 |
+| Wave 1 | T0 合併 | A1、A2、C1、C2、W（可選 X1） | 5～6 |
+| Wave 2 | A1 合併 | S、G、K、J、V | 5 |
+| Wave 3 | H0 結果出來，且 C1／C2／W／S 合併 | B-ELOG 或 B-DLOG（二選一） | 1 |
+| Wave 4 | B、G、K、J、V 合併 | I 整合＋selftest、D 文件打包 | 2 |
+| Wave 5 | I 通過 | R 雙審（Codex、Opus 各一份） | 2 |
+
+- 任務：T0＝跨任務介面（bridge `record_meta/start/stop/status/snapshot/load`、快照型別 ≤2000 點/條、`record/backend.py` Backend Protocol、`.dlog` 寫檔器介面、gate 轉移、fake 補 `TRIG:ARB:SOUR`／`VOLT:SLEW?`／`VOLT:SLEW:MAX?`、`Msg.OPEN_PUSH`、全部新 i18n key、`RECORD_ENABLED=False`）；A1＝`TRIG:ARB:SOUR IMM`＋slew 前檢；A2＝`multi.py` 回滾補當前通道＋修文件；A3＝sequence 步驟編號（等 HAs）；C1＝`ElogRecorder` 阻塞式、ABOR 由同 worker 送、錯誤語意；C2＝DLOG 兩個 bug；W＝`.part` 寫檔器；X1＝Viewer 讀兩個 `>I`；S＝min/max 包絡快照；G＝`web_record.py` bridge（`webgui.py` 只改 2 行）＋gate 轉移測試；K＝檢視／錄製兩模式；J＝錄製面板與圖表（H0 失敗標「預覽」）；V＝Viewer 接 `open_push`。
+- 規則：同波內任兩任務不得寫同一檔；跨波共用 3 檔（`analysis/contracts.py`、`core/fake.py`、`record/backend.py`）已改切法處理；新 i18n key 全由 T0 加齊，`app.js` 凍結（推論）。
+- **關鍵路徑**：T0 → A1 → S → B → I → R；實際瓶頸是硬體：H0（USB、LAN 各長錄 1 小時，至少約 2 小時）→ B，所以 H0s 放 Wave 0 先交使用者。
+- **推論待 T0 確認**：錄製沿用現有 `power` 狀態（analysis → draining → idle → power，停止後反向），`gate.py` 不加新狀態，只補約 6 個轉移測試；與 §13.1「gate 需調整」的寫法以此為準。
+
+### 13.7 接手要做
+等使用者說「開工」，從 Wave 0 起（T0 由 Opus 寫、Codex 唯讀挑錯；H0s／HAs 由 Codex 寫腳本，實測由使用者做）。
