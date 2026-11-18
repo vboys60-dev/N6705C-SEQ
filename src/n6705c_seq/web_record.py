@@ -71,6 +71,7 @@ def _config_copy(config, resources, demo):
 
 def _failure_code(exc, phase):
     from n6705c.core.elog import ElogFetchError, ElogSinkError
+    from n6705c.core.session import ScpiError
 
     if isinstance(exc, _RecordFailure):
         return exc.code
@@ -83,6 +84,8 @@ def _failure_code(exc, phase):
     if isinstance(exc, OSError) and (exc.filename or exc.errno in {
             errno.ENOSPC, errno.EDQUOT, errno.EACCES, errno.EROFS, errno.EEXIST}):
         return c.RecordCode.SINK
+    if isinstance(exc, ScpiError) and exc.code in (323, 310):
+        return c.RecordCode.BAD_CONFIG if exc.code == 323 else c.RecordCode.ELOG_UNSUPPORTED
     scpi = re.search(r"(?:^|[\s:])[+-]?(323|310),", str(exc))
     if scpi:
         return c.RecordCode.BAD_CONFIG if scpi[1] == "323" else c.RecordCode.ELOG_UNSUPPORTED

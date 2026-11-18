@@ -10,6 +10,8 @@ from threading import Event
 from typing import Any, Callable, Literal, NotRequired, Protocol, TypedDict
 
 RECORD_ENABLED = False
+BackendKind = Literal["elog", "dlog"]
+RECORD_BACKEND: BackendKind = "dlog"
 SNAPSHOT_MAX_POINTS = 2000
 SNAPSHOT_POLL_MS = 500
 SNAPSHOT_POLL_MIN_MS = 250
@@ -30,8 +32,8 @@ ELOG_EVENT_TAIL_LIMIT = "tail_limit"
 MAX_FETCH_FAILURES = 3
 
 Tail = Literal["drain_then_abort", "abort_then_drain"]
-# H0 PENDING: defaults for implementation/demo, NOT hardware validation results.
-# H0 must fill these three constants from its USB/LAN and tail evidence before B-ELOG.
+# E.02.09 returns +303 for FETC after ABOR (HANDOFF 13.9-9), so B-ELOG
+# must use drain_then_abort. USB/LAN fetch tuning remains pending H0 evidence.
 ELOG_TAIL: Tail = "drain_then_abort"
 ELOG_FETCH_RECORDS = 16_384  # request ceiling; actual request may be smaller
 ELOG_FETCH_INTERVAL_S = 0.250

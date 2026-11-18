@@ -514,4 +514,10 @@ class _DlogBackend:
 def make_backend(inst, cfg: c.Config, final_path: Path, *,
                  untimed: c.Untimed, finishing: c.Finishing, target_state=None) -> c.Backend:
     """Construct an inert backend; caller retains instrument/token ownership."""
-    return _DlogBackend(inst, cfg, final_path, untimed=untimed, finishing=finishing, target_state=target_state)
+    kind = c.RECORD_BACKEND
+    if kind == "dlog":
+        return _DlogBackend(inst, cfg, final_path, untimed=untimed,
+                            finishing=finishing, target_state=target_state)
+    if kind == "elog":
+        raise NotImplementedError("ELOG recording backend is not implemented")
+    raise ValueError(f"unknown RECORD_BACKEND {kind!r}")

@@ -72,8 +72,9 @@ class Transport:
         self.closed = True
 
 
-@pytest.fixture
-def rig(tmp_path):
+@pytest.fixture(autouse=True)
+def rig(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "RECORD_BACKEND", "dlog")
     transport = Transport()
     inst = N6705C.from_transport(transport)
     transport.calls.clear()
@@ -131,6 +132,18 @@ def test_factory_is_inert_and_copies_config(rig):
     assert set(snapshot["keys"]) == {"V1", "I1", "V2", "I2"}
     with pytest.raises(AttributeError):
         backend.preview = False
+
+
+def test_dispatch_follows_record_backend_constant(rig, monkeypatch):
+    assert isinstance(rig.build(), module._DlogBackend)
+    monkeypatch.setattr(c, "RECORD_BACKEND", "elog")
+    with pytest.raises(NotImplementedError, match="ELOG"):
+        rig.build()
+    monkeypatch.setattr(c, "RECORD_BACKEND", "unknown")
+    with pytest.raises(ValueError, match="unknown RECORD_BACKEND 'unknown'"):
+        rig.build()
+    assert rig.transport.calls == []
+    assert list(rig.final.parent.iterdir()) == []
 
 
 def test_three_second_stop_roundtrip_and_concurrent_snapshot(rig):

@@ -23,6 +23,8 @@ def wait_for(predicate):
 
 @pytest.fixture
 def recording(api, tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "RECORD_BACKEND", "dlog")
+
     class Clock:
         # Nonzero origin also exercises DlogSession's elapsed-time handling.
         now = 100.0

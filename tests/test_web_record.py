@@ -17,6 +17,18 @@ from n6705c_seq import e36441a, i18n, web_record, webgui
 from n6705c_seq.record import contracts as c
 
 
+@pytest.mark.parametrize("code,expected", [
+    (323, c.RecordCode.BAD_CONFIG),
+    (310, c.RecordCode.ELOG_UNSUPPORTED),
+    (-113, c.RecordCode.FETCH),
+])
+def test_failure_code_maps_core_scpi_errors(code, expected):
+    from n6705c.core.session import ScpiError
+
+    exc = ScpiError(code, "instrument-reported error", "INIT:ELOG")
+    assert web_record._failure_code(exc, "fetch") is expected
+
+
 def wait_for(predicate):
     deadline = time.monotonic() + 3
     while not predicate():

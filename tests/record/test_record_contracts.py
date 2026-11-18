@@ -19,6 +19,13 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/analysis/fixtures/default_20260803_092740.dlog"
 
 
+def test_record_backend_defaults_and_tail_constant():
+    assert record.RECORD_ENABLED is False
+    assert record.RECORD_BACKEND in {"elog", "dlog"}
+    assert record.RECORD_BACKEND == "dlog"
+    assert record.ELOG_TAIL == "drain_then_abort"
+
+
 def test_record_contracts_import_only_stdlib():
     path = Path(record.__file__)
     tree = ast.parse(path.read_text(encoding="utf-8"))
