@@ -216,6 +216,24 @@ def test_save_waiting_for_target_lock_is_cancellable(wire):
     assert not list(wire.tmp.glob('*.part'))
 
 
+def test_cancel_with_unread_body_still_delivers_409(wire):
+    out = wire.tmp / 'shot.png'
+    out.write_bytes(b'original')
+    with storage.path_lock(out):
+        conn = pending(wire, '/save', 60_000, req='big', extra={
+            c.HEADER_PURPOSE: 'png', c.HEADER_GRANT: wire.grant('save', 'png', out)})
+        try:
+            conn.send(b'x' * 4_000)
+            wait_for(lambda: wire.gate.job_count() == 1)
+            assert wire.j('POST', '/cancel', {'req': 'big'}) == (200, {'ok': True})
+            response = conn.getresponse()
+            assert response.status == 409
+            response.read()
+        finally:
+            conn.close()
+    assert out.read_bytes() == b'original'
+
+
 def test_save_streams_multiple_chunks(wire, monkeypatch):
     out = wire.tmp / 'shot.png'
     real = storage.atomic_write_iter
