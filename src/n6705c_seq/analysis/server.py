@@ -13,6 +13,7 @@ import math
 import re
 import secrets
 import select
+import socket
 import struct
 import threading
 import time
@@ -253,6 +254,26 @@ class _Handler(BaseHTTPRequestHandler):
         if self.command == "POST" and not self._consumed:
             self.close_connection = True  # unread body would corrupt keep-alive
         self._json({"error": e.text, "code": e.code.value}, c.HTTP_STATUS[e.code])
+        if self.close_connection and self.command == "POST" and not self._consumed:
+            self._drain_unread()
+
+    def _drain_unread(self):
+        # Closing a socket that still holds unread bytes sends RST on Windows, which can
+        # discard the response just written. Swallow what is already in flight, bounded.
+        end = time.monotonic() + 0.5
+        left = _IO_CHUNK_BYTES * 16
+        try:
+            self.wfile.flush()
+            self.connection.shutdown(socket.SHUT_WR)
+            while left > 0 and time.monotonic() < end:
+                if not select.select([self.connection], [], [], 0.05)[0]:
+                    break
+                part = self.connection.recv(min(left, _IO_CHUNK_BYTES))
+                if not part:
+                    break
+                left -= len(part)
+        except OSError:
+            pass
 
     # ---- body
     def _length(self, limit):
