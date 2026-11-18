@@ -40,7 +40,7 @@ def api(tmp_path, monkeypatch):
     value = _Api(tmp_path / "config.json")
     i18n.set_lang("en")
     value._window = _Window()
-    monkeypatch.setattr(web_seq, "detect_model", lambda resource: "N6705C")
+    monkeypatch.setattr(web_seq, "detect_model", lambda resource, **kwargs: "N6705C")
     yield value
     i18n.set_lang(original)
 
@@ -75,7 +75,7 @@ def _results(api):
 def _group(api, monkeypatch):
     closed = []
     group = SimpleNamespace(instruments=[SimpleNamespace(close=lambda: closed.append((api._gate.state()[0] == "power")))])
-    monkeypatch.setattr(web_seq, "connect_group", lambda resources: group)
+    monkeypatch.setattr(web_seq, "connect_group", lambda resources, **kwargs: group)
     return group, closed
 
 
@@ -275,16 +275,17 @@ def test_mixed_models_rejected_before_runners(api, threads, monkeypatch):
     threads.pop().run()
     assert "mixed instrument models" in _results(api)[0][3]
     assert not (api._gate.state()[0] == "power")
-    api.all_off(["first", "second"], False)
-    threads.pop().run()
-    assert "mixed instrument models" in _results(api)[0][3]
-    assert not (api._gate.state()[0] == "power")
 
 
 @pytest.mark.parametrize("model", ["N6705C", "E36441A"])
 def test_all_off_routes_and_closes(api, threads, monkeypatch, model):
-    monkeypatch.setattr(web_seq, "detect_model", lambda resource: model)
     calls = []
+
+    def detect(resource, *, timeout_ms):
+        calls.append(("detect", resource, timeout_ms))
+        return model
+
+    monkeypatch.setattr(web_seq, "detect_model", detect)
     group = InstrumentGroup.demo(frames=1, slots=DEMO_SLOTS)
     original_close = group.instruments[0].close
 
@@ -294,12 +295,107 @@ def test_all_off_routes_and_closes(api, threads, monkeypatch, model):
         original_close()
 
     monkeypatch.setattr(group.instruments[0], "close", close)
-    monkeypatch.setattr(web_seq, "connect_group", lambda resources: group)
-    monkeypatch.setattr(web_seq, "off_resources", lambda resources: calls.append(resources))
+    def connect(resources, *, timeout_ms):
+        calls.append(("connect", resources, timeout_ms))
+        return group
+
+    monkeypatch.setattr(web_seq, "connect_group", connect)
+    monkeypatch.setattr(web_seq, "outputs_off", lambda value: calls.append(("off", value)))
+    monkeypatch.setattr(web_seq, "off_resources",
+                        lambda resources, *, timeout_ms: calls.append(("off_resources", resources, timeout_ms)))
     assert api.all_off([" x ", ""], False) == {}
     threads.pop().run()
-    assert calls == (["close"] if model == "N6705C" else [["x"]])
+    assert web_seq.OFF_TIMEOUT_MS == 3000
+    assert calls == [("detect", "x", web_seq.OFF_TIMEOUT_MS)] + (
+        [("connect", ["x"], web_seq.OFF_TIMEOUT_MS), ("off", group), "close"]
+        if model == "N6705C" else [("off_resources", ["x"], web_seq.OFF_TIMEOUT_MS)])
     assert _results(api) == [["result", "info", i18n.tr("run_result"), i18n.tr("off_done")]]
+    assert not (api._gate.state()[0] == "power")
+
+
+def test_all_off_mixed_models(api, threads, monkeypatch):
+    calls = []
+    group, closed = _group(api, monkeypatch)
+
+    def detect(resource, *, timeout_ms):
+        assert timeout_ms == web_seq.OFF_TIMEOUT_MS
+        calls.append(("detect", resource))
+        return {"first": "E36441A", "second": "N6705C"}[resource]
+
+    def connect(resources, *, timeout_ms):
+        assert timeout_ms == web_seq.OFF_TIMEOUT_MS
+        calls.append(("connect", resources))
+        return group
+
+    def off(resources, *, timeout_ms):
+        assert timeout_ms == web_seq.OFF_TIMEOUT_MS
+        calls.append(("off_resources", resources))
+
+    monkeypatch.setattr(web_seq, "detect_model", detect)
+    monkeypatch.setattr(web_seq, "connect_group", connect)
+    monkeypatch.setattr(web_seq, "off_resources", off)
+    monkeypatch.setattr(web_seq, "outputs_off", lambda value: calls.append(("outputs_off", value)))
+    assert api.all_off(["first", "second"], False) == {}
+    threads.pop().run()
+    assert calls == [("detect", "first"), ("off_resources", ["first"]),
+                     ("detect", "second"), ("connect", ["second"]), ("outputs_off", group)]
+    assert closed == [True]
+    assert _results(api) == [["result", "info", i18n.tr("run_result"), i18n.tr("off_done")]]
+    assert not (api._gate.state()[0] == "power")
+
+
+@pytest.mark.parametrize("stage", ["detect", "connect", "off", "off_resources"])
+def test_all_off_failure_continues_to_next_resource(api, threads, monkeypatch, stage):
+    group, closed = _group(api, monkeypatch)
+    calls = []
+
+    def detect(resource, *, timeout_ms):
+        assert timeout_ms == web_seq.OFF_TIMEOUT_MS
+        calls.append(("detect", resource))
+        if resource == "first" and stage == "detect":
+            raise TimeoutError("detect timed out")
+        return "E36441A" if resource == "first" and stage == "off_resources" else "N6705C"
+
+    def connect(resources, *, timeout_ms):
+        assert timeout_ms == web_seq.OFF_TIMEOUT_MS
+        calls.append(("connect", resources))
+        if resources == ["first"] and stage == "connect":
+            raise TimeoutError("connect timed out")
+        return group
+
+    def off(value):
+        calls.append(("outputs_off", value))
+        if stage == "off" and calls.count(("outputs_off", value)) == 1:
+            raise RuntimeError("off failed")
+
+    def off_resources(resources, *, timeout_ms):
+        assert resources == ["first"] and timeout_ms == web_seq.OFF_TIMEOUT_MS
+        raise TimeoutError("off_resources timed out")
+
+    monkeypatch.setattr(web_seq, "detect_model", detect)
+    monkeypatch.setattr(web_seq, "connect_group", connect)
+    monkeypatch.setattr(web_seq, "outputs_off", off)
+    monkeypatch.setattr(web_seq, "off_resources", off_resources)
+    assert api.all_off(["first", "second"], False) == {}
+    threads.pop().run()
+    assert calls[-3:] == [("detect", "second"), ("connect", ["second"]), ("outputs_off", group)]
+    results = _results(api)
+    assert len(results) == 1 and results[0][1] == "error"
+    assert results[0][3] == f"1: first: {stage} " + ("failed" if stage == "off" else "timed out")
+    assert closed == ([True, True] if stage == "off" else [True])
+    assert not (api._gate.state()[0] == "power")
+
+
+def test_all_off_aggregates_failures(api, threads, monkeypatch):
+    def detect(resource, *, timeout_ms):
+        assert timeout_ms == web_seq.OFF_TIMEOUT_MS
+        raise TimeoutError(f"{resource} timed out")
+
+    monkeypatch.setattr(web_seq, "detect_model", detect)
+    assert api.all_off(["first", "second"], False) == {}
+    threads.pop().run()
+    assert _results(api) == [["result", "error", i18n.tr("run_result"),
+                              "1: first: first timed out\n2: second: second timed out"]]
     assert not (api._gate.state()[0] == "power")
 
 
@@ -397,7 +493,7 @@ def test_thread_start_failure_releases(api, monkeypatch):
 def test_all_off_failures_release(api, threads, monkeypatch, stage):
     _, closed = _group(api, monkeypatch)
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise RuntimeError("failed")
 
     if stage == "detect":

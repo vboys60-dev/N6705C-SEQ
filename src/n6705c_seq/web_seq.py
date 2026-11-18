@@ -15,6 +15,9 @@ from .i18n import tr
 from .plan import load_csv, write_csv
 
 
+OFF_TIMEOUT_MS = 3000
+
+
 def _scan_label(address, idn):
     identity = Identity.parse(idn)
     if not identity.model:
@@ -189,29 +192,25 @@ class SeqApi:
             self._release(token)
 
     def _off_work(self, resources, token):
-        self._finishing(token)
         try:
-            try:
-                if kind_of([detect_model(r) for r in resources]) == "E36441A":
-                    off_resources(resources)
-                    self._seq_result("info", tr("off_done"))
-                    return
-            except Exception as exc:
-                self._seq_result("error", str(exc))
-                return
-            try:
-                group = connect_group(resources)
-            except Exception as exc:
-                self._seq_result("error", tr("connection_error", error=exc))
-                return
-            try:
-                outputs_off(group)
+            self._finishing(token)
+            failures = []
+            for number, r in enumerate(resources, 1):
+                try:
+                    if detect_model(r, timeout_ms=OFF_TIMEOUT_MS) == "E36441A":
+                        off_resources([r], timeout_ms=OFF_TIMEOUT_MS)
+                    else:
+                        group = connect_group([r], timeout_ms=OFF_TIMEOUT_MS)
+                        try:
+                            outputs_off(group)
+                        finally:
+                            self._seq_close(group)
+                except Exception as exc:
+                    failures.append(f"{number}: {r}: {exc}")
+            if failures:
+                self._seq_result("error", "\n".join(failures))
+            else:
                 self._seq_result("info", tr("off_done"))
-            except Exception as exc:
-                self._seq_result("error", str(exc))
-            finally:
-                self._finishing(token)
-                self._seq_close(group)
         finally:
             self._release(token)
 
