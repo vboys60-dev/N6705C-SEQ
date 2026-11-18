@@ -125,7 +125,10 @@ class ArbRunner:
                 values[name] = session.query_float(f"ARB:{kind}:{suffix}? {chan}")
             except Exception as exc:
                 log.debug("readback of %s failed: %s", suffix, exc)
-                session.read_errors()
+                try:
+                    session.read_errors()
+                except Exception as cleanup_exc:
+                    log.debug("could not read errors after readback failed: %s", cleanup_exc)
         return values
 
 
@@ -168,7 +171,10 @@ class SequenceRunner:
             self.quality = session.query_int(f"ARB:SEQ:QUAL? {chan}")
         except Exception as exc:
             log.debug("sequence quality query failed: %s", exc)
-            session.read_errors()
+            try:
+                session.read_errors()
+            except Exception as cleanup_exc:
+                log.debug("could not read errors after sequence quality query failed: %s", cleanup_exc)
             self.quality = None
         self.state = ArbState.LOADED
 

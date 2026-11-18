@@ -139,12 +139,13 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - connection errors vary by backend
         print(f"connection failed: {exc}", file=sys.stderr)
         return 1
+    status = 0
     try:
         run_plan(group, rows, hold_dc=args.hold_dc,
                  on_warning=lambda text: print(f"WARNING: {text}"))
     except KeyboardInterrupt:
         print("interrupted; outputs forced off", file=sys.stderr)
-        return 130
+        status = 130
     except Exception as exc:  # noqa: BLE001 - run_plan already forced outputs off
         forced = (
             "" if isinstance(exc, OutputsNotConfirmedOff)
@@ -152,14 +153,16 @@ def main(argv: list[str] | None = None) -> int:
             else "; outputs forced off"
         )
         print(f"error: {exc}{forced}", file=sys.stderr)
-        return 1
+        status = 1
     finally:
         try:
             close_all(group.instruments)
         except RuntimeError as exc:
             print(f"error: {exc}", file=sys.stderr)
-    print("Sequence done; outputs left ON at the high level." if args.hold_dc else "Sequence done; outputs off.")
-    return 0
+            status = status or 1
+    if status == 0:
+        print("Sequence done; outputs left ON at the high level." if args.hold_dc else "Sequence done; outputs off.")
+    return status
 
 
 if __name__ == "__main__":
