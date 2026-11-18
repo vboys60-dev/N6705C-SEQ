@@ -92,8 +92,8 @@ def test_prepare_sets_fast_slew_before_low_and_optional_current():
         "INIT:CONT OFF,(@3)",
         "VOLT:SLEW:RIS INF,(@3)",
         "VOLT:SLEW:FALL INF,(@3)",
-        "VOLT 1,(@3)",
         "CURR 2,(@3)",
+        "VOLT 1,(@3)",
         "CURR:MODE FIX,(@3)",
         "VOLT:MODE FIX,(@3)",
         "OUTP ON,(@3)",
@@ -178,10 +178,13 @@ def test_hold_dc_check_still_validates_rise_dwell_limit():
 
 
 class _FakeSession:
+    _serial = 0
+
     def __init__(self):
+        type(self)._serial += 1
         self.sent = []
         self.queries = []
-        self.answers = {"*IDN?": "Keysight,E36441A,MY1,1.0", "OUTP:COUP:CHAN?": "NONE",
+        self.answers = {"*IDN?": f"Keysight,E36441A,MY{self._serial},1.0", "OUTP:COUP:CHAN?": "NONE",
                         "OUTP:PAIR?": "OFF"}
 
     def query(self, cmd):
@@ -203,6 +206,22 @@ class _FakeSession:
 def test_model_of():
     assert e36441a.model_of("Keysight Technologies,E36441A,MY1,1.0") == "E36441A"
     assert e36441a.model_of("garbage") == ""
+
+
+def test_duplicate_resources_rejected_before_opening(monkeypatch):
+    monkeypatch.setattr(e36441a, "_sessions", lambda *args: pytest.fail("opened resources"))
+    with pytest.raises(e36441a.PlanRejected, match="duplicate resource"):
+        e36441a.run_resources([" tcpip::a ", "TCPIP::A"], [ROW])
+
+
+def test_duplicate_serials_rejected_before_any_writes():
+    first, second = _FakeSession(), _FakeSession()
+    first.answers["*IDN?"] = "Keysight,E36441A,my1,1.0"
+    second.answers["*IDN?"] = "KEYSIGHT,E36441A,MY1,2.0"
+    with pytest.raises(e36441a.PlanRejected, match="duplicate instrument"):
+        e36441a.run_rows([first, second], [replace(ROW, channel=1)])
+    assert first.sent == second.sent == []
+    assert first.queries == second.queries == ["*IDN?"]
 
 
 def test_run_rows_sequence_and_restore(monkeypatch):
