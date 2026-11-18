@@ -191,12 +191,19 @@ class VisaTransport:
         last_error: Exception | None = None
         errors: list[str] = []
         for candidate in candidates:
+            rm = None
+            inst = None
             try:
                 if candidate == "@py":
                     _register_libusb()
                 rm = pyvisa.ResourceManager(candidate)
                 inst = rm.open_resource(resource)
             except Exception as exc:  # pragma: no cover - depends on host setup
+                if rm is not None:
+                    try:
+                        rm.close()
+                    except Exception:
+                        pass
                 last_error = exc
                 errors.append(f"  [{candidate or 'ivi'}] {exc}")
                 continue
@@ -218,10 +225,21 @@ class VisaTransport:
                 + _backend_advice(last_error)
             ) from last_error
 
-        self._inst.timeout = timeout_ms
-        self._inst.chunk_size = chunk_size
-        self._inst.write_termination = "\n"
-        self._inst.read_termination = "\n" if _is_socket_resource(resource) else None
+        try:
+            self._inst.timeout = timeout_ms
+            self._inst.chunk_size = chunk_size
+            self._inst.write_termination = "\n"
+            self._inst.read_termination = "\n" if _is_socket_resource(resource) else None
+        except Exception:
+            try:
+                self._inst.close()
+            except Exception:
+                pass
+            try:
+                self._rm.close()
+            except Exception:
+                pass
+            raise
 
     @property
     def description(self) -> str:
