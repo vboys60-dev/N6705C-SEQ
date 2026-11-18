@@ -101,7 +101,13 @@ class SeqApi:
         try:
             self._finishing(token)
             self._emit(["status", 0, tr("scanning")])
-            found = [[address, _scan_label(address, idn)] for address, idn in scan_resources()]
+            found, seen = [], set()
+            for address, idn in scan_resources():
+                # Two VISA backends list one USB instrument under two addresses; same *IDN? = same unit.
+                if idn and idn in seen:
+                    continue
+                seen.add(idn)
+                found.append([address, _scan_label(address, idn)])
             self._emit(["scan", found])
             if not found:
                 self._seq_result("info", tr("scan_none"), tr("scan_title"))
