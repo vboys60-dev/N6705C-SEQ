@@ -101,7 +101,8 @@ def _no_answer(conn, candidates):
     conn.close()
 
 
-def test_list_resources_merges_skips_and_closes(monkeypatch):
+@pytest.mark.parametrize("entrypoint", ["list_resources", "_list_on"])
+def test_list_resources_merges_skips_without_closing_shared_manager(monkeypatch, entrypoint):
     opened, closed, registered = [], [], []
 
     class Manager:
@@ -120,12 +121,43 @@ def test_list_resources_merges_skips_and_closes(monkeypatch):
             closed.append(self.candidate)
 
     monkeypatch.setitem(sys.modules, "pyvisa", SimpleNamespace(ResourceManager=Manager))
-    monkeypatch.setattr(transport, "_candidates", lambda backend: ["", "missing", "broken", "@py"])
+    candidates = ["", "missing", "broken", "@py"]
+    monkeypatch.setattr(transport, "_candidates", lambda backend: candidates)
     monkeypatch.setattr(transport, "_register_libusb", lambda: registered.append(True))
-    assert transport.list_resources() == ["ASRL1", "USB1", "TCPIP1"]
+    if entrypoint == "list_resources":
+        result = transport.list_resources()
+    else:
+        result = transport._list_on(candidates)
+    assert result == ["ASRL1", "USB1", "TCPIP1"]
     assert opened == ["", "missing", "broken", "@py"]
-    assert closed == ["", "broken", "@py"]
+    assert closed == []
     assert registered == [True]
+
+
+@pytest.mark.parametrize("entrypoint", ["list_resources", "_list_on"])
+def test_list_resources_failure_does_not_close_shared_manager(monkeypatch, entrypoint):
+    listed, closed = [], []
+
+    class Manager:
+        def list_resources(self):
+            listed.append(True)
+            raise OSError("discovery failed")
+
+        def close(self):
+            closed.append(True)
+
+    manager = Manager()
+    monkeypatch.setitem(sys.modules, "pyvisa", SimpleNamespace(ResourceManager=lambda backend: manager))
+    monkeypatch.setattr(transport, "_candidates", lambda backend: ["test"])
+
+    if entrypoint == "list_resources":
+        result = transport.list_resources()
+    else:
+        result = transport._list_on(["test"])
+
+    assert result == []
+    assert listed == [True]
+    assert closed == []
 
 
 def test_scan_candidates_computed_in_parent(monkeypatch):
