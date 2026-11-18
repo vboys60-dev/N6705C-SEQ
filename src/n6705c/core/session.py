@@ -8,20 +8,29 @@ many threads.
 
 from __future__ import annotations
 
-import logging
+import csv
+import re
 import threading
 from collections import deque
 from dataclasses import dataclass
 
 from .transport import Transport
 
-__all__ = ["ScpiError", "InstrumentError", "Session", "LoggedCommand"]
-
-log = logging.getLogger(__name__)
+__all__ = ["ScpiError", "InstrumentError", "ErrorQueueError", "Session", "LoggedCommand"]
 
 
 class InstrumentError(RuntimeError):
     """Base class for instrument-reported failures."""
+
+
+class ErrorQueueError(InstrumentError):
+    """The queue could not be verified empty; retain entries already read."""
+
+    def __init__(self, message: str, *, errors: list[ScpiError],
+                 response: str | None = None) -> None:
+        super().__init__(message)
+        self.errors = list(errors)
+        self.response = response
 
 
 @dataclass
@@ -97,21 +106,29 @@ class Session:
     # -- Error handling -----------------------------------------------------
 
     def read_errors(self) -> list[ScpiError]:
-        """Drain ``SYSTem:ERRor?`` until the queue reports no error."""
+        """Require valid CSV entries and a zero terminator within 50 reads."""
         errors: list[ScpiError] = []
         with self._lock:
             for _ in range(50):  # bounded, so a stuck queue cannot hang us
                 response = self._transport.query("SYST:ERR?")
-                code, _, message = response.partition(",")
                 try:
-                    code_value = int(float(code))
-                except ValueError:
-                    log.warning("unparsable error-queue response: %r", response)
-                    break
+                    row = next(csv.reader([response], strict=True, skipinitialspace=True))
+                    if (len(row) != 2 or re.fullmatch(r"[+-]?\d+", row[0].strip()) is None
+                            or not row[1].strip()):
+                        raise ValueError("expected an integer code and a nonempty message")
+                    code_value = int(row[0].strip())
+                except (csv.Error, ValueError, StopIteration) as exc:
+                    raise ErrorQueueError(
+                        f"Malformed SYST:ERR? response: {response!r}",
+                        errors=errors, response=response,
+                    ) from exc
                 if code_value == 0:
-                    break
-                errors.append(ScpiError(code_value, message.strip().strip('"')))
-        return errors
+                    return errors
+                errors.append(ScpiError(code_value, row[1].strip()))
+        raise ErrorQueueError(
+            f"SYST:ERR? did not reach zero in 50 reads; last response: {response!r}",
+            errors=errors,
+        )
 
     def check_errors(self, context: str = "") -> None:
         """Raise if the instrument queued any error.

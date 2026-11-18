@@ -430,7 +430,7 @@ def test_sink_disk_error_aborts_and_maps_sink(rig, monkeypatch):
     assert recover_part(Path(str(rig.final) + ".part")) == rig.final
 
 
-def test_init_323_is_bad_config_without_abort(rig):
+def test_init_323_is_bad_config_and_aborts(rig):
     def inject(command):
         if command.startswith("INIT:ELOG"):
             rig.io.base.errors.append((323, "injected INIT failure"))
@@ -439,8 +439,32 @@ def test_init_323_is_bad_config_without_abort(rig):
         run(rig)
     assert caught.value.code == 323
     assert _failure_code(caught.value, "fetch") == c.RecordCode.BAD_CONFIG
-    assert not any(cmd.startswith("ABOR:ELOG") for cmd in commands(rig))
+    assert_abort_order(rig)
     assert not rig.io.base.errors
+    assert list(rig.final.parent.iterdir()) == []
+
+
+@pytest.mark.parametrize("reply", ["garbage", TimeoutError("error query failed")])
+def test_init_delivered_but_error_check_failed_aborts_from_configured(rig, monkeypatch, reply):
+    stop = elog.ElogSession.stop
+    stopped_states = []
+
+    def observed_stop(session):
+        stopped_states.append((session.state, session.init_attempted))
+        return stop(session)
+
+    monkeypatch.setattr(elog.ElogSession, "stop", observed_stop)
+
+    def inject(command):
+        if command.startswith("INIT:ELOG"):
+            rig.io.on_query = lambda query: reply if query == "SYST:ERR?" else None
+
+    rig.io.on_write = inject
+    with pytest.raises(elog._ElogErrorQueueError):
+        run(rig)
+    assert stopped_states == [(elog.ElogState.CONFIGURED, True)]
+    assert_abort_order(rig)
+    assert not any(cmd.startswith("FETC:ELOG?") for cmd in commands(rig))
     assert list(rig.final.parent.iterdir()) == []
 
 
