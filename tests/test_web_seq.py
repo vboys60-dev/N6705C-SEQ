@@ -248,7 +248,7 @@ def test_seq_worker_emits_slew_warning_before_success(api, threads, monkeypatch)
     threads.pop().run()
     results = _results(api)
     assert [event[1] for event in results] == ["warning", "info"]
-    assert results[0][3] == i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, maximum=1e6)
+    assert results[0][3] == i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, required=4000.0)
     assert not (api._gate.state()[0] == "power")
 
 

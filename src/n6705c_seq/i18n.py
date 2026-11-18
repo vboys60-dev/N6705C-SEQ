@@ -146,7 +146,7 @@ STRINGS = {
     'fault_body': ('儀器或分析工作未在時限內結束，已停止接受新工作。輸出可能仍開著，請手動確認後關閉程式重開。', 'Instrument or analysis work did not finish in time; new work is blocked. Outputs may be on: check them, then close and restart.'),
     'overwrite_confirm': ('{name} 已存在，要覆寫嗎？', '{name} already exists. Overwrite?'),
     'closing_wait': ('正在結束背景工作，視窗稍後關閉。', 'Finishing background work; the window will close shortly.'),
-    'slew_warning': ('{channel} 的最大電壓轉換率覆寫已關閉；目前速率 {actual} V/s 低於速率上限 {maximum} V/s，波形可能受限。', '{channel} maximum voltage slew override is off; the current rate {actual} V/s is below the rate limit {maximum} V/s, so the waveform may be limited.'),
+    'slew_warning': ('{channel} 的最大電壓轉換率覆寫已關閉；目前速率 {actual} V/s 低於計畫所需速率 {required} V/s，波形可能受限。', '{channel} maximum voltage slew override is off; the current rate {actual} V/s is below the plan\'s required rate {required} V/s, so the waveform may be limited.'),
     'record_mode_view': ('檢視', 'View'),
     'record_mode_record': ('錄製', 'Record'),
     'record_title': ('即時資料錄製', 'Live Recording'),

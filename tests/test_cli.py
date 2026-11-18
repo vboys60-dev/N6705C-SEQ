@@ -100,6 +100,6 @@ def test_cli_prints_slew_warning_and_completes(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_group", lambda args, rows: group)
     assert main(["run", str(EXAMPLE), "--demo", "--yes"]) == 0
     out = capsys.readouterr().out
-    warning = i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, maximum=1e6)
+    warning = i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, required=599.9999999999994)
     assert f"WARNING: {warning}" in out
     assert out.index(warning) < out.index("Sequence done")

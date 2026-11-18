@@ -70,8 +70,8 @@ def test_record_sources_keep_translations_in_i18n():
 
 def test_slew_warning_keeps_rate_fields_in_both_languages():
     for text in i18n.STRINGS["slew_warning"]:
-        assert _placeholders(text) == {"channel", "actual", "maximum"}
-        text.format(channel="Frame 1:CH1", actual=2.0, maximum=100.0)
+        assert _placeholders(text) == {"channel", "actual", "required"}
+        text.format(channel="Frame 1:CH1", actual=2.0, required=500.0)
 
 
 def test_open_push_is_unsolicited_and_only_to_iframe():

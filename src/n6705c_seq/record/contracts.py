@@ -214,8 +214,10 @@ class ElogBlock(Protocol):
 
 # Required shell/bridge translation keys; text lives only in i18n.STRINGS.
 # slew_warning applies only when VOLT:SLEW:MAX? returns override=0 and
-# VOLT:SLEW? returns a rate below VOLT:SLEW? MAX (both rates in V/s).
-# Its fields are channel, actual (current rate), maximum (numeric rate limit).
+# VOLT:SLEW? returns a finite rate below the plan's max |delta V / delta t|
+# across positive-duration segments; rates >= INF_SENTINEL mean no limit.
+# Its fields are channel, actual (current rate), required (plan rate), in V/s.
+# Do not query VOLT:SLEW? MAX. Zero-duration jumps add no requirement.
 # override=1 forces maximum slew; do not warn based on a stored lower rate.
 I18N_KEYS: frozenset[str] = frozenset({
     "slew_warning",
