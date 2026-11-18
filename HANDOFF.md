@@ -224,7 +224,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - **已知限制**：LAN 廣播跨不了子網路；同一台儀器可能出現兩筆（後端寫法不同，或同時接 USB 與 LAN）；列舉階段有後端卡住時，該次其他後端的結果會丟失（`scan_resources` 的 `ponytail:` 註解）。
 - **接手要做**：接實機按「搜尋儀器」，確認清單與型號；沒搜到就對照 `HANDOFF_WINDOWS.md` §3.4 判讀。這功能已隨 `v0.2.0` pre-release 發出（2026-11-05，使用者決定先預先發行）；Windows 驗收後才轉正式，見 `HANDOFF_WINDOWS.md` §5。
 
-## 13. 即時資料紀錄（放進 Viewer 分頁）與 ARB 修補（2026-11-17 規劃；**Wave 0–2＋C2 已 commit，Wave 3 的 B-DLOG 已審查並 commit**，見 §13.7）
+## 13. 即時資料紀錄（放進 Viewer 分頁）與 ARB 修補（2026-11-17 規劃；**Wave 0–5 與審查修正已合併 main（PR #11–#14）**，見 §13.7、§13.8）
 
 來源：參考舊專案 Keysight 14585A（反編譯、字串擷取），再由 Opus 與 Codex Astra 討論三輪（完整輸出在 scratchpad `r1/r2/r3_final.txt`，不在 repo 內）。Astra 引用的 Keysight 手冊頁碼（p.291、p.311、p.373-374）Opus 沒核對，**待確認**。**使用者尚未說「開工」，下列只是決策。**
 
@@ -328,3 +328,33 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
      - ~~Minor：`analysis.js:147` 從檢視切到錄製只等 idle 10 s~~ **已修（2026-11-18）**：改等 32 s（draining 逾時 30 s＋餘裕，fault 事件會更早結束等待）；`record_meta` 失敗改為 try/catch，分析頁仍顯示、錄製視為關閉；JS 測試補一個。原描述：`analysis.js:147` 從檢視切到錄製只等 idle 10 s，比 draining 逾時 30 s 短，可能停在空白 Viewer；旗標關閉時 analysis 初始化仍 await `record_meta`（唯讀、無 I/O，風險低）。
    - 兩份審查一致確認沒問題：互斥無繞過路徑（異常路徑、對話框取消、關窗皆釋放 token，F 例外）、儀器 I/O 全在單一 worker 且 `record_stop` 只設 Event、import 邊界符合契約、i18n 齊全、旗標關閉時面板隱藏、`open_push` 驗證完整。`core/elog.py` 因 B-ELOG 未接線只審了 import 邊界。
 7. 之後才討論 push／PR 與打開 `RECORD_ENABLED`（需實機驗收；使用者決定）。
+
+### 13.8 要接實機的項目（2026-11-18）
+
+程式面的已知缺口（A–F、小項）都已修並合併；剩下的都需要實機。`RECORD_ENABLED` 維持 `False`，打開前下列 1–4 都要有結果，由使用者決定。
+
+**A. 儀器硬體（N6705C）**
+
+| # | 項目 | 做法 | 目的 |
+|---|---|---|---|
+| 1 | H0：ELOG 長時間穩定性 | `scripts/hw_elog_h0.py`，≥4 h，USB 與 LAN 各一次 | 決定 B-ELOG 能否開工；失敗退回 DLOG＋MEAS |
+| 2 | ARB／TRIG 檢查 | `scripts/hw_arb_trig_check.py`，slew 加 `--allow-reset`，以 seqnum 判定 A3 | 驗證 ARB 修正在真機上的行為 |
+| 3 | HW-P2：14585A 相容性 | 用 14585A 開啟錄出的 `.dlog` | 確認寫出的格式真機軟體讀得懂（Viewer 往返不能代替） |
+| 4 | 真機錄製驗收 | 旗標暫時打開，接真儀器錄一輪 DLOG | 確認設定、下載、發布在真機可用 |
+
+**B. Windows（不一定要儀器；清單在 `HANDOFF_WINDOWS.md` §8，需先把旗標打開）**
+
+| # | 項目 | 目的 |
+|---|---|---|
+| 5 | 錄製／收尾中關窗（§8 第 6 項） | 驗證 F 的關窗擋住與提示 |
+| 6 | 電源、分析、錄製互斥（第 7 項） | 三者不能同時進行 |
+| 7 | 打包 exe 的 record 匯入（第 8 項） | exe 內有 record 模組，Demo 錄一輪無 ImportError |
+| 8 | Defender 暫時鎖檔重試（第 9 項） | 驗證 D 的重試、不留 `.part` |
+
+**C. macOS（Demo，不需儀器）**
+
+| # | 項目 |
+|---|---|
+| 9 | 旗標暫時打開，手動點過檢視與錄製兩種模式的完整流程 |
+
+建議順序：先掛上 1（最久），同時做 5–9，有儀器時再做 2–4。B-ELOG 等 1 通過才開始；core 同步回 `../N6705C-APP` 等使用者開口。
