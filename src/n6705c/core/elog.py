@@ -20,7 +20,6 @@ Sequence (PLAN.md section 5.2)::
 
 from __future__ import annotations
 
-import csv
 import logging
 import math
 import threading
@@ -42,7 +41,7 @@ from .capability import (
 from .instrument import N6705C
 from .parsing import ElogSelection
 from .scpi import format_channel_list
-from .session import ScpiError
+from .session import ErrorQueueError, ScpiError
 
 __all__ = [
     "ElogConfig",
@@ -259,6 +258,7 @@ class ElogSession:
         self.instrument = instrument
         self.config = config
         self.state = ElogState.IDLE
+        self.init_attempted = False
         self.actual_period = config.period
         self.trigger_time_utc: datetime | None = None
         #: Things the instrument would not do, in the user's words.  Populated
@@ -283,26 +283,21 @@ class ElogSession:
 
     def _read_errors(self, context: str) -> list[ScpiError]:
         """Require a valid zero terminator, rather than silently truncating."""
-        errors: list[ScpiError] = []
-        for _ in range(50):
-            try:
-                response = self.instrument.session.query("SYST:ERR?")
-                row = next(csv.reader([response], strict=True, skipinitialspace=True))
-                if len(row) != 2 or not row[1].strip():
-                    raise ValueError(f"malformed error response: {response!r}")
-                code = int(row[0].strip())
-            except Exception as exc:
-                raise _ElogErrorQueueError(
-                    f"cannot drain ELOG error queue after {context}"
-                ) from exc
-            if code == 0:
-                return errors
-            error = ScpiError(code, row[1].strip(), context)
+        try:
+            errors = self.instrument.session.read_errors()
+        except Exception as exc:
+            message = f"cannot drain ELOG error queue after {context}"
+            if isinstance(exc, ErrorQueueError):
+                for error in exc.errors:
+                    error.command = context
+                    self.notes.append(str(error))
+                if exc.response is None:
+                    message = f"ELOG error queue did not reach zero in 50 reads after {context}"
+            raise _ElogErrorQueueError(message) from exc
+        for error in errors:
+            error.command = context
             self.notes.append(str(error))
-            errors.append(error)
-        raise _ElogErrorQueueError(
-            f"ELOG error queue did not reach zero in 50 reads after {context}"
-        )
+        return errors
 
     def _check_errors(self, context: str) -> None:
         errors = self._read_errors(context)
@@ -320,6 +315,7 @@ class ElogSession:
 
     def configure(self) -> None:
         """Apply the configuration and read back what the instrument accepted."""
+        self.init_attempted = False
         session = self.instrument.session
         chan = self.chanlist
         config = self.config
@@ -398,6 +394,7 @@ class ElogSession:
         """
         if self.state not in (ElogState.CONFIGURED, ElogState.STOPPED):
             raise RuntimeError(f"cannot arm from state {self.state.value}")
+        self.init_attempted = True
         self._write_checked(f"INIT:ELOG {self.chanlist}")
         self.state = ElogState.INITIATED
 
@@ -434,6 +431,7 @@ class ElogSession:
             self._write_checked(f"ABOR:ELOG {self.chanlist}")
         finally:
             self.state = ElogState.STOPPED
+            self.init_attempted = False
 
     # -- Fetching -----------------------------------------------------------
 

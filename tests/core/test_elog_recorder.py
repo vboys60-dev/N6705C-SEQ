@@ -9,11 +9,11 @@ import pytest
 
 from n6705c.core import elog
 from n6705c.core.instrument import N6705C
-from n6705c.core.session import ScpiError
+from n6705c.core.session import ErrorQueueError, ScpiError
 
 
 class FaultIO:
-    """Wrap the real Session; keep the simulator and binary parser in the path."""
+    """Wrap the transport; keep the real Session and binary parser in the path."""
 
     def __init__(self, base):
         self.base = base
@@ -68,13 +68,13 @@ def block(records):
 @pytest.fixture
 def rig():
     inst = N6705C.demo(slots=("N6781A",))
-    io = FaultIO(inst.session)
-    inst.session = io
+    io = FaultIO(inst.session._transport)
+    inst.session._transport = io
     session = elog.ElogSession(inst, elog.ElogConfig([1], period=0.01))
     session.configure()
     session.start()
     io.exchanges.clear()
-    yield session, io, io.base._transport
+    yield session, io, io.base
     inst.close()
 
 
@@ -648,6 +648,25 @@ def test_error_queue_limit_requires_zero_and_retains_all_errors(rig):
         session.configure()
     assert commands(io).count("SYST:ERR?") == 50
     assert sum("+310" in note for note in session.notes) == 50
+
+
+@pytest.mark.parametrize("reply", ["garbage", TimeoutError("error query failed")])
+def test_arm_tracks_attempt_before_failed_error_check_and_stop_resets_it(rig, reply):
+    session, io, _ = rig
+    session.stop()
+    session.configure()
+    assert session.init_attempted is False
+    io.on_query = lambda command: reply if command == "SYST:ERR?" else None
+    with pytest.raises(elog._ElogErrorQueueError) as caught:
+        session.arm()
+    assert session.state is elog.ElogState.CONFIGURED
+    assert session.init_attempted is True
+    assert "INIT:ELOG" in str(caught.value)
+    assert isinstance(caught.value.__cause__, ErrorQueueError if isinstance(reply, str) else TimeoutError)
+    with pytest.raises(elog._ElogErrorQueueError):
+        session.stop()
+    assert session.state is elog.ElogState.STOPPED
+    assert session.init_attempted is False
 
 
 @pytest.mark.parametrize("max_records", [0, 16385, True, 1.5])
