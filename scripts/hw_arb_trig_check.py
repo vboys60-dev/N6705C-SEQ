@@ -38,6 +38,7 @@ import numpy as np
 
 from n6705c.core.arb import ArbSpec, ConstantDwellArb, GroupArbRunner
 from n6705c.core.arb.scpi import configure_commands
+from n6705c.core.capability import SMU_MODELS
 from n6705c.core.function import ChannelFunction
 from n6705c.core.group import InstrumentGroup
 from n6705c.core.status import OperationStatus
@@ -213,9 +214,11 @@ def seqnum(check):
         observations.append((not errors, baseline, length))
         check.event(step=step, baseline_len=baseline, length=length,
                     accepted=not errors, errors="; ".join(errors))
-    if observations == [(True, 0, 1), (True, 0, 2)]:
-        return "PASS", "consistent with zero-based steps; endpoints 99/100 NOT tested"
-    if observations[0][0] is False and observations[0][1:] == (0, 0) and observations[1] == (True, 0, 1):
+    # E.02.09 leaves one default step after ARB:SEQ:RES (baseline 1), F.1.1.0 leaves none (baseline 0).
+    (ok0, b0, l0), (ok1, b1, l1) = observations
+    if ok0 and ok1 and b0 == b1 and l0 >= max(b0, 1) and l1 == l0 + 1:
+        return "PASS", f"consistent with zero-based steps (baseline {b0}); endpoints 99/100 NOT tested"
+    if not ok0 and l0 == b0 and ok1 and l1 == b0 + 1:
         return "PASS", "consistent with one-based steps; endpoints 99/100 NOT tested"
     return "INCONCLUSIVE", "step 0/1 acceptance and LEN do not identify the numbering base"
 
@@ -261,7 +264,9 @@ def waveform(check):
     GroupArbRunner.from_plan(check.group, [fn])
     check.write(f"VOLT:MODE FIX,{check.chan}")
     check.write(f"VOLT 0,{check.chan}")
-    check.write(f"CURR 0.1,{check.chan}")
+    # N678xA SMUs reject CURR (+315, voltage priority); their limit is CURR:LIM (as in execute._apply_levels).
+    smu = check.group.instruments[0].capabilities[check.channel].model.upper() in SMU_MODELS
+    check.write(f"CURR{':LIM' if smu else ''} 0.1,{check.chan}")
     for command in configure_commands(fn.spec):
         check.write(command)
     return fn
@@ -328,7 +333,7 @@ def bus_delay(check):
         check.set_arb_source(source)
         check.write(f"TRIG:TRAN:SOUR BUS,{check.chan}")
         for system, expected in (("ARB", source), ("TRAN", "BUS")):
-            actual = check.query(f"TRIG:{system}:SOUR? {check.chan}").strip().strip('"').upper()
+            actual = check.query(arb_source_query(check.chan) if system == "ARB" else f"TRIG:TRAN:SOUR? {check.chan}").strip().strip('"').upper()
             if actual != expected:
                 raise RuntimeError(f"{system} source readback {actual!r}, expected {expected}")
         tint, origin = arm_capture(check, fn, BUS_DELAY + DURATION + 0.5)
