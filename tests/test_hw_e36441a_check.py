@@ -84,3 +84,67 @@ def test_checks_with_fake_clock(mode, expect, monkeypatch):
     monkeypatch.setattr(hw, "time", SimpleNamespace(perf_counter=lambda: s.now, sleep=lambda x: None))
     args = SimpleNamespace(v_low=LOW, v_high=HIGH, rise=RISE, hold=HOLD, current=0.5)
     assert tuple(hw.CHECKS[n](s, 1, args, {}) for n in (1, 2, 3)) == expect
+
+
+@pytest.fixture
+def main_session(monkeypatch):
+    class RecordingTransport:
+        def __init__(self, resource):
+            self._inst = SimpleNamespace(encoding=None)
+
+    class RecordingSession:
+        def __init__(self, transport):
+            self.idn = "Keysight,E36441A,serial,version"
+            self.writes = []
+            self.closed = False
+
+        def query(self, cmd):
+            assert cmd == "*IDN?"
+            return self.idn
+
+        def write(self, cmd):
+            self.writes.append(cmd)
+
+        write_checked = write
+
+        def read_errors(self):
+            return []
+
+        def close(self):
+            self.closed = True
+
+    session = RecordingSession(None)
+    monkeypatch.setattr(hw, "VisaTransport", RecordingTransport)
+    monkeypatch.setattr(hw, "Session", lambda transport: session)
+    return session
+
+
+def test_main_wrong_model_does_not_write(main_session):
+    main_session.idn = "Keysight,N6705C,serial,version"
+
+    assert hw.main(["--resource", "fake"]) == 2
+    assert main_session.writes == []
+    assert main_session.closed
+
+
+def test_main_cancel_does_not_write(main_session, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+
+    assert hw.main(["--resource", "fake"]) == 1
+    assert main_session.writes == []
+    assert main_session.closed
+
+
+def test_main_check_error_restores_and_closes(main_session, monkeypatch):
+    def failing_check(session, ch, args, out):
+        raise RuntimeError("check failed")
+
+    monkeypatch.setitem(hw.CHECKS, 1, failing_check)
+
+    with pytest.raises(RuntimeError, match="check failed"):
+        hw.main(["--resource", "fake", "--yes", "--only", "1"])
+
+    assert main_session.writes[0] == "*RST"
+    assert "ABOR (@1)" in main_session.writes
+    assert "OUTP OFF,(@1)" in main_session.writes
+    assert main_session.closed
