@@ -358,3 +358,13 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 | 9 | 旗標暫時打開，手動點過檢視與錄製兩種模式的完整流程 |
 
 建議順序：先掛上 1（最久），同時做 5–9，有儀器時再做 2–4。B-ELOG 等 1 通過才開始；core 同步回 `../N6705C-APP` 等使用者開口。
+
+### 13.9 實機快測結果（2026-11-18，N6705C MY65000515，韌體 E.02.09.3271，USB；CH1=N6791A、CH2=N6781A；用 CH2）
+
+**限制**：單台、USB、數秒到數十秒的短測；LAN、≥4 h 長測、14585A 相容性（HW-P2）都沒做，所以 H0 仍是 INCONCLUSIVE，不是 PASS 也不是最終 FAIL。
+
+1. **ELOG 在這台取不到資料**：`FETC:ELOG?` 在錄製中一直回空區塊（`#10`），停止後回 `+303 no valid acquisition`；輸出通電（0.5 V／0.1 A 限制）也一樣，所以不是輸出關閉造成。依既定決策，B-ELOG 暫停，維持 DLOG＋MEAS 路線；要重新評估需先查 ELOG 在此韌體的正確用法。`scripts/hw_elog_h0.py` 新增 `--channel`（原本寫死 CH1，N6781A 的 `elog_arb` 探測還會因 `CURR` 要求 current priority 而 `+315`，腳本的 ARB 通電探測尚未改成 N6781A 可用）。
+2. **韌體 E.02.09 與 F.1.1.0 的指令差異（已修）**：`TRIG:ARB:SOUR` 在 E.02.09 是整台共用，帶通道清單會 `-108 Parameter not allowed`（`execute._set_arb_source_imm` 先試帶通道、遇 `-108` 改送不帶通道）；序列長度查詢正確寫法是 `ARB:SEQ:LENG?`（`LEN?` 是 `-113`，已改 `runner.py` 與 `hw_arb_trig_check.py`）。**`hw_arb_trig_check.py` 的 `TRIG:ARB:SOUR?`／`TRIG:ARB:SOUR <src>,(@ch)` 仍帶通道，在此韌體上會失敗，A3 的 seqnum 判定尚未做**。
+3. **DLOG 錄製在真機可完成（已修）**：本機 DLOG（BUS 觸發）設定、錄製、下載、發布全程成功，旁檔 `complete=True`。修了兩處假設：(a) 儀器把週期量化到 10.24 µs 格（要 1 ms 得 1.00352 ms）→ backend 允許一格差異並記 note；(b) 原生檔索引 trigger=`0xFFFFFFFF`、write 不等於筆數 → backend 與 Viewer（`parse_dlog` 原本讀 `>Q`）改讀兩個 `>I`，`0xFFFFFFFF` 時以位元組長度定筆數，其他非零 trigger 拒絕；環形排序未驗證（write 與筆數不符時旁檔記 note）。
+4. **MEAS 預覽在 DLOG 執行中不可用**：儀器回 `+319 Measurement is not allowed while data logger running`，第一次 MEAS 還要吃一次 VISA 逾時（約 5 s），之後 backend 會停用預覽，錄製本身不受影響；結果是**真機上錄製期間畫面沒有即時曲線**，且 5 s 錄製實際耗時約 10 s。要即時曲線需另找方法（例如 DLOG 中途不可行，只能錄完再載入）。
+5. 沒測：透過 GUI／`RecordApi` 走一次完整流程（只跑了 backend）、LAN、Windows。

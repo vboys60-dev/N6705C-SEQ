@@ -90,9 +90,18 @@ def parse_dlog(buf, *, _destination=None, cancel=None, progress=None) -> dict:
 
     if header_end + 8 > len(buf):
         raise DlogFormatError("檔案長度不足，缺少記錄筆數欄位")
-    n_records = struct.unpack_from(">Q", buf, header_end)[0]
     records_start = header_end + 8
     bytes_per_record = len(fields) * per_field * 4
+    # Two big-endian UInt32: trigger index, write index. Older files have trigger=0 (== a >Q count);
+    # a real N6705C BUS-triggered log has trigger=0xFFFFFFFF and a write index that is not the count,
+    # so the byte length decides how many records there are.
+    trigger, write = struct.unpack_from(">II", buf, header_end)
+    if trigger == 0xFFFFFFFF:
+        n_records = (len(buf) - records_start) // bytes_per_record
+    elif trigger == 0:
+        n_records = write
+    else:
+        raise DlogFormatError("Unsupported DLOG trigger index %d" % trigger)
     main_bytes = n_records * bytes_per_record
     if records_start + main_bytes > len(buf):
         raise DlogFormatError(

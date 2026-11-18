@@ -226,4 +226,4 @@ class SequenceRunner:
     def length(self) -> int:
         """Steps the instrument reports, which should match what we sent."""
         chan = format_channel_list(self.sequence.channel)
-        return self.instrument.session.query_int(f"ARB:SEQ:LEN? {chan}")
+        return self.instrument.session.query_int(f"ARB:SEQ:LENG? {chan}")

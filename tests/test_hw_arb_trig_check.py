@@ -165,7 +165,7 @@ class ArbTransportStub:
             return self.arb_sources[self.channel(command)]
         if command.startswith("TRIG:TRAN:SOUR?"):
             return self.tran_source
-        if command.startswith("ARB:SEQ:LEN?"):
+        if command.startswith("ARB:SEQ:LENG?"):
             return str(self.seq_len)
         if command.startswith("VOLT:SLEW:MAX?"):
             return str(self.max_override)

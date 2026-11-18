@@ -44,6 +44,16 @@ from n6705c.core.status import OperationStatus
 from n6705c_seq import execute
 
 BUS_DELAY = 2.0
+# E.02.09 firmware: TRIG:ARB:SOUR is frame-wide and rejects a channel list (-108); set by --frame-wide-arb-source.
+FRAME_WIDE_ARB_SOURCE = False
+
+
+def arb_source_set(source, chan):
+    return f"TRIG:ARB:SOUR {source}" + ("" if FRAME_WIDE_ARB_SOURCE else f",{chan}")
+
+
+def arb_source_query(chan):
+    return "TRIG:ARB:SOUR?" + ("" if FRAME_WIDE_ARB_SOURCE else f" {chan}")
 DWELL = 0.001024  # 100 * 10.24 us, exactly on the CDW grid
 LOW_TIME = 100 * DWELL
 DURATION = 3 * LOW_TIME
@@ -121,7 +131,7 @@ class Check:
         """Snapshot once per subcheck, before any trigger-source mutation."""
         try:
             reply, errors = self.exchange(
-                f"TRIG:ARB:SOUR? {self.chan}", query=True, probe=True)
+                arb_source_query(self.chan), query=True, probe=True)
         except Exception as exc:
             reply, errors = "", [f"{type(exc).__name__}: {exc}"]
         source = reply.strip().strip('"').upper()
@@ -134,7 +144,7 @@ class Check:
     def set_arb_source(self, source, *, probe=False):
         # Mark BEFORE I/O: a write/error-drain exception may follow a mutation.
         self.arb_source_changed = True
-        return self.exchange(f"TRIG:ARB:SOUR {source},{self.chan}", probe=probe)
+        return self.exchange(arb_source_set(source, self.chan), probe=probe)
 
     def event(self, **values):
         self.rows.append(values)
@@ -167,8 +177,8 @@ def cleanup(check):
     if check.arb_source_changed:
         source = check.arb_source_before or "IMM"
         try:
-            check.write(f"TRIG:ARB:SOUR {source},{check.chan}")
-            actual = check.query(f"TRIG:ARB:SOUR? {check.chan}").strip().strip('"').upper()
+            check.write(arb_source_set(source, check.chan))
+            actual = check.query(arb_source_query(check.chan)).strip().strip('"').upper()
             if actual != source:
                 raise RuntimeError(f"ARB source readback {actual!r}, expected {source}")
             check.arb_source_changed = False
@@ -183,7 +193,7 @@ def arbsrc(check):
     accepted = not errors and check.arb_source_before is not None
     for source in ("IMM", "BUS"):
         _, write_errors = check.set_arb_source(source, probe=True)
-        reply, read_errors = check.exchange(f"TRIG:ARB:SOUR? {check.chan}", query=True, probe=True)
+        reply, read_errors = check.exchange(arb_source_query(check.chan), query=True, probe=True)
         ok = not (write_errors or read_errors) and reply.strip().strip('"').upper() == source
         accepted &= ok
         check.event(phase=source, source=reply, accepted=ok,
@@ -197,9 +207,9 @@ def seqnum(check):
     check.write(f"ARB:FUNC:TYPE VOLT,{check.chan}")
     for step in (0, 1):
         check.write(f"ARB:SEQ:RES {check.chan}")
-        baseline = int(float(check.query(f"ARB:SEQ:LEN? {check.chan}")))
+        baseline = int(float(check.query(f"ARB:SEQ:LENG? {check.chan}")))
         _, errors = check.exchange(f"ARB:SEQ:STEP:FUNC:SHAP STEP,{step},{check.chan}", probe=True)
-        length = int(float(check.query(f"ARB:SEQ:LEN? {check.chan}")))
+        length = int(float(check.query(f"ARB:SEQ:LENG? {check.chan}")))
         observations.append((not errors, baseline, length))
         check.event(step=step, baseline_len=baseline, length=length,
                     accepted=not errors, errors="; ".join(errors))
@@ -425,7 +435,7 @@ def residual_bus(check):
         cleanup(check)
         fn = waveform(check)
         check.set_arb_source("BUS")
-        source_before = check.query(f"TRIG:ARB:SOUR? {check.chan}").strip().strip('"').upper()
+        source_before = check.query(arb_source_query(check.chan)).strip().strip('"').upper()
         if source_before != "BUS":
             raise RuntimeError(f"cannot establish residual BUS: readback {source_before!r}")
         window = execute.GRACE_SECONDS + 2 * DURATION + 0.75
@@ -444,7 +454,7 @@ def residual_bus(check):
             # checks. No I/O overlaps it: start_together joins before returning.
             with record_start(check, path, label):
                 execute.start_together(check.group, [fn], trigger_acquisition=capture_trigger)
-        source = check.query(f"TRIG:ARB:SOUR? {check.chan}").strip().strip('"').upper()
+        source = check.query(arb_source_query(check.chan)).strip().strip('"').upper()
         tran_source = check.query(f"TRIG:TRAN:SOUR? {check.chan}").strip().strip('"').upper()
         timed_out, status_before = wait_finished(check)
         rescue = math.nan
@@ -500,8 +510,12 @@ def main(argv=None):
     parser.add_argument("--channel", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--out", type=Path, default=Path("hw_arb_results"))
     parser.add_argument("--yes", action="store_true", help="confirm the selected actions; reset also requires --allow-reset")
+    parser.add_argument("--frame-wide-arb-source", action="store_true",
+                        help="firmware E.02.09: TRIG:ARB:SOUR takes no channel list")
     parser.add_argument("--allow-reset", action="store_true", help="allow slew to reset the entire frame with *RST")
     args = parser.parse_args(argv)
+    global FRAME_WIDE_ARB_SOURCE
+    FRAME_WIDE_ARB_SOURCE = args.frame_wide_arb_source
     print(EXT_INSTRUCTIONS)
     if args.check == "ext":
         return 0
