@@ -421,8 +421,11 @@ class DlogSession:
         session = self.instrument.session
         for path in remote_paths:
             session.write(f'MMEM:DEL "{path}"')
-            for error in session.read_errors():
-                log.debug("deleting %s: %s", path, error)
+            try:
+                for error in session.read_errors():
+                    log.debug("deleting %s: %s", path, error)
+            except Exception as exc:
+                log.debug("could not read errors after deleting %s: %s", path, exc)
 
     def retrieve(
         self, local_directory: Path | str, *, cleanup: bool = True
@@ -449,7 +452,10 @@ class DlogSession:
         except Exception as exc:
             # The CSV is the usable artefact; the raw file is a bonus.
             log.warning("could not transfer the raw .dlog file: %s", exc)
-            self.instrument.session.read_errors()
+            try:
+                self.instrument.session.read_errors()
+            except Exception as cleanup_exc:
+                log.debug("could not read errors after raw .dlog transfer failed: %s", cleanup_exc)
 
         if cleanup:
             self.delete_on_instrument(*downloaded)

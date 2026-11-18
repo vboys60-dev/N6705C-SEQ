@@ -24,9 +24,12 @@ def test_cli_closes_every_instrument_and_preserves_status(monkeypatch, capsys, s
         if status == 130:
             raise KeyboardInterrupt
     monkeypatch.setattr(cli, "run_plan", run)
-    assert main(["run", str(EXAMPLE), "--demo", "--yes"]) == status
+    assert main(["run", str(EXAMPLE), "--demo", "--yes"]) == (status or 1)
     assert closed == [1, 2]
-    assert "first close failed" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert "error:" in captured.err
+    assert "first close failed" in captured.err
+    assert "Sequence done" not in captured.out
 
 
 def test_check_prints_the_cross_frame_warning(capsys):

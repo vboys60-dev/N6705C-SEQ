@@ -16,6 +16,7 @@ __all__ = [
     "BUFFER_SECONDS",
     "ChannelCapability",
     "SMU_MODELS",
+    "LOAD_MODELS",
     "HISTOGRAM_MODELS",
     "RESISTANCE_MODELS",
     "ELOG_PERIOD_GRANULARITY",
@@ -36,6 +37,9 @@ __all__ = [
 # --- Model families -------------------------------------------------------
 # N678xA SMU modules. N6783A is *not* an SMU; the manual lists it separately.
 SMU_MODELS = frozenset({"N6781A", "N6782A", "N6784A", "N6785A", "N6786A"})
+
+# Electronic load modules must not be used as supply channels.
+LOAD_MODELS = frozenset({"N6791A", "N6792A"})
 
 # Histogram requires the Data Logger option (FETCh:HISTogram:CURRent?, p.98).
 HISTOGRAM_MODELS = frozenset({"N6781A", "N6782A", "N6785A", "N6786A"})
@@ -146,6 +150,10 @@ class ChannelCapability:
     @property
     def is_smu(self) -> bool:
         return self.model.upper() in SMU_MODELS
+
+    @property
+    def is_load(self) -> bool:
+        return self.model.upper() in LOAD_MODELS
 
     @property
     def supports_histogram(self) -> bool:

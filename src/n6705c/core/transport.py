@@ -80,6 +80,8 @@ def _probe_native_visa(conn) -> None:
         import pyvisa
 
         rm = pyvisa.ResourceManager("")
+        # Safe in this disposable probe process: its manager is independent of
+        # the parent process and cannot close the parent's instrument sessions.
         rm.close()
         conn.send(True)
     except Exception:
@@ -299,14 +301,14 @@ def _list_on(candidates: list[str]) -> list[str]:
             rm = pyvisa.ResourceManager(candidate)
         except Exception:  # pragma: no cover - depends on host setup
             continue
+        # Never close this shared ResourceManager, even if listing fails:
+        # doing so would close other instrument sessions using the VISA library.
         try:
             for resource in rm.list_resources():
                 if resource not in found:
                     found.append(resource)
         except Exception:  # pragma: no cover
             continue
-        finally:
-            rm.close()
     return found
 
 
