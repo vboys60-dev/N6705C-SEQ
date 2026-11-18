@@ -6,7 +6,7 @@ import threading
 
 from n6705c.core.group import CHANNELS_PER_FRAME, InstrumentGroup
 from n6705c.core.instrument import Identity
-from n6705c.core.transport import scan_resources
+from n6705c.core.transport import VisaTransport, scan_resources
 
 from . import form
 from .e36441a import detect_model, kind_of, off_resources, run_resources
@@ -16,6 +16,21 @@ from .plan import load_csv, write_csv
 
 
 OFF_TIMEOUT_MS = 3000
+
+
+def _blind_off(resource):
+    transport = VisaTransport(resource, timeout_ms=OFF_TIMEOUT_MS)
+    try:
+        for channel in range(1, 5):
+            try:
+                transport.write(f"OUTP OFF,(@{channel})")
+            except Exception:
+                pass
+    finally:
+        try:
+            transport.close()
+        except Exception:
+            pass
 
 
 def _scan_label(address, idn):
@@ -206,7 +221,14 @@ class SeqApi:
                         finally:
                             self._seq_close(group)
                 except Exception as exc:
-                    failures.append(f"{number}: {r}: {exc}")
+                    failure = f"{number}: {r}: {exc}"
+                    try:
+                        _blind_off(r)
+                    except Exception as blind_exc:
+                        failure += f"; blind OFF failed: {blind_exc}"
+                    else:
+                        failure += "; blind OFF sent, not confirmed"
+                    failures.append(failure)
             if failures:
                 ok = len(resources) - len(failures)
                 self._seq_result("error", f"{ok}/{len(resources)} ok\n" + "\n".join(failures))
