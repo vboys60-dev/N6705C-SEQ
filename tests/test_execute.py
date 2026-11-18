@@ -525,3 +525,38 @@ def test_fake_arb_source_storage_does_not_change_init_behavior():
     assert fake.channels[1].tran_running
     assert not fake.channels[2].tran_running
     assert fake.query("SYST:ERR?").startswith("+0,")
+
+
+class _Session:
+    def __init__(self, reject_list):
+        self.reject_list, self.sent = reject_list, []
+
+    def write_checked(self, command):
+        from n6705c.core.session import ScpiError
+        self.sent.append(command)
+        if self.reject_list and "(@" in command:
+            raise ScpiError(-108, "Parameter not allowed", command)
+
+
+@pytest.mark.parametrize("reject, expected", [
+    (False, ["TRIG:ARB:SOUR IMM,(@1,2)"]),
+    (True, ["TRIG:ARB:SOUR IMM,(@1,2)", "TRIG:ARB:SOUR IMM"]),  # E.02.09 is frame-wide
+])
+def test_arb_source_falls_back_to_frame_wide_form_on_minus_108(reject, expected):
+    from types import SimpleNamespace
+    from n6705c_seq.execute import _set_arb_source_imm
+    inst = SimpleNamespace(session=_Session(reject))
+    _set_arb_source_imm(inst, [1, 2])
+    assert inst.session.sent == expected
+
+
+def test_arb_source_other_errors_still_raise():
+    from types import SimpleNamespace
+    from n6705c.core.session import ScpiError
+    from n6705c_seq.execute import _set_arb_source_imm
+
+    class Bad:
+        def write_checked(self, command):
+            raise ScpiError(-221, "Settings conflict", command)
+    with pytest.raises(ScpiError):
+        _set_arb_source_imm(SimpleNamespace(session=Bad()), [1])

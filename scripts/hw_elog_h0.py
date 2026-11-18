@@ -33,6 +33,7 @@ from n6705c_seq import execute
 
 CHECKS = ("firstread", "format", "maxrec", "stall", "tail", "long", "elog_arb")
 INTERVAL = 0.250
+CH = 1  # --channel; the ARB probe and single-channel profiles use this channel
 # Minimum host/instrument clock-rate uncertainty for production estimates.
 CLOCK_DRIFT_PPM = 50
 COLUMNS = ("kind", "check", "variant", "profile", "transport", "demo", "idn",
@@ -142,7 +143,7 @@ def trials(check, seconds, demo):
     # Deliberate fixed 8192 baseline: hold request size constant across probes
     # and avoid the suspected 16384 boundary. Only maxrec changes this value;
     # it is a diagnostic control, not a measured ELOG_FETCH_RECORDS decision.
-    base = dict(profile="single", channels=[1], period=0.001,
+    base = dict(profile="single", channels=[CH], period=0.001,
                 fmt="REAL", maxrecords=8192, delay=0.0, duration=2.0,
                 tail="abort_then_drain", arb=False)
     changes = {
@@ -252,17 +253,17 @@ def run_trial(inst, check, variant, cfg, writer, *, demo, transport, idn):
         io.write("FORM " + cfg["fmt"])
         io.ascii = cfg["fmt"] == "ASC"
         if cfg["arb"]:
-            spec = ArbSpec(1, ConstantDwellArb(levels=[0.0, 1.0], dwell=0.1), count="INF")
+            spec = ArbSpec(CH, ConstantDwellArb(levels=[0.0, 1.0], dwell=0.1), count="INF")
             spec.validate()
-            for command in ["VOLT 0,(@1)", "CURR 0.1,(@1)", *configure_commands(spec),
-                            "TRIG:ARB:SOUR IMM,(@1)", "TRIG:TRAN:SOUR IMM,(@1)"]:
+            for command in [f"VOLT 0,(@{CH})", f"CURR 0.1,(@{CH})", *configure_commands(spec),
+                            f"TRIG:ARB:SOUR IMM,(@{CH})", f"TRIG:TRAN:SOUR IMM,(@{CH})"]:
                 io.write(command)
         elog.start()
         startup_delay = max(0, time.monotonic() - io.trigger_started_at)
         if cfg["arb"]:
-            io.write("OUTP ON,(@1)")
-            io.write("INIT:TRAN (@1)")
-            status = inst.operation_status([1])[1]
+            io.write(f"OUTP ON,(@{CH})")
+            io.write(f"INIT:TRAN (@{CH})")
+            status = inst.operation_status([CH])[CH]
             io.check_errors("STAT:OPER:COND?")
             if not (status & OperationStatus.TRAN_ACTIVE) or status & OperationStatus.WTG_TRAN:
                 raise RuntimeError("ARB not running alongside ELOG")
@@ -306,7 +307,7 @@ def run_trial(inst, check, variant, cfg, writer, *, demo, transport, idn):
         # Independent cleanup attempts: one failed ABOR must not skip OFF.
         commands = [f"ABOR:ELOG {elog.chanlist}"]
         if check == "elog_arb":
-            commands += ["ABOR:TRAN (@1)", "OUTP OFF,(@1)"]
+            commands += [f"ABOR:TRAN (@{CH})", f"OUTP OFF,(@{CH})"]
         if check == "format":
             commands += ["FORM REAL"]
         for command in commands:
@@ -419,12 +420,15 @@ def main(argv=None):
     mode.add_argument("--demo", action="store_true")
     parser.add_argument("--out", type=Path, default=Path("hw_elog_results"))
     parser.add_argument("--yes", action="store_true", help="authorise CH1 ARB 0..1 V, 0.1 A")
+    parser.add_argument("--channel", type=int, choices=range(1, 5), default=1, help="channel for single-channel probes and the ARB probe")
     parser.add_argument("--seconds", type=float, default=3600, help="long duration per profile")
     args = parser.parse_args(argv)
     if not math.isfinite(args.seconds) or args.seconds <= 0:
         parser.error("--seconds must be positive and finite")
     if args.check in ("elog_arb", "all") and not args.yes:
         parser.error("elog_arb enables CH1 output: --yes is required (also in demo)")
+    global CH
+    CH = args.channel
     args.out.mkdir(parents=True, exist_ok=True)
     group = (InstrumentGroup.demo(frames=1, slots=execute.DEMO_SLOTS) if args.demo
              else execute.connect_group([args.resource]))

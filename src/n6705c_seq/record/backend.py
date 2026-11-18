@@ -28,6 +28,7 @@ from .dlogfile import (
 from .snapshot import Envelope
 
 _PREVIEW_PERIOD = 0.025
+_PERIOD_QUANTUM_S = 10.24e-6  # one DLOG time-grid step
 _HEADER_LIMIT = 1024 ** 2
 
 
@@ -208,12 +209,19 @@ def _layout(part, cfg, period):
         stream.seek(end)
         trigger, write = struct.unpack(">II", stream.read(8))
     records = payload // record_bytes
-    if trigger != 0 or write > records or records > 2 ** 32 - 1:
+    # Real N6705C (E.02.09) BUS-triggered logs carry trigger=0xFFFFFFFF ("no trigger") and a write
+    # index that is not the record count; the byte length alone fixes N, so only the sentinel is allowed.
+    if trigger not in (0, 0xFFFFFFFF) or records > 2 ** 32 - 1:
         raise ValueError("Unsupported native DLOG indices")
     if records == 0:
         raise c.NoRecordsError("Recording contains no complete records")
-    return dict(header_bytes=end, record_bytes=record_bytes, time_offset=time_match.start(1),
-                time_width=len(time_match[1]), records=records)
+    layout = dict(header_bytes=end, record_bytes=record_bytes, time_offset=time_match.start(1),
+                  time_width=len(time_match[1]), records=records)
+    if trigger != 0 or write != records:
+        layout["note"] = (f"Native DLOG indices trigger={trigger}, write={write} differ from the "
+                          f"{records} records implied by file size; samples are taken in file order "
+                          "(ring-buffer ordering is unverified).")
+    return layout
 
 
 class _DlogBackend:
@@ -284,9 +292,12 @@ class _DlogBackend:
         session.configure()
         period, duration = session.actual_period, session.actual_duration
         _bounds(period, duration, fields)
-        if (not math.isclose(period, cfg["period_s"], rel_tol=1e-6)
-                or not math.isclose(duration, cfg["duration_s"], rel_tol=1e-6)):
+        # The instrument quantises the period to a 10.24 us grid and the duration to whole samples.
+        if (abs(period - cfg["period_s"]) > _PERIOD_QUANTUM_S
+                or abs(duration - cfg["duration_s"]) > max(2 * period, 1e-6 * cfg["duration_s"])):
             raise _bad_config("DLOG period/duration readback differs from the request")
+        if not math.isclose(period, cfg["period_s"], rel_tol=1e-6):
+            notes.append(f"Instrument adjusted the DLOG period from {cfg['period_s']} s to {period} s.")
         idn = checked.query("*IDN?")
         meta = dict(schema_version=1, producer="n6705c_seq.record", run_id=cfg["run_id"],
                     backend="dlog", preview=True, name=final.name, requested=deepcopy(cfg),
@@ -419,7 +430,10 @@ class _DlogBackend:
                             stream.flush()
                             os.fsync(stream.fileno())
                     try:
-                        meta.update(_layout(part, cfg, period))
+                        layout = _layout(part, cfg, period)
+                        if "note" in layout:
+                            notes.append(layout.pop("note"))
+                        meta.update(layout)
                     except c.NoRecordsError:
                         no_records = True
                         raise

@@ -213,3 +213,16 @@ def test_partial_channel_and_nan_excluded(cache_root, tmp_path):
 def test_offset_keeps_nan_and_neg_inf():
     neg = core.apply_current_offset(np.array([np.nan, -np.inf, -1.0, 2.0], dtype=np.float32), 0, MAX_LIMIT)
     assert np.isnan(neg[0]) and neg[1] == -np.inf and 0 < neg[2] <= MAX_LIMIT and neg[3] == 2.0, neg
+
+
+def test_hardware_bus_log_with_no_trigger_sentinel_counts_records_by_size():
+    hdr = b'<!-- x -->\n<dlog>\n<channel id="1"><sense_volt>1</sense_volt><sense_curr>1</sense_curr></channel>\n<frame><tint>0.001</tint></frame>\n</dlog>\n'
+    recs = [(1.0, 0.1), (2.0, 0.2), (3.0, 0.3)]
+    data = hdr + struct.pack(">II", 0xFFFFFFFF, 9941) + b"".join(struct.pack(">ff", *r) for r in recs)
+    assert core.parse_dlog(data)["nRecords"] == 3
+
+
+def test_unknown_trigger_index_is_rejected_not_misread():
+    hdr = b'<!-- x -->\n<dlog>\n<channel id="1"><sense_volt>1</sense_volt><sense_curr>1</sense_curr></channel>\n<frame><tint>0.001</tint></frame>\n</dlog>\n'
+    with pytest.raises(core.DlogFormatError, match="trigger index"):
+        core.parse_dlog(hdr + struct.pack(">II", 5, 3) + bytes(24))

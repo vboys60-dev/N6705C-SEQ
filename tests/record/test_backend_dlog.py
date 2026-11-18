@@ -791,3 +791,45 @@ def test_preview_error_drain_failure_is_only_a_note(rig, clock, monkeypatch):
     assert result['records'] == 1000 and result['gaps'] == 0
     assert rig.transport.meas_count == 1
     assert any('preview error drain failed' in note for note in result['notes'])
+
+
+def _native(path, trigger, write, records=3):
+    header = ('<!-- N6700X dlog settings -->\n<dlog>\n<channel id="2"><sense_volt>1</sense_volt>'
+              '<sense_curr>1</sense_curr></channel>\n<frame><sense_minmax>0</sense_minmax><offset>0</offset>'
+              '<tint>0.001024</tint><time>5</time></frame>\n</dlog>\n')
+    import struct
+    path.write_bytes(header.encode() + struct.pack('>II', trigger, write) + bytes(8 * records))
+    return dict(channels=[2], sense_volt=True, sense_curr=True)
+
+
+@pytest.mark.parametrize('trigger, write, note', [(0, 3, False), (0xFFFFFFFF, 9742, True), (0, 9742, True)])
+def test_native_indices_hardware_sentinel_is_accepted_with_note(tmp_path, trigger, write, note):
+    cfg = _native(tmp_path / 'x.part', trigger, write)
+    layout = module._layout(tmp_path / 'x.part', cfg, 0.001024)
+    assert layout['records'] == 3 and ('note' in layout) is note
+
+
+def test_native_trigger_other_than_sentinel_is_rejected(tmp_path):
+    cfg = _native(tmp_path / 'x.part', 5, 3)
+    with pytest.raises(ValueError, match='indices'):
+        module._layout(tmp_path / 'x.part', cfg, 0.001024)
+
+
+@pytest.mark.parametrize('shift, ok', [(3e-6, True), (200e-6, False)])
+def test_instrument_period_quantisation_is_accepted_but_large_change_is_not(rig, clock, monkeypatch, shift, ok):
+    rig.cfg['duration_s'] = 1
+    configure = DlogSession.configure
+    def shifted(self):
+        result = configure(self)
+        self.actual_period += shift
+        return result
+    monkeypatch.setattr(DlogSession, 'configure', shifted)
+    layout = module._layout  # the simulator's file keeps the requested tint; real hardware writes the adjusted one
+    monkeypatch.setattr(module, '_layout', lambda part, cfg, period: layout(part, cfg, cfg['period_s']))
+    backend = rig.build()
+    if ok:
+        backend.run(clock, lambda status: None)
+        assert any('adjusted the DLOG period' in note for note in read_meta(rig)['notes'])
+    else:
+        with pytest.raises(ValueError, match="readback differs"):
+            backend.run(clock, lambda status: None)

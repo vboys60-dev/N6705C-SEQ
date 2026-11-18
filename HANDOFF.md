@@ -224,7 +224,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - **已知限制**：LAN 廣播跨不了子網路；同一台儀器可能出現兩筆（後端寫法不同，或同時接 USB 與 LAN）；列舉階段有後端卡住時，該次其他後端的結果會丟失（`scan_resources` 的 `ponytail:` 註解）。
 - **接手要做**：接實機按「搜尋儀器」，確認清單與型號；沒搜到就對照 `HANDOFF_WINDOWS.md` §3.4 判讀。這功能已隨 `v0.2.0` pre-release 發出（2026-11-05，使用者決定先預先發行）；Windows 驗收後才轉正式，見 `HANDOFF_WINDOWS.md` §5。
 
-## 13. 即時資料紀錄（放進 Viewer 分頁）與 ARB 修補（2026-11-17 規劃；**Wave 0–2＋C2 已 commit，Wave 3 的 B-DLOG 已審查並 commit**，見 §13.7）
+## 13. 即時資料紀錄（放進 Viewer 分頁）與 ARB 修補（2026-11-17 規劃；**Wave 0–5 與審查修正已合併 main（PR #11–#14）**，見 §13.7、§13.8）
 
 來源：參考舊專案 Keysight 14585A（反編譯、字串擷取），再由 Opus 與 Codex Astra 討論三輪（完整輸出在 scratchpad `r1/r2/r3_final.txt`，不在 repo 內）。Astra 引用的 Keysight 手冊頁碼（p.291、p.311、p.373-374）Opus 沒核對，**待確認**。**使用者尚未說「開工」，下列只是決策。**
 
@@ -328,3 +328,43 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
      - ~~Minor：`analysis.js:147` 從檢視切到錄製只等 idle 10 s~~ **已修（2026-11-18）**：改等 32 s（draining 逾時 30 s＋餘裕，fault 事件會更早結束等待）；`record_meta` 失敗改為 try/catch，分析頁仍顯示、錄製視為關閉；JS 測試補一個。原描述：`analysis.js:147` 從檢視切到錄製只等 idle 10 s，比 draining 逾時 30 s 短，可能停在空白 Viewer；旗標關閉時 analysis 初始化仍 await `record_meta`（唯讀、無 I/O，風險低）。
    - 兩份審查一致確認沒問題：互斥無繞過路徑（異常路徑、對話框取消、關窗皆釋放 token，F 例外）、儀器 I/O 全在單一 worker 且 `record_stop` 只設 Event、import 邊界符合契約、i18n 齊全、旗標關閉時面板隱藏、`open_push` 驗證完整。`core/elog.py` 因 B-ELOG 未接線只審了 import 邊界。
 7. 之後才討論 push／PR 與打開 `RECORD_ENABLED`（需實機驗收；使用者決定）。
+
+### 13.8 要接實機的項目（2026-11-18）
+
+程式面的已知缺口（A–F、小項）都已修並合併；剩下的都需要實機。`RECORD_ENABLED` 維持 `False`，打開前下列 1–4 都要有結果，由使用者決定。
+
+**A. 儀器硬體（N6705C）**
+
+| # | 項目 | 做法 | 目的 |
+|---|---|---|---|
+| 1 | H0：ELOG 長時間穩定性 | `scripts/hw_elog_h0.py`，≥4 h，USB 與 LAN 各一次 | 決定 B-ELOG 能否開工；失敗退回 DLOG＋MEAS |
+| 2 | ARB／TRIG 檢查 | `scripts/hw_arb_trig_check.py`，slew 加 `--allow-reset`，以 seqnum 判定 A3 | 驗證 ARB 修正在真機上的行為 |
+| 3 | HW-P2：14585A 相容性 | 用 14585A 開啟錄出的 `.dlog` | 確認寫出的格式真機軟體讀得懂（Viewer 往返不能代替） |
+| 4 | 真機錄製驗收 | 旗標暫時打開，接真儀器錄一輪 DLOG | 確認設定、下載、發布在真機可用 |
+
+**B. Windows（不一定要儀器；清單在 `HANDOFF_WINDOWS.md` §8，需先把旗標打開）**
+
+| # | 項目 | 目的 |
+|---|---|---|
+| 5 | 錄製／收尾中關窗（§8 第 6 項） | 驗證 F 的關窗擋住與提示 |
+| 6 | 電源、分析、錄製互斥（第 7 項） | 三者不能同時進行 |
+| 7 | 打包 exe 的 record 匯入（第 8 項） | exe 內有 record 模組，Demo 錄一輪無 ImportError |
+| 8 | Defender 暫時鎖檔重試（第 9 項） | 驗證 D 的重試、不留 `.part` |
+
+**C. macOS（Demo，不需儀器）**
+
+| # | 項目 |
+|---|---|
+| 9 | 旗標暫時打開，手動點過檢視與錄製兩種模式的完整流程 |
+
+建議順序：先掛上 1（最久），同時做 5–9，有儀器時再做 2–4。B-ELOG 等 1 通過才開始；core 同步回 `../N6705C-APP` 等使用者開口。
+
+### 13.9 實機快測結果（2026-11-18，N6705C MY65000515，韌體 E.02.09.3271，USB；CH1=N6791A、CH2=N6781A；用 CH2）
+
+**限制**：單台、USB、數秒到數十秒的短測；LAN、≥4 h 長測、14585A 相容性（HW-P2）都沒做，所以 H0 仍是 INCONCLUSIVE，不是 PASS 也不是最終 FAIL。
+
+1. **ELOG 在這台取不到資料**：`FETC:ELOG?` 在錄製中一直回空區塊（`#10`），停止後回 `+303 no valid acquisition`；輸出通電（0.5 V／0.1 A 限制）也一樣，所以不是輸出關閉造成。依既定決策，B-ELOG 暫停，維持 DLOG＋MEAS 路線；要重新評估需先查 ELOG 在此韌體的正確用法。`scripts/hw_elog_h0.py` 新增 `--channel`（原本寫死 CH1，N6781A 的 `elog_arb` 探測還會因 `CURR` 要求 current priority 而 `+315`，腳本的 ARB 通電探測尚未改成 N6781A 可用）。
+2. **韌體 E.02.09 與 F.1.1.0 的指令差異（已修）**：`TRIG:ARB:SOUR` 在 E.02.09 是整台共用，帶通道清單會 `-108 Parameter not allowed`（`execute._set_arb_source_imm` 先試帶通道、遇 `-108` 改送不帶通道）；序列長度查詢正確寫法是 `ARB:SEQ:LENG?`（`LEN?` 是 `-113`，已改 `runner.py` 與 `hw_arb_trig_check.py`）。**`hw_arb_trig_check.py` 的 `TRIG:ARB:SOUR?`／`TRIG:ARB:SOUR <src>,(@ch)` 仍帶通道，在此韌體上會失敗，A3 的 seqnum 判定尚未做**。
+3. **DLOG 錄製在真機可完成（已修）**：本機 DLOG（BUS 觸發）設定、錄製、下載、發布全程成功，旁檔 `complete=True`。修了兩處假設：(a) 儀器把週期量化到 10.24 µs 格（要 1 ms 得 1.00352 ms）→ backend 允許一格差異並記 note；(b) 原生檔索引 trigger=`0xFFFFFFFF`、write 不等於筆數 → backend 與 Viewer（`parse_dlog` 原本讀 `>Q`）改讀兩個 `>I`，`0xFFFFFFFF` 時以位元組長度定筆數，其他非零 trigger 拒絕；環形排序未驗證（write 與筆數不符時旁檔記 note）。
+4. **MEAS 預覽在 DLOG 執行中不可用**：儀器回 `+319 Measurement is not allowed while data logger running`，第一次 MEAS 還要吃一次 VISA 逾時（約 5 s），之後 backend 會停用預覽，錄製本身不受影響；結果是**真機上錄製期間畫面沒有即時曲線**，且 5 s 錄製實際耗時約 10 s。要即時曲線需另找方法（例如 DLOG 中途不可行，只能錄完再載入）。
+5. 沒測：透過 GUI／`RecordApi` 走一次完整流程（只跑了 backend）、LAN、Windows。

@@ -15,10 +15,12 @@ import time
 from typing import Callable
 
 from n6705c.core.arb import ArbState, GroupArbRunner
+from n6705c.core.capability import SMU_MODELS
 from n6705c.core.group import GlobalChannel, InstrumentGroup
 from n6705c.core.instrument import N6705C
 from n6705c.core.parsing import decode_real32, split_block_list
 from n6705c.core.scpi import format_channel_list
+from n6705c.core.session import ScpiError
 from n6705c.core.transport import VisaTransport
 
 from .i18n import tr
@@ -163,11 +165,21 @@ def _frames(group: InstrumentGroup, functions) -> list[tuple[N6705C, list[int]]]
     return list(frames.values())
 
 
+def _set_arb_source_imm(instrument: N6705C, channels: list[int]) -> None:
+    """TRIG:ARB:SOUR is per-channel on F.1.1.0 but frame-wide on E.02.09 (-108 with a channel list)."""
+    try:
+        instrument.session.write_checked(f"TRIG:ARB:SOUR IMM,{format_channel_list(channels)}")
+    except ScpiError as exc:
+        if exc.code != -108:
+            raise
+        instrument.session.write_checked("TRIG:ARB:SOUR IMM")
+
+
 def _set_trigger_sources(group: InstrumentGroup, functions) -> None:
     """Check every frame's sources before enabling any output or initiating."""
     for instrument, channels in _frames(group, functions):
         instrument.session.write_checked(f"TRIG:TRAN:SOUR IMM,{format_channel_list(channels)}")
-        instrument.session.write_checked(f"TRIG:ARB:SOUR IMM,{format_channel_list(channels)}")
+        _set_arb_source_imm(instrument, channels)
 
 
 def start_together(group: InstrumentGroup, functions, trigger_acquisition: bool = False) -> None:
@@ -203,7 +215,9 @@ def _apply_levels(group: InstrumentGroup, functions) -> None:
         chan = format_channel_list(local)
         instrument.session.write_checked(f"VOLT {fn.voltage:.6G},{chan}")
         if fn.current:  # the table rejects a 0 A limit, so 0.0 here only ever means "none"
-            instrument.session.write_checked(f"CURR {fn.current:.6G},{chan}")
+            # N678xA SMUs run voltage priority by default and reject CURR (+315); their limit is CURR:LIM.
+            smu = instrument.capabilities[local].model.upper() in SMU_MODELS
+            instrument.session.write_checked(f"CURR{':LIM' if smu else ''} {fn.current:.6G},{chan}")
     group.set_output([fn.channel for fn in functions], True)
 
 
