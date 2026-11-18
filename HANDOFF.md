@@ -2,7 +2,7 @@
 
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。只做時序，不做量測。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-11-18　狀態：模擬器全過（pytest 1517 過／7 跳過）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
+最後更新：2026-11-18　狀態：模擬器全過（pytest 1518 過／7 跳過）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
 
 | 區塊 | 狀態 |
 |---|---|
@@ -205,7 +205,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
   - 合併後 Windows 卡死、gate 時間測試偶發失敗，原因是測試在 Windows 的假設不成立（mmap 不能刪／截短、cp1252、CRLF、win32 MessageBox），沒有產品問題。PR #3 已修：CI 加 `pytest-timeout`、`.gitattributes` `-text`、selftest 補 `webview.renderer = "edgechromium"`、gate 時間測試放寬、兩個截短／刪除 mmap 檔的測試在 win32 skip。
   - 專案改為公開 repo，Actions 不再受額度限制。PR #1–#4 全部合併（#4 加 `N6705C-SEQ.bat`），六個測試組合與 `build-windows` 全過。
   - 仍待：Windows 11 實機驗收（`HANDOFF_WINDOWS.md` §6）、`N6705C-SEQ.bat` 在 Windows 實測。
-- **不穩定測試 `test_save_waiting_for_target_lock_is_cancellable`（2026-10-31，Windows 本機 30–40% 失敗；2026-11-18 已實作修法，待 Windows 驗證）**：新推論——鎖在讀內容前取得，取消走 `Cancelled`→`_error` 回 409 後關連線，socket 內有未讀資料時 Windows 送 RST 吃掉回應。修法 `server._drain_unread`（`shutdown(SHUT_WR)`＋最多 0.5 s／1 MiB 讀掉剩餘）；Mac 無法重現，新測試 `test_cancel_with_unread_body_still_delivers_409` 在 Mac 修前也過。**待在 Windows 重複跑約 30 次**，零失敗才算修好；仍失敗則下面的推論都不成立。舊描述：：`ConnectionResetError`。推論（未用除錯器證實）：測試以 `wait_for(job_count()==1)` 當同步點，但 job 在讀請求內容前就已登記；若 `/cancel` 在 server 仍於 `_body_parts` 讀內容時到達，`_check_io`（`server.py:218`）拋 `_IOStopped`，`_dispatch`（`server.py:299`）不回應就關連線，測試預期的 409 變成連線重置。與編碼無關。**待決**：(1) 改測試，等內容讀完再取消；(2) 改 server，讀內容途中取消也回 409（先對照 `docs/analysis-contract.md`）。環境與其他測試結果見 `HANDOFF_WINDOWS.md` §7。同一台機器另修了兩處測試讀原始碼沒指定 UTF-8（cp950 下失敗）。
+- **不穩定測試 `test_save_waiting_for_target_lock_is_cancellable`（2026-10-31，Windows 本機 30–40% 失敗；2026-11-18 PR #17 `3027159` 已合併修法，待 Windows 驗證）**：新推論——鎖在讀內容前取得，取消走 `Cancelled`→`_error` 回 409 後關連線，socket 內有未讀資料時 Windows 送 RST 吃掉回應。修法 `server._drain_unread`（`shutdown(SHUT_WR)`＋最多 0.5 s／1 MiB 讀掉剩餘）；Mac 無法重現，新測試 `test_cancel_with_unread_body_still_delivers_409` 在 Mac 修前也過。**待在 Windows 重複跑約 30 次**，零失敗才算修好；仍失敗則下面的推論都不成立。舊描述：：`ConnectionResetError`。推論（未用除錯器證實）：測試以 `wait_for(job_count()==1)` 當同步點，但 job 在讀請求內容前就已登記；若 `/cancel` 在 server 仍於 `_body_parts` 讀內容時到達，`_check_io`（`server.py:218`）拋 `_IOStopped`，`_dispatch`（`server.py:299`）不回應就關連線，測試預期的 409 變成連線重置。與編碼無關。**待決**：(1) 改測試，等內容讀完再取消；(2) 改 server，讀內容途中取消也回 409（先對照 `docs/analysis-contract.md`）。環境與其他測試結果見 `HANDOFF_WINDOWS.md` §7。同一台機器另修了兩處測試讀原始碼沒指定 UTF-8（cp950 下失敗）。
 
 ## 12. 搜尋儀器下拉選單（2026-11-05，PR #8 已合併 `c7461c6`）
 按「搜尋儀器」後，機台 1、2 的下拉選單列出 `N6705C  S/N MY66102013  (USB0::...)`，點選填入純位址；手動貼上照舊。Codex 實作、Opus 審核。使用者已確認離線測試可用，並決定先合併、之後再驗實機。
@@ -327,7 +327,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
      - ~~**F（擋打開旗標）**~~ **已修（2026-11-18，分支 fix/record-fault-close）**：`Gate.on_closing()` 在 fault 且 owner 仍在、`worker_done` 為 False 時回 `"power"`（沿用既有「忙碌」提示並擋關窗）；worker 遲到返回後 `worker_done=True` 才放行（仍不解鎖故障）。純分析逾時 fault（owner 為空）行為不變。測試：`test_activity_gate.py`、`test_webgui.py` 各補一個。限制：worker 若永遠卡死，視窗關不掉，只能強殺行程（刻意取捨，優先保護儀器與檔案）。
      - ~~Minor：`analysis.js:147` 從檢視切到錄製只等 idle 10 s~~ **已修（2026-11-18）**：改等 32 s（draining 逾時 30 s＋餘裕，fault 事件會更早結束等待）；`record_meta` 失敗改為 try/catch，分析頁仍顯示、錄製視為關閉；JS 測試補一個。原描述：`analysis.js:147` 從檢視切到錄製只等 idle 10 s，比 draining 逾時 30 s 短，可能停在空白 Viewer；旗標關閉時 analysis 初始化仍 await `record_meta`（唯讀、無 I/O，風險低）。
    - 兩份審查一致確認沒問題：互斥無繞過路徑（異常路徑、對話框取消、關窗皆釋放 token，F 例外）、儀器 I/O 全在單一 worker 且 `record_stop` 只設 Event、import 邊界符合契約、i18n 齊全、旗標關閉時面板隱藏、`open_push` 驗證完整。`core/elog.py` 因 B-ELOG 未接線只審了 import 邊界。
-7. push／PR 已完成（PR #11–#16 皆合併）；打開 `RECORD_ENABLED` 仍需實機驗收，由使用者決定。見 §13.10。
+7. push／PR 已完成（PR #11–#17 皆合併）；打開 `RECORD_ENABLED` 仍需實機驗收，由使用者決定。見 §13.10。
 
 ### 13.8 要接實機的項目（2026-11-18）
 
@@ -369,13 +369,14 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 4. **MEAS 預覽在 DLOG 執行中不可用**：儀器回 `+319 Measurement is not allowed while data logger running`，第一次 MEAS 還要吃一次 VISA 逾時（約 5 s），之後 backend 會停用預覽，錄製本身不受影響；結果是**真機上錄製期間畫面沒有即時曲線**，且 5 s 錄製實際耗時約 10 s。要即時曲線需另找方法（例如 DLOG 中途不可行，只能錄完再載入）。
 5. 沒測：透過 GUI／`RecordApi` 走一次完整流程（只跑了 backend）、LAN、Windows。
 
-### 13.10 目前狀態與下一步（2026-11-18 晚，PR #11–#16 皆已合併 main）
+### 13.10 目前狀態與下一步（2026-11-18 晚，PR #11–#17 皆已合併 main）
 
-**驗證基準**：Python 1517 passed／7 skipped、node 68 passed、CI 六組測試（ubuntu／macOS／Windows × 3.11／3.13）與 `build-windows` 皆通過。`RECORD_ENABLED=False`，使用者看不到即時紀錄功能。
+**驗證基準**：Python 1518 passed／7 skipped、node 68 passed、CI 六組測試（ubuntu／macOS／Windows × 3.11／3.13）與 `build-windows` 皆通過。`RECORD_ENABLED=False`，使用者看不到即時紀錄功能。
 
 **已完成**：Wave 0–5；審查項 A、B（writer 發布順序）、C、D（Windows `os.replace` 重試，程式面）、E（覆寫守衛）、F（fault＋worker 仍活著時擋關窗）、`.part` 殘留、兩個小項；實機相容修正（見 §13.9）。HANDOFF 內對應條目已劃掉。
 
 **下一步**
+0. **不需儀器的已做完**：停止延遲（PR #16）、不穩定測試修法（PR #17，Mac 重現不了，**待 Windows 重複跑 ~30 次零失敗**）。剩 Windows 實測（`HANDOFF_WINDOWS.md` §8 第 5–9 項）與 macOS 手動點測，都要人在 GUI 前操作。
 1. ~~**停止延遲**~~ **已修並合併（2026-11-18，PR #16 `fe043a6`）**：真機（`session.description` 非 `Demo mode`）不送 MEAS 預覽，只記 note；模擬器行為不變；待真機確認停止即時。原描述：真機 DLOG 執行中 MEAS 一律被拒（`+319`），第一次 MEAS 吃 VISA 逾時（約 5 s），錯誤清查再吃一次，所以按停止要約 10 s 才生效（`record/backend.py` 預覽迴圈）。建議真機不送 MEAS 預覽（錄製中本來就沒有即時曲線），模擬器行為不變；需要先決定如何判斷是真機（目前 `N6705C` 沒有 demo 旗標），並更新「預覽」相關測試與契約。
 2. **ELOG 在 E.02.09 取不到資料（需儀器）**：`FETC:ELOG?` 錄製中回空區塊、停止後 `+303`，通電也一樣。要重新評估 ELOG 在此韌體的正確用法（是否缺少觸發或其他前置指令）後，才決定 B-ELOG 是否開工；在那之前走 DLOG＋MEAS 路線（MEAS 又不可用，見上）。
 3. **A3 判定（使用者）**：`seqnum` 證據偏向步驟編號從 0 起算（重設後長度 1、寫步驟 0 長度不變、寫步驟 1 變 2；查步驟 1 回「有效範圍 0 到 0」），腳本自己判 INCONCLUSIVE，單台單次。
