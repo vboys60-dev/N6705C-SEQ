@@ -243,13 +243,13 @@ A1 補 `TRIG:ARB:SOUR[?]`，支援通道清單、儲存並回讀 IMM/BUS 等接�
 | `VOLT:SLEW:MAX? (@1)` | 回傳最大轉換率覆寫旗標 `override`，僅 `0` 或 `1`；沒有 V/s 單位，絕不能當速率上限 |
 | `VOLT:SLEW <rate>,(@1)` | 保存數值速率並設 override=0；`MAX`／`INF` 則保存速率上限並設 override=1，與手冊的耦合語意一致 |
 
-fake 建構預設為 rate=該通道 maximum、override=0（手冊的 rate 預設 MAX、override 預設 OFF）；預設速率已達上限，不發警告。多通道依清單順序回傳，以逗號分隔，旗標亦逐通道回 0/1。這是 fake 模型，不是類比輸出能力證據。本輪**不執行 `*RST`**，只能描述/測試建構預設，不對真機動作。未知指令仍 -113。
+fake 建構預設為 rate=該通道 maximum、override=0（手冊的 rate 預設 MAX、override 預設 OFF）；是否警告依下述計畫需求規則判斷，不再比較 fake maximum。多通道依清單順序回傳，以逗號分隔，旗標亦逐通道回 0/1。這是 fake 模型，不是類比輸出能力證據。本輪**不執行 `*RST`**，只能描述/測試建構預設，不對真機動作。未知指令仍 -113。
 
-A1 在 `start_together` 的 INIT 前送 `TRIG:ARB:SOUR IMM,(@...)` 並 write_checked；ARB source 被拒必在開輸出前中止，檢查現有呼叫順序，不能只在輸出已開後補查。`slew_warnings(group,functions)->list[str]` 分別讀 `VOLT:SLEW:MAX? (@...)` 的 override、`VOLT:SLEW? (@...)` 的 rate，以及 `VOLT:SLEW? MAX,(@...)` 的數值速率上限。**僅 override=0 且 rate < maximum 時**用 `slew_warning`；override=1 表示最大轉換率覆寫已啟用，即使保存的 rate 較低也不發此警告；override=0 且 rate=maximum 亦不警告。例：override=0、rate=2、maximum=100 會警告；override=1、rate=2、maximum=100 不會。
+A1 在 `start_together` 的 INIT 前送 `TRIG:ARB:SOUR IMM,(@...)` 並 write_checked；ARB source 被拒必在開輸出前中止，檢查現有呼叫順序，不能只在輸出已開後補查。`slew_warnings(group,functions)->list[str]` 僅讀 `VOLT:SLEW:MAX? (@...)` 的 override 與 `VOLT:SLEW? (@...)` 的 rate，**不再查 `VOLT:SLEW? MAX`**。每通道 required 為該通道所有電壓波形函式的最大 |Δv/Δt|，沿用 `ArbSpec.waveform.points()`／`ArbSequence.points()`，只計 Δt>0 的線段；Step、Pulse、rise/fall=0 的瞬間跳階不列入需求。List 編譯後的 ConstantDwellArb 點資料僅有 Δt=0 電壓跳變，因此 required=0、不發此警告。SEQ 梯形需求即 |high−low|/rise 與 /fall 的最大值（忽略零時間邊緣）。**僅 override=0 且 rate < required 時**用 `slew_warning`；override=1 或 rate≥`INF_SENTINEL`（1e37，涵蓋 9.9E37 無限大哨兵）不警告。例：required=500 V/s 時，rate=2 警告，rate=1000／3300 不警告；rate=required 亦不警告。實機 N6781A 預設 3300 V/s、`SLEW? MAX` 為 9.9E37，不再查 MAX，也不再將預設速率與哨兵比較而誤報。
 
-上述三種 slew 查詢（`VOLT:SLEW?`、`VOLT:SLEW? MAX`、`VOLT:SLEW:MAX?`）任一被拒或不支援時，須記 log（含指令、原始回值與錯誤），跳過依賴該值的警告判定，不阻止執行；不可用 `write_checked` 直接拋錯中止。`VOLT:SLEW? MAX` 的查詢支援以 HAs 實測為準；HAs 的 slew 子項須在 reset 前後各 probe 並保留原始回值與錯誤，此新增 probe 被拒亦不使子項失敗。
+上述兩種 slew 查詢（`VOLT:SLEW?`、`VOLT:SLEW:MAX?`）任一被拒或不支援時，須記 log（含指令、原始回值與錯誤），跳過依賴該值的警告判定，不阻止執行；不可用 `write_checked` 直接拋錯中止。HAs 的 slew 子項仍可在 reset 前後 probe 並保留原始回值與錯誤，診斷腳本與應用程式前檢分開。
 
-`slew_warning` 欄位固定 `channel,actual,maximum`：channel 為可讀機台:通道字串，actual=rate，maximum=**`VOLT:SLEW? MAX` 的數值**，後兩者單位皆為 V/s；翻譯明述覆寫已關閉，不把 0/1 填進速率欄。`run_functions(...,on_warning=None)` 只新增 keyword；警告在開輸出前發、不阻止執行，None 寫 log；SEQ/List/CLI 都接上。真機 ARB source 是否造成既有起跑現象、各模組的 slew 查詢支援與回值仍等 HAs，不能將手冊或 fake 當實測。
+`slew_warning` 欄位固定 `channel,actual,required`：channel 為可讀機台:通道字串，actual=rate，required=**該計畫對此通道所需的最大電壓變化率**，後兩者單位皆為 V/s；翻譯明述覆寫已關閉，不把 0/1 填進速率欄。`run_functions(...,on_warning=None)` 只新增 keyword；警告在開輸出前發、不阻止執行，None 寫 log；SEQ/List/CLI 都接上。fake 不是實機類比輸出能力證據。
 
 ## C10 錯誤碼與翻譯
 

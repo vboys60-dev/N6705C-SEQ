@@ -531,9 +531,30 @@ def test_list_worker_emits_slew_warning_before_success(api, monkeypatch):
     monkeypatch.setattr(web_list.InstrumentGroup, "demo", lambda **kwargs: group)
     plan = list_form.plan_from_dict(_plan())
     compiled = synth.compile_plan(plan)
+    # ConstantDwellArb has only zero-duration jumps. Supply a finite ramp to
+    # exercise warning forwarding independently of the List compilation format.
+    from n6705c.core.arb import ArbSpec, RampArb
+    from n6705c.core.function import ChannelFunction
+
+    functions = [ChannelFunction(1, arb_enabled=True, output_on=True,
+                 spec=ArbSpec(1, RampArb(start_level=0, end_level=1, start_time=0,
+                                        rise_time=0.002, end_time=0)))]
+    monkeypatch.setattr(synth, "to_functions", lambda plan, compiled: functions)
     token = api._reserve("power")
     api._list_work(plan, compiled, 1, [], True, False, token)
     results = [event for event in _legacy_events(api) if event[0] == "result"]
     assert [event[1] for event in results] == ["warning", "info"]
-    assert results[0][3] == i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, maximum=1e6)
+    assert results[0][3] == i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, required=500.0)
     assert not (api._gate.state()[0] == "power")
+
+
+def test_list_worker_does_not_warn_for_constant_dwell_jumps(api, monkeypatch):
+    group = InstrumentGroup.demo(frames=1, slots=web_list.execute.DEMO_SLOTS)
+    group.instruments[0].session.write_checked("VOLT:SLEW 2,(@1)")
+    monkeypatch.setattr(web_list.InstrumentGroup, "demo", lambda **kwargs: group)
+    plan = list_form.plan_from_dict(_plan())
+    compiled = synth.compile_plan(plan)
+    token = api._reserve("power")
+    api._list_work(plan, compiled, 1, [], True, False, token)
+    results = [event for event in _legacy_events(api) if event[0] == "result"]
+    assert [event[1] for event in results] == ["info"]

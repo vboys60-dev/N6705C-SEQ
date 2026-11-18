@@ -291,7 +291,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 1. ~~B-DLOG 雙審~~ 已完成（見上）。
 2. 已知缺口（B-DLOG 審查遺留，皆不擋）：原生 `.part` 無法被 `recover_part()` 復原（沒植入 run_id）；（MEAS 連續失敗讓整個 run 失敗的缺口已於 Wave 5 修正，見第 6 項）契約待補：MEAS 連續失敗上限 3、gap index 用預覽序列且 count=null、`envelope.preview=True` 由 backend 設；覆寫舊檔時第二次 replace 失敗，舊錄音的 `complete=True` 旁檔會被新的 `complete=False` 取代（舊資料檔仍在，比配錯安全）；`_disk` 補欄位後無 errno 的 `OSError` 其 `str()` 顯示 `[Errno None]`；`notes` 重複記同一例外、`started_utc` 用 `+00:00` 而其他欄位用 `Z`；缺測試：發布最後一步（標 `complete=True`）失敗。
 3. **使用者要在真機跑**（Wave 3 B-ELOG 與 A3 卡在這）：`scripts/hw_elog_h0.py`（elog_arb 需 `--yes`；完整 USB＋LAN × 2 設定 × ≥1 h，總計 ≥4 h）與 `scripts/hw_arb_trig_check.py`（`slew` 項送 `*RST`，需 `--allow-reset`；`seqnum` 結果決定 A3）。H0 PASS → 做 B-ELOG（`backend.py` 目前被 B-DLOG 佔用，若兩支並存要照計畫拆成 `backend_elog.py`／`backend_dlog.py`＋分派的 `backend.py`，需重過 T0）；FAIL → 以 B-DLOG 為準，C13 上限 256 MB 生效。
-4. 待決設計：B-ELOG 是否合併 `empty_backlog` 與 `tail_incomplete` 的 gap；長錄時鐘漂移（10 h×100 ppm≈3.6 s）可能造成誤報 `tail_incomplete`；`VOLT:SLEW? MAX` 若不支援，每台每次會多約 10 s 逾時；非 demo 模式現在開兩次 VISA（`detect_model` 再 `connect_group`）。
+4. 待決設計：B-ELOG 是否合併 `empty_backlog` 與 `tail_incomplete` 的 gap；長錄時鐘漂移（10 h×100 ppm≈3.6 s）可能造成誤報 `tail_incomplete`；slew 前檢已移除 `VOLT:SLEW? MAX` 查詢，消除其不支援時每台每次約 10 s 的逾時；非 demo 模式現在開兩次 VISA（`detect_model` 再 `connect_group`）。
 5. **Wave 4：I、D 已完成並驗收**（I 整合測試 4 個、selftest 結束碼 0；全套 1445 passed／7 skipped，node 67 過；D 文件打包，同步清單已對照 diff 與 APP 現況核對）。D 已補 README 旗標／互斥／關窗說明、Windows 錄製驗收清單（`HANDOFF_WINDOWS.md` §8）及 spec 的 `collect_submodules("n6705c_seq.record")`；Windows 建置、`build-windows` CI 與實機驗收仍待完成。之後是 **Wave 5：R 雙審**。**H0 結果：尚未實測**；目前 B-DLOG 的存在不代表 H0 FAIL，也不代表 ELOG 已驗收。
 
    **core 同步清單（`../N6705C-APP` 是手動副本，非 git，只能 additive 同步）**：本次只讀核對，未同步 APP。依 `git log`／`git diff d6b9d2a..HEAD`，core 變更來自 `58c1fc2`、`7b2a494`、`34dd510`；並直接比對 APP 現存檔案：`elog.py`、`fake.py`、`arb/multi.py` 與 `d6b9d2a` 相同，`dlog.py` 已含 `7b2a494` 的 `wait()` 修正。以下逐項合入 APP 對應函式，保留 APP 其他功能；不要整目錄覆蓋，也不要對 APP 使用 git 指令。
@@ -392,3 +392,9 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 6. **使用者決定**：打開 `RECORD_ENABLED`（需 §13.8 的 1–4 有結果）；是否把 core 修改同步回 `../N6705C-APP`（同步清單見 §13.7，本輪新增動到 `core/**` 的檔案：`n6705c/core/arb/runner.py`）。
 
 **注意**：本機沒有儀器時，真機相關程式只能靠模擬器驗證；模擬器對 `TRIG:ARB:SOUR`、`CURR` 等寫法比真機寬鬆，這次的相容問題就是這樣漏掉的。
+
+### slew 前檢修正（2026-11-18）
+
+`slew_warnings()` 僅查 override 與目前 rate，不再查 `VOLT:SLEW? MAX`；required 沿用波形／序列 points()，取每通道所有函式 Δt>0 線段的最大 |Δv/Δt|，瞬間跳階不計。僅 override=0 且 rate<required 警告，rate≥INF_SENTINEL（1e37，含 9.9E37）視為不限制。實機 N6781A 預設 rate=3300 V/s、override=0、SLEW? MAX=9.9E37，不再因與哨兵比較而誤報；SEQ/List/CLI 共用此規則。翻譯欄位改為 channel、actual、required。這次只跑 fake/demo，未連實機。
+
+List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，因此依此規則 required=0、不發 slew 警告；List 警告轉送測試用有限斜率 mock 驗證，另測實際編譯的跳階不警告。

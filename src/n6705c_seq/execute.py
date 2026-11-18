@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Callable
 
-from n6705c.core.arb import ArbState, GroupArbRunner
+from n6705c.core.arb import ArbSpec, ArbState, GroupArbRunner
 from n6705c.core.capability import SMU_MODELS
 from n6705c.core.group import GlobalChannel, InstrumentGroup
 from n6705c.core.instrument import N6705C
@@ -35,6 +35,9 @@ DEMO_SLOTS = ("N6752A",) * 4
 
 #: How long past the programmed end a channel may still report running.
 GRACE_SECONDS = 2.0
+
+#: Rates at or above this threshold represent the instrument's INF sentinel (9.9E37).
+INF_SENTINEL = 1e37
 
 #: Digitizer record: points per channel, and the sample-interval grid (min 20.48 us).
 CAPTURE_POINTS = 6000
@@ -224,15 +227,27 @@ def _apply_levels(group: InstrumentGroup, functions) -> None:
 def slew_warnings(group: InstrumentGroup, functions) -> list[str]:
     """Report limited voltage slew; unsupported probes are diagnostic only.
 
-    SLEW:MAX? is a boolean override, whereas SLEW? MAX is a rate in V/s.
+    Compare the current rate with the plan's maximum positive-duration slope.
+    SLEW:MAX? is a boolean override; INF sentinel rates impose no limit.
     Drain each probe's errors even when its reply is empty or malformed.
     """
+    required_rates = {}
+    for fn in functions:
+        required = 0.0
+        if fn.arb_enabled and fn.spec is not None and not fn.spec.is_current:
+            points = fn.spec.waveform if isinstance(fn.spec, ArbSpec) else fn.spec
+            times, values = points.points()
+            required = max((abs(float(v1) - float(v0)) / (float(t1) - float(t0))
+                            for t0, t1, v0, v1 in zip(times, times[1:], values, values[1:])
+                            if t1 > t0), default=0.0)
+        required_rates[fn.channel] = max(required_rates.get(fn.channel, 0.0), required)
+
     warnings = []
     for instrument, channels in _frames(group, functions):
+        channels = list(dict.fromkeys(channels))
         chan = format_channel_list(channels)
         probes = []
-        for command in (f"VOLT:SLEW:MAX? {chan}", f"VOLT:SLEW? {chan}",
-                        f"VOLT:SLEW? MAX,{chan}"):
+        for command in (f"VOLT:SLEW:MAX? {chan}", f"VOLT:SLEW? {chan}"):
             raw = None
             errors = []
             try:
@@ -259,12 +274,13 @@ def slew_warnings(group: InstrumentGroup, functions) -> list[str]:
                 probes.append(None)
         if any(values is None for values in probes):
             continue
-        overrides, rates, maxima = probes
+        overrides, rates = probes
         frame = group.instruments.index(instrument) + 1
-        for local, override, rate, maximum in zip(channels, overrides, rates, maxima):
-            if override == 0 and rate < maximum:
+        for local, override, rate in zip(channels, overrides, rates):
+            required = required_rates[GlobalChannel(frame, local).index]
+            if override == 0 and rate < INF_SENTINEL and rate < required:
                 warnings.append(tr("slew_warning", channel=GlobalChannel(frame, local).label(),
-                                   actual=rate, maximum=maximum))
+                                   actual=rate, required=required))
     return warnings
 
 

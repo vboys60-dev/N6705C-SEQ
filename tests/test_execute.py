@@ -374,11 +374,10 @@ def test_rejected_arb_source_aborts_before_output_on_and_forces_all_off(monkeypa
         assert not any(inst.output_state(inst.populated_channels).values())
 
 
-@pytest.mark.parametrize("override,rate,maximum,expected", [
-    (0, 2, 100, True), (1, 2, 100, False), (0, 100, 100, False),
-    (1, 100, 100, False),
+@pytest.mark.parametrize("override,rate,expected", [
+    (0, 2, True), (1, 2, False), (0, 500, False), (1, 500, False),
 ])
-def test_slew_warning_uses_override_and_numeric_rate_limit(override, rate, maximum, expected):
+def test_slew_warning_uses_override_and_plan_required_rate(override, rate, expected):
     from n6705c_seq.execute import slew_warnings
     from n6705c_seq.i18n import tr
     from n6705c_seq.plan import to_functions
@@ -387,10 +386,80 @@ def test_slew_warning_uses_override_and_numeric_rate_limit(override, rate, maxim
     channel = group.instruments[1].session._transport.channels[2]
     channel.voltage_slew_override = bool(override)
     channel.voltage_slew_rate = rate
-    channel.voltage_slew_maximum = maximum
     warnings = slew_warnings(group, to_functions([row(1), row(6)]))
     assert warnings == ([tr("slew_warning", channel="F2:CH2", actual=float(rate),
-                            maximum=float(maximum))] if expected else [])
+                            required=500.0)] if expected else [])
+    for instrument in group.instruments:
+        assert not any(c.startswith("VOLT:SLEW? MAX") for c in sent(instrument))
+
+
+def test_slew_default_rst_state_does_not_warn():
+    _assert_slew_rate_against_plan(3300, False, False)
+
+
+def test_slew_user_rate_below_plan_requirement_warns():
+    _assert_slew_rate_against_plan(2, False, True)
+
+
+@pytest.mark.parametrize("rate", [9.9e37, 1e37])
+def test_slew_inf_sentinel_rate_never_warns(rate):
+    _assert_slew_rate_against_plan(rate, False, False)
+
+
+def test_slew_rate_between_need_and_max_does_not_warn():
+    _assert_slew_rate_against_plan(1000, False, False)
+
+
+def test_slew_override_set_never_warns():
+    _assert_slew_rate_against_plan(2, True, False)
+
+
+def _assert_slew_rate_against_plan(rate, override, expected):
+    from n6705c_seq.execute import slew_warnings
+    from n6705c_seq.i18n import tr
+    from n6705c_seq.plan import to_functions
+
+    group = demo(1)
+    channel = group.instruments[0].session._transport.channels[1]
+    channel.voltage_slew_override = override
+    channel.voltage_slew_rate = rate
+    channel.voltage_slew_maximum = 9.9e37
+    assert slew_warnings(group, to_functions([row(1)])) == (
+        [tr("slew_warning", channel="F1:CH1", actual=2.0, required=500.0)] if expected else [])
+    assert not any(c.startswith("VOLT:SLEW? MAX") for c in sent(group.instruments[0]))
+
+
+@pytest.mark.parametrize("shape", ["step", "pulse", "zero_edges"])
+def test_slew_zero_duration_jumps_do_not_require_rate(shape):
+    from n6705c.core.arb import ArbSpec, PulseArb, StepArb, TrapezoidArb
+    from n6705c.core.function import ChannelFunction
+    from n6705c_seq.execute import slew_warnings
+
+    waveform = {"step": StepArb(), "pulse": PulseArb(),
+                "zero_edges": TrapezoidArb(rise_time=0, fall_time=0)}[shape]
+    group = demo(1)
+    group.instruments[0].session._transport.channels[1].voltage_slew_rate = 0
+    fn = ChannelFunction(1, arb_enabled=True, spec=ArbSpec(1, waveform))
+    assert slew_warnings(group, [fn]) == []
+
+
+@pytest.mark.parametrize("sequence", [False, True])
+def test_slew_uses_maximum_requirement_across_channel_functions(sequence):
+    from n6705c.core.arb import ArbSequence, ArbSpec, RampArb, SequenceStep
+    from n6705c.core.function import ChannelFunction
+    from n6705c_seq.execute import slew_warnings
+    from n6705c_seq.i18n import tr
+
+    # Falling ramps count too; slower functions on the same channel cannot mask them.
+    fast = RampArb(start_level=2, end_level=0, rise_time=0.002, start_time=0, end_time=0)
+    slow = RampArb(start_level=0, end_level=1, rise_time=0.01, start_time=0, end_time=0)
+    specs = ([ArbSequence(1, [SequenceStep(fast), SequenceStep(slow)])] if sequence
+             else [ArbSpec(1, fast), ArbSpec(1, slow)])
+    functions = [ChannelFunction(1, arb_enabled=True, spec=spec) for spec in specs]
+    group = demo(1)
+    group.instruments[0].session._transport.channels[1].voltage_slew_rate = 600
+    assert slew_warnings(group, functions) == [
+        tr("slew_warning", channel="F1:CH1", actual=600.0, required=1000.0)]
 
 
 def test_warning_callback_precedes_output_on_and_run_continues():
@@ -421,8 +490,7 @@ def test_missing_warning_callback_logs_warning(caplog):
     assert record.msg == "%s" and len(record.args) == 1
 
 
-@pytest.mark.parametrize("query", ["VOLT:SLEW:MAX? (@1)", "VOLT:SLEW? (@1)",
-                                    "VOLT:SLEW? MAX,(@1)"])
+@pytest.mark.parametrize("query", ["VOLT:SLEW:MAX? (@1)", "VOLT:SLEW? (@1)"])
 @pytest.mark.parametrize("code", [-113, 323])
 def test_rejected_slew_probe_logs_raw_reply_and_error_but_run_continues(monkeypatch, caplog, query, code):
     group = demo(1)
