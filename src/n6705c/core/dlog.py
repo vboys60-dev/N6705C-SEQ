@@ -74,7 +74,7 @@ DLOG_SAMPLE_INTERVAL = 20.48e-6
 
 #: SENSe:DLOG:TIME (p.182)
 DLOG_MIN_DURATION = 1.0
-DLOG_MAX_DURATION = 3_599_964_000.0  # 99,999 hours
+DLOG_MAX_DURATION = 359_996_400.0  # 99,999 hours
 
 #: Bytes per logged value in the .dlog file. The format is not documented, so
 #: this is an estimate used only to warn early; the instrument's own read-back

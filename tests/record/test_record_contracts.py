@@ -10,13 +10,30 @@ import sys
 import numpy as np
 import pytest
 
+from n6705c.core.dlog import DLOG_MAX_DURATION
 from n6705c_seq import i18n
 from n6705c_seq.analysis import contracts as analysis
 from n6705c_seq.analysis.core import DlogFormatError, parse_dlog
 from n6705c_seq.record import contracts as record
+from n6705c_seq.record.backend import _ElogBackend, _bounds
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/analysis/fixtures/default_20260803_092740.dlog"
+
+
+def test_record_duration_limit_matches_core_dlog():
+    assert record.DURATION_MAX_S == DLOG_MAX_DURATION == 359_996_400.0
+
+
+@pytest.mark.parametrize("validate", [_bounds, _ElogBackend._bounds], ids=["dlog", "elog"])
+def test_record_duration_accepts_99999_hours(validate):
+    validate(period=60, duration=359_996_400, fields=1)
+
+
+@pytest.mark.parametrize("validate", [_bounds, _ElogBackend._bounds], ids=["dlog", "elog"])
+def test_record_duration_rejects_one_second_over_99999_hours(validate):
+    with pytest.raises(ValueError, match="Invalid duration"):
+        validate(period=60, duration=359_996_401, fields=1)
 
 
 def test_record_backend_defaults_and_tail_constant():

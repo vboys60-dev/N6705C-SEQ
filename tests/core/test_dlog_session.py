@@ -13,6 +13,16 @@ from n6705c.core.fake import FakeN6705C
 from n6705c.core.instrument import N6705C
 
 
+def test_dlog_duration_accepts_99999_hours():
+    assert dlog.DLOG_MAX_DURATION == 359_996_400.0
+    DlogConfig(channels=[1], duration=359_996_400).validate()
+
+
+def test_dlog_duration_rejects_one_second_over_99999_hours():
+    with pytest.raises(ValueError, match="duration"):
+        DlogConfig(channels=[1], duration=359_996_401).validate()
+
+
 class DownloadFaultTransport:
     """Delegate to the shared fake; inject download failures only here."""
 

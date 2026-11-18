@@ -1,8 +1,32 @@
 from pathlib import Path
 
+import pytest
 from n6705c_seq.cli import main
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "powerup.csv"
+
+
+@pytest.mark.parametrize("status", [0, 1, 130])
+def test_cli_closes_every_instrument_and_preserves_status(monkeypatch, capsys, status):
+    from types import SimpleNamespace
+    from n6705c_seq import cli
+
+    closed = []
+    def close(index):
+        closed.append(index)
+        if index == 1:
+            raise OSError("first close failed")
+    group = SimpleNamespace(instruments=[SimpleNamespace(close=lambda i=i: close(i)) for i in (1, 2)])
+    monkeypatch.setattr(cli, "_group", lambda *args: group)
+    def run(*args, **kwargs):
+        if status == 1:
+            raise RuntimeError("run failed")
+        if status == 130:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(cli, "run_plan", run)
+    assert main(["run", str(EXAMPLE), "--demo", "--yes"]) == status
+    assert closed == [1, 2]
+    assert "first close failed" in capsys.readouterr().err
 
 
 def test_check_prints_the_cross_frame_warning(capsys):

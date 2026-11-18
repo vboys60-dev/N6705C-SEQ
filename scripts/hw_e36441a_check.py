@@ -248,6 +248,7 @@ def main(argv=None):
     transport._inst.encoding = "latin-1"  # noqa: SLF001 - *IDN? may hold non-ASCII bytes
     session = Session(transport)
     ch, out, results = args.channel, {}, {}
+    touched = False
     try:
         idn = session.query("*IDN?")
         print(f"IDN: {idn}")
@@ -260,12 +261,16 @@ def main(argv=None):
         if not args.yes and input("輸入 y 繼續：").strip().lower() != "y":
             print("已取消")
             return 1
+        touched = True
         session.write_checked("*RST")
         for n in names:
             results[n] = CHECKS[n](session, ch, args, out)
     finally:
-        restore(session, ch)
-        session.close()
+        try:
+            if touched:
+                restore(session, ch)
+        finally:
+            session.close()
     if args.csv:
         write_csv(args.csv, ["check", "time_s", "voltage_V"],
                   ((k, t, v) for k, s in out.items() for t, v in s))

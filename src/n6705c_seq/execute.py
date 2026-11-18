@@ -16,10 +16,10 @@ from typing import Callable
 
 from n6705c.core.arb import ArbSpec, ArbState, GroupArbRunner
 from n6705c.core.capability import SMU_MODELS
-from n6705c.core.group import GlobalChannel, InstrumentGroup
+from n6705c.core.group import MAX_FRAMES, GlobalChannel, InstrumentGroup
 from n6705c.core.instrument import N6705C
 from n6705c.core.parsing import decode_real32, split_block_list
-from n6705c.core.scpi import format_channel_list
+from n6705c.core.scpi import format_channel_list, parse_channel_list
 from n6705c.core.session import ScpiError
 from n6705c.core.transport import VisaTransport
 
@@ -57,6 +57,9 @@ def connect_group(resources: list[str], *, backend: str = "auto", timeout_ms: in
     The unit tested here (S/N MY66102013) answers with garbage bytes in the model
     field, which the library's default ASCII decoding rejects.  Latin-1 never fails.
     """
+    check_unique_resources(resources)
+    if len(resources) > MAX_FRAMES:
+        raise PlanRejected(f"{len(resources)} mainframes exceeds maximum {MAX_FRAMES}")
     opened: list = []  # each entry owns one session: a bare transport until N6705C wraps it
     try:
         for resource in resources:
@@ -64,10 +67,11 @@ def connect_group(resources: list[str], *, backend: str = "auto", timeout_ms: in
             opened.append(transport)
             transport._inst.encoding = "latin-1"  # noqa: SLF001 - no public hook
             opened[-1] = N6705C.from_transport(transport)
+        check_unique_identities([instrument.identity for instrument in opened])
+        return InstrumentGroup(opened)
     except BaseException as exc:
         close_all(opened, exc)
         raise
-    return InstrumentGroup(opened)
 
 
 def run_callback(callback: Callable[[], None] | None, primary: BaseException | None = None) -> BaseException | None:
@@ -110,6 +114,29 @@ def close_all(items, primary: BaseException | None = None) -> None:
 
 class PlanRejected(ValueError):
     """The plan failed validation; nothing was switched on or off."""
+
+
+def check_unique_resources(resources) -> None:
+    """Reject repeated VISA addresses before opening any connection."""
+    seen = set()
+    for resource in resources:
+        key = resource.strip().upper()
+        if key in seen:
+            raise PlanRejected(f"duplicate resource: {resource}")
+        seen.add(key)
+
+
+def check_unique_identities(identities) -> None:
+    """Reject repeated manufacturer/serial pairs when a serial is available."""
+    seen = {}
+    for frame, identity in enumerate(identities, 1):
+        serial = identity.serial.strip().upper()
+        if not serial:
+            continue
+        key = (identity.manufacturer.strip().upper(), serial)
+        if key in seen:
+            raise PlanRejected(f"duplicate instrument: frame {seen[key]} and frame {frame}, {key[0]} S/N {serial}")
+        seen[key] = frame
 
 
 def outputs_off(group: InstrumentGroup) -> None:
@@ -168,6 +195,23 @@ def _frames(group: InstrumentGroup, functions) -> list[tuple[N6705C, list[int]]]
     return list(frames.values())
 
 
+def _check_coupling(group: InstrumentGroup, functions) -> None:
+    """Refuse coupling that could affect channels outside this plan."""
+    command = "OUTP:COUP:CHAN?"
+    for instrument, channels in _frames(group, functions):
+        frame = group.instruments.index(instrument) + 1
+        try:
+            raw = instrument.session.query(command)
+            instrument.session.check_errors(command)
+            answer = "".join(raw.split()).replace('"', '').replace("'", '').upper()
+            coupled = set() if answer in ("", "0", "NONE") else set(parse_channel_list(answer)) - {0}
+        except Exception as exc:  # noqa: BLE001 - every unreadable coupling state is unsafe
+            raise PlanRejected(f"frame {frame}: cannot check coupling ({exc})") from exc
+        planned = set(channels)
+        if coupled & planned and coupled - planned:
+            raise PlanRejected(f"frame {frame}: coupled channels {sorted(coupled)} extend beyond plan channels {sorted(planned)}")
+
+
 def _set_arb_source_imm(instrument: N6705C, channels: list[int]) -> None:
     """TRIG:ARB:SOUR is per-channel on F.1.1.0 but frame-wide on E.02.09 (-108 with a channel list)."""
     try:
@@ -216,11 +260,11 @@ def _apply_levels(group: InstrumentGroup, functions) -> None:
     for fn in functions:
         instrument, local = group.instrument_for(fn.channel)
         chan = format_channel_list(local)
-        instrument.session.write_checked(f"VOLT {fn.voltage:.6G},{chan}")
         if fn.current:  # the table rejects a 0 A limit, so 0.0 here only ever means "none"
             # N678xA SMUs run voltage priority by default and reject CURR (+315); their limit is CURR:LIM.
             smu = instrument.capabilities[local].model.upper() in SMU_MODELS
             instrument.session.write_checked(f"CURR{':LIM' if smu else ''} {fn.current:.6G},{chan}")
+        instrument.session.write_checked(f"VOLT {fn.voltage:.6G},{chan}")
     group.set_output([fn.channel for fn in functions], True)
 
 
@@ -403,6 +447,7 @@ def run_functions(
         runner = GroupArbRunner.from_plan(group, functions)  # validates against each module
     except Exception as exc:  # noqa: BLE001
         raise PlanRejected(str(exc)) from exc
+    _check_coupling(group, functions)
     try:
         for warning in slew_warnings(group, functions):
             if on_warning is not None:

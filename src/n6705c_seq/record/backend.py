@@ -20,6 +20,7 @@ from n6705c.core.dlog import DlogConfig, DlogSession
 from n6705c.core.elog import ElogConfig, ElogRecorder, ElogSession, ElogState
 from n6705c.core.parsing import ElogSelection, parse_definite_block
 from n6705c.core.scpi import format_channel_list
+from n6705c.core.session import ErrorQueueError
 
 from . import contracts as c
 from .dlogfile import (
@@ -106,17 +107,13 @@ class _CheckedSession:
         self.ranges = ranges
 
     def _errors(self):
-        errors = []
-        for _ in range(50):
-            response = self.raw.query("SYST:ERR?")
-            match = re.fullmatch(r"\s*([+-]?\d+)\s*,(.*)", response, re.DOTALL)
-            if match is None:
-                raise RuntimeError(f"Malformed SYST:ERR? response: {response!r}")
-            code = int(match[1])
-            if code == 0:
-                return errors
-            errors.append((code, match[2].strip()))
-        raise RuntimeError(f"SYST:ERR? did not reach zero: {errors!r}")
+        try:
+            return [(error.code, error.message) for error in self.raw.read_errors()]
+        except ErrorQueueError as exc:
+            if exc.response is not None:
+                raise RuntimeError(f"Malformed SYST:ERR? response: {exc.response!r}") from exc
+            errors = [(error.code, error.message) for error in exc.errors]
+            raise RuntimeError(f"SYST:ERR? did not reach zero: {errors!r}") from exc
 
     def check_errors(self, context=""):
         errors = self._errors()
@@ -684,7 +681,8 @@ class _ElogBackend:
             except BaseException as cleanup_exc:
                 exc.add_note(f"ELOG cleanup failed: {cleanup_exc!r}")
             if session is not None:
-                if session.state in (ElogState.INITIATED, ElogState.RUNNING):
+                if (session.state in (ElogState.INITIATED, ElogState.RUNNING)
+                        or session.init_attempted):
                     try:
                         session.stop()
                     except BaseException as cleanup_exc:

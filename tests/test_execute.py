@@ -16,6 +16,100 @@ def sent(instrument):
     return [h.text for h in instrument.session.history if h.direction == "->"]
 
 
+@pytest.mark.parametrize("reply", [' "(@1,2)" ', "1,2", "invalid", TimeoutError("no coupling reply")])
+def test_unsafe_or_unreadable_coupling_rejected_without_writes(monkeypatch, reply):
+    from n6705c_seq import execute
+
+    group = demo(1)
+    inst = group.instruments[0]
+    query = inst.session.query
+    def answer(command):
+        if command == "OUTP:COUP:CHAN?":
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+        return query(command)
+    monkeypatch.setattr(inst.session, "query", answer)
+    before = len(sent(inst))
+    with pytest.raises(execute.PlanRejected, match="frame 1"):
+        run_plan(group, [row(1, limit=0.5)])
+    assert not any(c.startswith(("VOLT ", "CURR", "OUTP ON", "OUTP OFF")) for c in sent(inst)[before:])
+
+
+@pytest.mark.parametrize("reply", ["(@1,2)", ' " NONE " ', "", "0", "(@0,1,2)", "(@3,4)"])
+def test_coupling_accepts_complete_or_disjoint_plan_and_checks_only_used_frame(monkeypatch, reply):
+    from n6705c_seq import execute
+    from n6705c_seq.plan import to_functions
+
+    group = demo(2)
+    checked = []
+    monkeypatch.setattr(group.instruments[0].session, "query", lambda command: reply)
+    monkeypatch.setattr(group.instruments[0].session, "check_errors", checked.append)
+    monkeypatch.setattr(group.instruments[1].session, "query", lambda command: pytest.fail("unused frame queried"))
+    execute._check_coupling(group, to_functions([row(1), row(2)]))
+    assert checked == ["OUTP:COUP:CHAN?"]
+
+
+def test_coupling_scpi_error_rejected_before_writes(monkeypatch):
+    from n6705c_seq import execute
+
+    group = demo(1)
+    inst = group.instruments[0]
+    check = inst.session.check_errors
+    def errors(command=""):
+        if command == "OUTP:COUP:CHAN?":
+            raise RuntimeError("SCPI coupling error")
+        return check(command)
+    monkeypatch.setattr(inst.session, "check_errors", errors)
+    before = len(sent(inst))
+    with pytest.raises(execute.PlanRejected, match="SCPI coupling error"):
+        run_plan(group, [row(1)])
+    assert not any(c.startswith(("VOLT ", "CURR", "OUTP ON")) for c in sent(inst)[before:])
+
+
+@pytest.mark.parametrize("resources", [[" tcpip::a ", "TCPIP::A"], ["a", "b", "c", "d", "e"]])
+def test_invalid_resources_rejected_before_connecting(monkeypatch, resources):
+    from n6705c_seq import execute
+
+    monkeypatch.setattr(execute, "VisaTransport", lambda *a, **k: pytest.fail("opened a resource"))
+    with pytest.raises(execute.PlanRejected):
+        execute.connect_group(resources)
+
+
+@pytest.mark.parametrize("failure", ["identity", "group"])
+def test_connect_group_closes_every_session_on_validation_or_group_failure(monkeypatch, failure):
+    from types import SimpleNamespace
+    from n6705c.core.instrument import Identity
+    from n6705c_seq import execute
+
+    closed = []
+    def transport(resource, **kwargs):
+        return SimpleNamespace(_inst=SimpleNamespace(), resource=resource,
+                               close=lambda: closed.append(resource))
+    def wrap(t):
+        t.identity = Identity("Keysight", "N6705C", "SN" if failure == "identity" else t.resource)
+        return t
+    def group(items):
+        raise RuntimeError("group failed")
+    monkeypatch.setattr(execute, "VisaTransport", transport)
+    monkeypatch.setattr(execute.N6705C, "from_transport", wrap)
+    monkeypatch.setattr(execute, "InstrumentGroup", group)
+    with pytest.raises(execute.PlanRejected if failure == "identity" else RuntimeError,
+                       match="duplicate instrument" if failure == "identity" else "group failed"):
+        execute.connect_group(["a", "b"])
+    assert closed == ["a", "b"]
+
+
+def test_identity_comparison_uses_manufacturer_and_nonempty_serial():
+    from n6705c.core.instrument import Identity
+    from n6705c_seq.execute import PlanRejected, check_unique_identities
+
+    check_unique_identities([Identity("A", serial=""), Identity("A", serial=""),
+                             Identity("B", serial="SN"), Identity("C", serial="SN")])
+    with pytest.raises(PlanRejected, match="SN"):
+        check_unique_identities([Identity("A", serial="sn"), Identity("a", serial="SN")])
+
+
 def test_each_frame_is_started_by_one_init_for_all_its_channels():
     group = demo(2)
     run_plan(group, [row(c) for c in range(1, 9)])
@@ -339,7 +433,7 @@ def test_trigger_sources_levels_output_load_and_init_keep_hardware_order(monkeyp
         output = commands.index("OUTP ON,(@1)")
         arb_settings = [i for i, c in enumerate(commands) if c.startswith("ARB:")]
         init = commands.index("INIT:TRAN (@1)")
-        assert commands.index(tran) < commands.index(arb) < voltage < current < output
+        assert commands.index(tran) < commands.index(arb) < current < voltage < output
         assert output < min(arb_settings) <= max(arb_settings) < init
         assert commands.count(tran) == commands.count(arb) == 2
         assert max(arb_settings) < max(i for i, c in enumerate(commands) if c == tran)

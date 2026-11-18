@@ -168,7 +168,12 @@ class N6705C:
         if not self.capabilities:
             return
         chan = format_channel_list(self.channel_numbers)
-        for command in (f"ABOR:TRAN {chan}", f"ABOR:ELOG {chan}", f"OUTP OFF,{chan}"):
+        for command in (
+            f"ABOR:TRAN {chan}",
+            f"ABOR:ACQ {chan}",
+            f"ABOR:ELOG {chan}",
+            f"OUTP OFF,{chan}",
+        ):
             try:
                 self.session.write(command)
             except Exception:

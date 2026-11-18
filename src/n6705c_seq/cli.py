@@ -13,7 +13,7 @@ from n6705c.core.group import (
 )
 
 from .e36441a import detect_model, kind_of, run_resources
-from .execute import DEMO_SLOTS, connect_group, OutputsNotConfirmedOff, PlanRejected, run_plan
+from .execute import DEMO_SLOTS, close_all, connect_group, OutputsNotConfirmedOff, PlanRejected, run_plan
 from .plan import load_csv, order_warnings, suggest_assignment, timeline, write_csv
 
 
@@ -154,8 +154,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}{forced}", file=sys.stderr)
         return 1
     finally:
-        for instrument in group.instruments:
-            instrument.close()
+        try:
+            close_all(group.instruments)
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
     print("Sequence done; outputs left ON at the high level." if args.hold_dc else "Sequence done; outputs off.")
     return 0
 

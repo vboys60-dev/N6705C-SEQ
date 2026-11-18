@@ -191,12 +191,16 @@ class VisaTransport:
         last_error: Exception | None = None
         errors: list[str] = []
         for candidate in candidates:
+            rm = None
+            inst = None
             try:
                 if candidate == "@py":
                     _register_libusb()
                 rm = pyvisa.ResourceManager(candidate)
                 inst = rm.open_resource(resource)
-            except Exception as exc:  # pragma: no cover - depends on host setup
+            except Exception as exc:
+                # Never rm.close() here: pyvisa shares one ResourceManager per VISA
+                # library, and closing it would close every sibling instrument.
                 last_error = exc
                 errors.append(f"  [{candidate or 'ivi'}] {exc}")
                 continue
@@ -218,10 +222,17 @@ class VisaTransport:
                 + _backend_advice(last_error)
             ) from last_error
 
-        self._inst.timeout = timeout_ms
-        self._inst.chunk_size = chunk_size
-        self._inst.write_termination = "\n"
-        self._inst.read_termination = "\n" if _is_socket_resource(resource) else None
+        try:
+            self._inst.timeout = timeout_ms
+            self._inst.chunk_size = chunk_size
+            self._inst.write_termination = "\n"
+            self._inst.read_termination = "\n" if _is_socket_resource(resource) else None
+        except Exception:
+            try:
+                self._inst.close()
+            except Exception:
+                pass
+            raise
 
     @property
     def description(self) -> str:
@@ -255,10 +266,9 @@ class VisaTransport:
             raise TransportError(f"binary query failed for {command!r}: {exc}") from exc
 
     def close(self) -> None:
-        try:
-            self._inst.close()
-        finally:
-            self._rm.close()
+        # Close only our own session: the pyvisa ResourceManager is shared per VISA
+        # library, so rm.close() would also close every other open instrument.
+        self._inst.close()
 
 
 def native_visa_available() -> bool:

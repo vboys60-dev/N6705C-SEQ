@@ -25,7 +25,8 @@ jobs:
           node-version: "20"
       - run: pip install -e ".[dev]"
       - run: pytest -v --timeout=120
-      - run: node --test tests/js
+      - run: node --test
+        working-directory: tests/js
 
   build-windows:
     needs: test

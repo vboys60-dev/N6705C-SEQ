@@ -11,6 +11,79 @@ import pytest
 from n6705c.core import transport
 
 
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_visa_open_failure_falls_back_without_closing_shared_manager(monkeypatch, close_fails):
+    events = []
+    inst = SimpleNamespace()
+
+    class Manager:
+        def __init__(self, candidate):
+            self.candidate = candidate
+            events.append(("manager", candidate))
+
+        def open_resource(self, resource):
+            assert resource == "USB1"
+            events.append(("open", self.candidate))
+            if self.candidate == "":
+                raise OSError("injected open failure")
+            return inst
+
+        def close(self):
+            events.append(("close", self.candidate))
+            if close_fails:
+                raise RuntimeError("injected close failure")
+
+    monkeypatch.setitem(sys.modules, "pyvisa", SimpleNamespace(ResourceManager=Manager))
+    monkeypatch.setattr(transport, "_candidates", lambda backend: ["", "@py"])
+    monkeypatch.setattr(transport, "_register_libusb", lambda: None)
+
+    result = transport.VisaTransport("USB1")
+
+    assert result._inst is inst
+    assert result._backend_used == "@py"
+    assert events == [
+        ("manager", ""), ("open", ""),
+        ("manager", "@py"), ("open", "@py"),
+    ]
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_visa_timeout_failure_closes_instrument_only(monkeypatch, close_fails):
+    closed = []
+    failure = ValueError("injected timeout failure")
+
+    class Instrument:
+        @property
+        def timeout(self):
+            return 0
+
+        @timeout.setter
+        def timeout(self, value):
+            raise failure
+
+        def close(self):
+            closed.append("inst")
+            if close_fails:
+                raise RuntimeError("instrument close failed")
+
+    class Manager:
+        def open_resource(self, resource):
+            return Instrument()
+
+        def close(self):
+            closed.append("rm")
+            if close_fails:
+                raise RuntimeError("manager close failed")
+
+    monkeypatch.setitem(sys.modules, "pyvisa", SimpleNamespace(ResourceManager=lambda backend: Manager()))
+
+    with pytest.raises(ValueError) as caught:
+        transport.VisaTransport("USB1", backend="test")
+
+    assert caught.value is failure
+    assert closed == ["inst"]
+
+
 def _success(conn, candidates):
     conn.send(candidates)
     conn.close()

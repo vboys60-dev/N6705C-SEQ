@@ -20,9 +20,8 @@ MAX_CHANNELS = 4
 PERIOD_MAX_S = 60.0
 PERIOD_GRANULARITY_S = 20.48e-6
 DURATION_MIN_S = 1.0  # shared ELOG/DLOG form; DLOG cannot request less than one second
-# Retained from core.dlog.DLOG_MAX_DURATION pending a coordinated correction.
-# Manual SENSe:DLOG:TIME: 99,999 h = 359,996,400 s, ten times lower; see C1.
-DURATION_MAX_S = 3_599_964_000.0
+# Must equal core.dlog.DLOG_MAX_DURATION; guaranteed by tests.
+DURATION_MAX_S = 359_996_400.0
 # Average V/I only: parameters = channels * enabled quantities (1..8).
 PERIOD_FLOOR_TABLE = {n: n * 102.4e-6 for n in range(1, 9)}
 EVENT_RECORD = "record"
