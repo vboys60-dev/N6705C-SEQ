@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from n6705c.core.group import InstrumentGroup
+from n6705c.core.session import ErrorQueueError
 from n6705c_seq import form, i18n, web_seq, webgui
 from n6705c_seq.execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected
 from n6705c_seq.web_seq import SeqApi
@@ -62,6 +63,26 @@ def threads(monkeypatch):
 
     monkeypatch.setattr(web_seq, "threading", SimpleNamespace(Thread=Thread))
     return pending
+
+
+@pytest.fixture
+def blind_transport(monkeypatch):
+    calls = []
+
+    class Transport:
+        def __init__(self, resource, *, timeout_ms):
+            assert timeout_ms == web_seq.OFF_TIMEOUT_MS
+            self.resource = resource
+            calls.append((resource, "open"))
+
+        def write(self, command):
+            calls.append((self.resource, command))
+
+        def close(self):
+            calls.append((self.resource, "close"))
+
+    monkeypatch.setattr(web_seq, "VisaTransport", Transport)
+    return calls
 
 
 def _raw(count=1):
@@ -345,9 +366,17 @@ def test_all_off_mixed_models(api, threads, monkeypatch):
 
 
 @pytest.mark.parametrize("stage", ["detect", "connect", "off", "off_resources"])
-def test_all_off_failure_continues_to_next_resource(api, threads, monkeypatch, stage):
+def test_all_off_failure_continues_to_next_resource(api, threads, monkeypatch, blind_transport, stage):
     group, closed = _group(api, monkeypatch)
     calls = []
+    blind_calls = []
+    original_blind_off = web_seq._blind_off
+
+    def blind_off(resource):
+        blind_calls.append(resource)
+        original_blind_off(resource)
+
+    monkeypatch.setattr(web_seq, "_blind_off", blind_off)
 
     def detect(resource, *, timeout_ms):
         assert timeout_ms == web_seq.OFF_TIMEOUT_MS
@@ -360,7 +389,7 @@ def test_all_off_failure_continues_to_next_resource(api, threads, monkeypatch, s
         assert timeout_ms == web_seq.OFF_TIMEOUT_MS
         calls.append(("connect", resources))
         if resources == ["first"] and stage == "connect":
-            raise TimeoutError("connect timed out")
+            raise ErrorQueueError("error queue undecodable", errors=[], response="bad bytes")
         return group
 
     def off(value):
@@ -381,12 +410,18 @@ def test_all_off_failure_continues_to_next_resource(api, threads, monkeypatch, s
     assert calls[-3:] == [("detect", "second"), ("connect", ["second"]), ("outputs_off", group)]
     results = _results(api)
     assert len(results) == 1 and results[0][1] == "error"
-    assert results[0][3] == f"1/2 ok\n1: first: {stage} " + ("failed" if stage == "off" else "timed out")
+    error = ("error queue undecodable" if stage == "connect"
+             else f"{stage} " + ("failed" if stage == "off" else "timed out"))
+    assert results[0][3] == f"1/2 ok\n1: first: {error}; blind OFF sent, not confirmed"
+    assert blind_calls == ["first"]
+    assert blind_transport == [("first", "open")] + [
+        ("first", f"OUTP OFF,(@{channel})") for channel in range(1, 5)
+    ] + [("first", "close")]
     assert closed == ([True, True] if stage == "off" else [True])
     assert not (api._gate.state()[0] == "power")
 
 
-def test_all_off_aggregates_failures(api, threads, monkeypatch):
+def test_all_off_aggregates_failures(api, threads, monkeypatch, blind_transport):
     def detect(resource, *, timeout_ms):
         assert timeout_ms == web_seq.OFF_TIMEOUT_MS
         raise TimeoutError(f"{resource} timed out")
@@ -395,7 +430,53 @@ def test_all_off_aggregates_failures(api, threads, monkeypatch):
     assert api.all_off(["first", "second"], False) == {}
     threads.pop().run()
     assert _results(api) == [["result", "error", i18n.tr("run_result"),
-                              "0/2 ok\n1: first: first timed out\n2: second: second timed out"]]
+                              "0/2 ok\n1: first: first timed out; blind OFF sent, not confirmed"
+                              "\n2: second: second timed out; blind OFF sent, not confirmed"]]
+    assert not (api._gate.state()[0] == "power")
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_blind_off_write_failure_continues_and_closes(monkeypatch, close_fails):
+    calls = []
+
+    class Transport:
+        def __init__(self, resource, *, timeout_ms):
+            assert resource == "first" and timeout_ms == web_seq.OFF_TIMEOUT_MS
+
+        def write(self, command):
+            calls.append(command)
+            if command == "OUTP OFF,(@2)":
+                raise OSError("write failed")
+
+        def close(self):
+            calls.append("close")
+            if close_fails:
+                raise OSError("close failed")
+
+    monkeypatch.setattr(web_seq, "VisaTransport", Transport)
+    web_seq._blind_off("first")
+    assert calls == [f"OUTP OFF,(@{channel})" for channel in range(1, 5)] + ["close"]
+
+
+def test_all_off_blind_transport_open_failure(api, threads, monkeypatch):
+    calls = []
+
+    def detect(resource, *, timeout_ms):
+        raise TimeoutError("detect timed out")
+
+    def transport(resource, *, timeout_ms):
+        assert timeout_ms == web_seq.OFF_TIMEOUT_MS
+        calls.append(resource)
+        raise OSError("transport unavailable")
+
+    monkeypatch.setattr(web_seq, "detect_model", detect)
+    monkeypatch.setattr(web_seq, "VisaTransport", transport)
+    assert api.all_off(["first", "second"], False) == {}
+    threads.pop().run()
+    assert calls == ["first", "second"]
+    assert _results(api) == [["result", "error", i18n.tr("run_result"),
+                              "0/2 ok\n1: first: detect timed out; blind OFF failed: transport unavailable"
+                              "\n2: second: detect timed out; blind OFF failed: transport unavailable"]]
     assert not (api._gate.state()[0] == "power")
 
 
@@ -490,7 +571,7 @@ def test_thread_start_failure_releases(api, monkeypatch):
 
 
 @pytest.mark.parametrize("stage", ["detect", "connect", "off", "close"])
-def test_all_off_failures_release(api, threads, monkeypatch, stage):
+def test_all_off_failures_release(api, threads, monkeypatch, blind_transport, stage):
     _, closed = _group(api, monkeypatch)
 
     def fail(*args, **kwargs):
