@@ -656,6 +656,17 @@ def test_scan_success_empty_and_release(api, threads, monkeypatch, found):
     assert api._gate.state()[0] == "idle"
 
 
+def test_scan_drops_same_instrument_listed_by_two_backends(api, threads, monkeypatch):
+    idn = "Keysight,N6705C,MY65000515,E.02.09.3271"
+    found = [("USB0::0x2A8D::0x0F02::MY65000515::INSTR", idn),
+             ("USB0::10893::3842::MY65000515::0::INSTR", idn), ("TCPIP1", ""), ("TCPIP2", "")]
+    monkeypatch.setattr(web_seq, "scan_resources", lambda: found)
+    api.scan_instruments(False)
+    threads.pop().run()
+    shown = next(e[1] for e in _legacy_events(api) if e[0] == "scan")
+    assert [a for a, _ in shown] == [found[0][0], "TCPIP1", "TCPIP2"]
+
+
 def test_scan_failure_releases(api, threads, monkeypatch):
     def fail():
         raise RuntimeError("scan crashed")
