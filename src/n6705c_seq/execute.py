@@ -447,6 +447,13 @@ def run_functions(
         runner = GroupArbRunner.from_plan(group, functions)  # validates against each module
     except Exception as exc:  # noqa: BLE001
         raise PlanRejected(str(exc)) from exc
+    for fn in functions:
+        capability = group.capabilities.get(fn.channel)
+        if capability is not None and capability.is_load:
+            raise PlanRejected(
+                f"CH{fn.channel} ({capability.model}): "
+                "電子負載模組不能當供電通道，請改用其他通道"
+            )
     _check_coupling(group, functions)
     try:
         for warning in slew_warnings(group, functions):
