@@ -13,7 +13,7 @@
 | Codex 審查 | 第 2 輪已核准（§8） |
 | 報告分析升級版 | T0–T8 完成，PR #1 已合併，分頁已啟用；Windows 11 實機未驗（§11） |
 | 搜尋儀器（下拉選單） | PR #8 已合併 `c7461c6`；離線與 CI 通過，**未接實機、未在 Windows 實際操作**（§12） |
-| 全專案審查修復（PR #31 `e10f462`） | 三輪審查已修 13 項；**第三輪新發現待處理，見 §14** |
+| 全專案審查修復（PR #31 `e10f462`、PR-A #33 `86e5d1e`） | 三輪審查已修；第三輪 PR-A 已合併，**PR-B（INIT:CONT:TRAN）與其餘待處理，見 §14.2** |
 | 即時資料紀錄＋ARB 修補 | **規劃與任務表完成，尚未開工**（§13、`docs/live-logging-task-plan.md`） |
 
 ## 0. 先讀這幾件事
@@ -454,9 +454,15 @@ List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，�
 - **打開 RECORD 前**：#5＋§14.3 `_pending` 上限。
 - **等使用者決定**：GUI 停止鈕、#6c。
 
+### 14.2.0 PR-A 已完成（PR #33 合併 `86e5d1e`，CI 全綠；Python 1690 過／7 跳過、JS 70）
+- #2 已擋 N6791A／N6792A 電子負載（`capability.LOAD_MODELS`／`is_load`；`run_functions` 在耦合檢查與任何寫入前以全域通道編號檢查，SEQ／List 共用；訊息為英文；使用者決定「直接擋」）。實機 CH1 是 N6791A，須改用 CH2。
+- #3 全部關閉盲關退路（`web_seq._blind_off`：逐通道 `OUTP OFF,(@n)`，結果標 `blind OFF sent, not confirmed`；採 Opus 建議語意）。
+- #4 刪 `_list_on` 的 `rm.close()`；#6a 清理路徑 `read_errors()` 不再蓋原錯誤（dlog、arb runner）；#6b `cli` `close_all` 失敗回傳 1。
+- 剩餘：#1（PR-B，需上機）、#5（打開 RECORD 前）、#6c、GUI 停止鈕。
+
 **已決定（2026-11-19）：舊 ARB／連續觸發 ON → 拒絕執行，不自動 ABOR（PR-B：`_check_idle`）。**
 
-### 14.2.1 待使用者決定（尚未回答；回答前不開工 PR-A）
+### 14.2.1 待使用者決定（#1 電子負載已決定「擋」；其餘尚未回答）
 1. 電子負載：直接拒絕（Opus 建議；實機選 CH1 的表會被擋，須改用 CH2），或保留負載模式只警告？
 2. #1 遇執行中 ARB／CONT ON：自動關 CONT＋ABOR（與 E36441A 一致，建議），或像耦合檢查直接拒絕？
 3. #3 可否接受「已盲送、未確認」的回報語意？
