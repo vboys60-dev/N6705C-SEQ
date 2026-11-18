@@ -137,8 +137,7 @@ def test_factory_is_inert_and_copies_config(rig):
 def test_dispatch_follows_record_backend_constant(rig, monkeypatch):
     assert isinstance(rig.build(), module._DlogBackend)
     monkeypatch.setattr(c, "RECORD_BACKEND", "elog")
-    with pytest.raises(NotImplementedError, match="ELOG"):
-        rig.build()
+    assert isinstance(rig.build(), module._ElogBackend)
     monkeypatch.setattr(c, "RECORD_BACKEND", "unknown")
     with pytest.raises(ValueError, match="unknown RECORD_BACKEND 'unknown'"):
         rig.build()
