@@ -46,7 +46,7 @@ def test_load_modules_rejected_but_other_supply_channels_can_run(model, channel,
             run()
         assert f"CH{channel}" in str(rejected.value)
         assert model in str(rejected.value)
-        assert "電子負載模組不能當供電通道，請改用其他通道" in str(rejected.value)
+        assert "electronic-load modules cannot be used as supply channels" in str(rejected.value)
         # Validation must finish before coupling queries or any SCPI writes.
         assert [sent(inst) for inst in group.instruments] == before
     else:
@@ -56,6 +56,19 @@ def test_load_modules_rejected_but_other_supply_channels_can_run(model, channel,
         commands = sent(inst)
         assert f"OUTP ON,(@{local})" in commands
         assert f"INIT:TRAN (@{local})" in commands
+
+
+def test_load_check_uses_global_channel_numbers():
+    from n6705c_seq.execute import PlanRejected
+
+    group = InstrumentGroup.demo(frames=2, slots=("N6781A", "N6781A"))
+    group.capabilities[5].model = "N6791A"  # only global CH5 is a load
+    before = [sent(inst) for inst in group.instruments]
+    with pytest.raises(PlanRejected) as rejected:
+        run_plan(group, [row(5)])
+    assert "CH5" in str(rejected.value)
+    assert [sent(inst) for inst in group.instruments] == before
+    assert not run_plan(group, [row(1)]).is_running
 
 
 def test_missing_global_capability_does_not_reject_supply_channel():

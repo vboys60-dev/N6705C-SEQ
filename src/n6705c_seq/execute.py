@@ -452,7 +452,7 @@ def run_functions(
         if capability is not None and capability.is_load:
             raise PlanRejected(
                 f"CH{fn.channel} ({capability.model}): "
-                "電子負載模組不能當供電通道，請改用其他通道"
+                "electronic-load modules cannot be used as supply channels; use another channel"
             )
     _check_coupling(group, functions)
     try:
