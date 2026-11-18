@@ -16,6 +16,56 @@ def sent(instrument):
     return [h.text for h in instrument.session.history if h.direction == "->"]
 
 
+@pytest.mark.parametrize("model", ["N6791A", "N6792A"])
+@pytest.mark.parametrize("channel", [1, 2, 5, 6])
+@pytest.mark.parametrize("entry", ["seq", "list"])
+def test_load_modules_rejected_but_other_supply_channels_can_run(model, channel, entry):
+    from n6705c.core.arb import ArbSpec, ConstantDwellArb
+    from n6705c.core.function import ChannelFunction
+    from n6705c_seq.execute import PlanRejected, run_functions
+
+    group = InstrumentGroup.demo(frames=2, slots=(model, "N6781A"))
+    before = [sent(inst) for inst in group.instruments]
+    # The fake does not implement SMU CURR:LIM; exercise current writes only
+    # on the rejected load plan, and run the supply with no explicit limit.
+    limit = 0.5 if channel in (1, 5) else None
+
+    def run():
+        if entry == "seq":
+            return run_plan(group, [row(channel, limit=limit)])
+        return run_functions(group, [ChannelFunction(
+            channel=channel, voltage=0.0, current=limit or 0.0,
+            output_on=True, arb_enabled=True,
+            spec=ArbSpec(channel=channel, waveform=ConstantDwellArb(
+                levels=[0.0, 0.5, 1.0], dwell=0.001024,
+            )),
+        )])
+
+    if channel in (1, 5):
+        with pytest.raises(PlanRejected) as rejected:
+            run()
+        assert f"CH{channel}" in str(rejected.value)
+        assert model in str(rejected.value)
+        assert "電子負載模組不能當供電通道，請改用其他通道" in str(rejected.value)
+        # Validation must finish before coupling queries or any SCPI writes.
+        assert [sent(inst) for inst in group.instruments] == before
+    else:
+        runner = run()
+        assert not runner.is_running
+        inst, local = group.instrument_for(channel)
+        commands = sent(inst)
+        assert f"OUTP ON,(@{local})" in commands
+        assert f"INIT:TRAN (@{local})" in commands
+
+
+def test_missing_global_capability_does_not_reject_supply_channel():
+    group = InstrumentGroup.demo(frames=2, slots=("N6791A", "N6781A"))
+    del group.capabilities[6]
+    runner = run_plan(group, [row(6)])
+    assert not runner.is_running
+    assert "INIT:TRAN (@2)" in sent(group.instruments[1])
+
+
 @pytest.mark.parametrize("reply", [' "(@1,2)" ', "1,2", "invalid", TimeoutError("no coupling reply")])
 def test_unsafe_or_unreadable_coupling_rejected_without_writes(monkeypatch, reply):
     from n6705c_seq import execute
