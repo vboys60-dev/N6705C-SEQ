@@ -467,13 +467,34 @@ def test_period_readback_beyond_one_grid_step_is_bad_config(rig, period):
     assert list(rig.final.parent.iterdir()) == []
 
 
-def test_rate_mismatch_adds_note_only(rig):
-    rig.cfg["duration_s"] = 20
+def test_rate_mismatch_adds_note_and_still_publishes(rig):
+    rig.cfg["duration_s"] = 200
     rig.io.on_query = lambda command: "0.001,0.001" if command.startswith("SENS:ELOG:PER?") else None
     result = run(rig)
-    assert result["elapsed_s"] == pytest.approx(20)
+    assert result["elapsed_s"] == pytest.approx(200)
+    expected = result["elapsed_s"] / rig.cfg["period_s"]
+    difference = abs(result["records"] - expected)
+    assert difference / expected > 1e-3
+    assert difference > max(2 + 2 * c.ELOG_FETCH_INTERVAL_S / rig.cfg["period_s"],
+                            1e-3 * expected)
     assert any("measured rate" in note and "1000 records/s" in note for note in result["notes"])
-    assert meta(rig)["gaps"] == [] and meta(rig)["complete"] is True
+    side = meta(rig)
+    # Sustained drift also exceeds core's backlog tolerance at this duration.
+    assert [gap["kind"] for gap in side["gaps"]] == ["empty_backlog", "tail_incomplete"]
+    assert side["notes"] == result["notes"] and side["complete"] is True
+
+
+@pytest.mark.parametrize("duration", [20, 60])
+def test_long_period_rounding_does_not_add_rate_note(rig, duration):
+    rig.cfg.update(period_s=1, duration_s=duration)
+    result = run(rig)
+    side = meta(rig)
+    expected = result["elapsed_s"] / side["actual"]["period_s"]
+    assert result["elapsed_s"] == pytest.approx(duration)
+    assert 0 < expected - result["records"] < 2
+    assert not any("measured rate" in note for note in result["notes"])
+    assert side["notes"] == result["notes"]
+    assert side["gaps"] == [] and side["complete"] is True
 
 
 def test_uint32_limit_preflight(rig):
@@ -570,6 +591,16 @@ def test_tail_constant_guard(rig, monkeypatch):
     with pytest.raises(ValueError, match="requires drain_then_abort"):
         rig.build()
     assert rig.io.exchanges == []
+
+
+def test_tail_constant_change_after_construction_keeps_safe_order(rig, monkeypatch):
+    backend = rig.build()
+    monkeypatch.setattr(c, "ELOG_TAIL", "abort_then_drain")
+    result = run(rig, backend, emit=stop_at_running(rig, 2))
+    abort = assert_abort_order(rig)
+    assert any(cmd.startswith("FETC:ELOG?") for cmd in commands(rig)[:abort])
+    assert result["records"] == int(2 / 1.00352e-3)
+    assert meta(rig)["complete"] is True
 
 
 def test_primary_sink_failure_survives_abort_and_writer_cleanup_failures(rig, monkeypatch):

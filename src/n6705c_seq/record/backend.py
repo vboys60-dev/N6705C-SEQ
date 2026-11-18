@@ -527,6 +527,7 @@ class _ElogBackend:
     def __init__(self, inst, cfg, final_path, *, untimed, finishing, target_state=None):
         if c.ELOG_TAIL != "drain_then_abort":
             raise ValueError("ELOG backend requires drain_then_abort; abort_then_drain is unsafe")
+        self._tail = "drain_then_abort"
         self._inst = inst
         self._cfg = deepcopy(cfg)
         self._cfg.setdefault("run_id", uuid.uuid4().hex)
@@ -647,7 +648,7 @@ class _ElogBackend:
             started = time.monotonic()
             status("running")
             recorder = ElogRecorder(
-                session, sink, interval=c.ELOG_FETCH_INTERVAL_S, tail=c.ELOG_TAIL,
+                session, sink, interval=c.ELOG_FETCH_INTERVAL_S, tail=self._tail,
                 max_records=c.ELOG_FETCH_RECORDS, on_event=on_event,
                 on_error=lambda exc: notes.append(f"ELOG fetch failed: {exc!r}"),
                 on_cleanup=self._finishing)
@@ -655,7 +656,9 @@ class _ElogBackend:
             self._finishing()
             elapsed = session.stats.elapsed
             notes.extend(n for n in session.notes if n not in notes)
-            if elapsed >= 10 and abs(records * period / elapsed - 1) > 1e-3:
+            expected_records = elapsed / period
+            rate_tolerance = max(2 + 2 * recorder.interval / period, 1e-3 * expected_records)
+            if elapsed >= 10 and abs(records - expected_records) > rate_tolerance:
                 notes.append(f"ELOG measured rate {records / elapsed:.9g} records/s differs from "
                              f"the period-derived rate {1 / period:.9g} records/s.")
             meta.update(elapsed_s=elapsed)

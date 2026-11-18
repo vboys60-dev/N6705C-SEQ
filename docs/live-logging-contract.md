@@ -1,10 +1,10 @@
 # 即時資料錄製與 ARB 修補｜Wave 0 T0 契約 v1
 
-日期：2026-11-17。使用者已授權「開工 Wave 0」，本次只做 T0。
+日期：2026-11-17；2026-11-18 更新 B-ELOG 第 1–4 步。使用者已授權「開工 Wave 0」及 B-ELOG，後者授權與 H0 限制見 C11。
 數字與型別以 `src/n6705c_seq/record/contracts.py` 為準；語意以本文件為準。
 analysis 的 wire 型別另在 `analysis/contracts.py`。衝突、缺少字串或需要跨界改檔時回報 T0，不能各自改介面。
 
-錄製放在 DLOG Viewer 分頁的「錄製」模式，與「檢視」互斥。v1 單台、單 worker，只有量測紀錄，不開關輸出、不執行 ARB、不送 `*RST`；邊上電邊錄留 P4。H0 PASS 才做 B-ELOG；H0 FAIL 做 B-DLOG＋約 40 Hz MEAS 預覽；A1 完成後才開始 P2。
+錄製放在 DLOG Viewer 分頁的「錄製」模式，與「檢視」互斥。v1 單台、單 worker，只有量測紀錄，不開關輸出、不執行 ARB、不送 `*RST`；邊上電邊錄留 P4。B-ELOG 與 B-DLOG 並存，預設 elog；H0 仍 INCONCLUSIVE，使用者於 2026-11-18 授權開工 B-ELOG（見 C11）。B-DLOG 僅 demo 提供約 40 Hz MEAS 預覽；A1 完成後才開始 P2。
 `analysis/*` 不得 import `record` 或 `n6705c`；`record` 不得 import `analysis`、`webgui`、`webview`、`web_*`。寫檔器與快照只用 stdlib／numpy；contracts 只用 stdlib。
 
 ## 讀碼核對 F1–F17（不是實機驗收）
@@ -135,7 +135,7 @@ finally:
 
 ## C5 Backend Protocol 與資料流
 
-固定模組 `record/backend.py`；兩個 H0 分支只實作其中一個。
+固定模組 `record/backend.py`；`_ElogBackend` 與 `_DlogBackend` 並存，不拆檔。`make_backend` 每次呼叫依 `contracts.RECORD_BACKEND` 分派，預設 `"elog"`，可由常數切回 `"dlog"`；未知值拋 ValueError。GUI 不提供 backend 選單，JS 不得傳 backend 名稱，`record_meta` 不新增欄位。`RECORD_ENABLED` 維持 `False`。
 
 ```python
 make_backend(inst, cfg: Config, final_path: Path, *,
@@ -149,7 +149,7 @@ contracts 的 `MakeBackend` 描述工廠 callable，不是假 backend 函式。i
 
 RunResult 必填 `{run_id,final_path:Path,elapsed_s,records,gaps,preview,notes:list[str]}`，只返回 worker，不送 JS。run 正常返回前必成功 finalize；失敗拋原始例外／core 的 ElogSinkError/ElogFetchError，bridge 依 C10 映射，保留 .part、不能偽裝完成。emit 只報 starting/running/stopping 的 status，terminal 由 bridge 完成 close/release 後發；emit 不呼叫 JS 或儀器。backend 不 release token、不關 caller-owned inst。
 
-B-ELOG：ElogSession 設定／讀回，sink→elog_block→DlogWriter.append→Envelope.append；旁檔保存要求/讀回/IDN/UTC/gaps/notes。所有 I/O 包括磁碟寫入在 worker，sink 必須快；不另啟 ElogRecorder.start 的 thread，而呼叫阻塞 run。
+B-ELOG：ElogSession 設定／讀回 → ElogRecorder.run → sink → elog_block → DlogWriter.append → Envelope.append；快照為實際落檔資料，demo／真機的 backend、status、snapshot、RunResult 與旁檔一律 `preview=False`，時間軸、標頭 tint、Envelope 與旁檔 actual.period_s 均用讀回週期；旁檔保存要求/讀回/IDN/UTC/gaps/notes。所有 I/O 包括磁碟寫入在 worker，sink 必須快；不另啟 ElogRecorder.start 的 thread，而呼叫阻塞 run。
 B-DLOG：DlogSession 設定與觸發；單 worker 約 25ms 一輪 MEAS:VOLT?/MEAS:CURR?，實際速度受 I/O 限制，不保證精準 40Hz。MEAS 只入 Envelope、preview=True；**僅模擬器（`session.description` 以 `Demo mode` 開頭）才送 MEAS，真機韌體在 DLOG 執行中回 `+319` 且先吃約 5 s 逾時，會拖慢停止，所以真機不預覽、只記 note**；正式 records 以下載檔為準；到期/stop 後 ABOR，下載到 .part，校驗／持久化／發布後回 RunResult。fake 在 ABOR／到期產生真格式，不能沿用 placeholder。
 
 B-DLOG 的 `Backend.preview`、status、snapshot、RunResult 與旁檔 `preview` 一致表示該 run 是否提供 MEAS 預覽：模擬器為 True（保留既有語意，含預覽錯誤後保留的資料），真機從建構起即為 False，空快照 seq 維持 0、各 series 無樣本，`period_s` 配置前為要求的錄製週期、配置後為讀回的實際錄製週期。False 不影響原生 DLOG 錄製。
@@ -205,7 +205,7 @@ W 驗收：V/I 逐點往返、欄位重排、final 無 part、半筆 recover、�
 
 ## C7 core ELOG 錯誤與尾段語意（C1 任務實作）
 
-固定新增符號：`ElogRecorder.run(stop: Event | None = None) -> ElogStats`（阻塞）；`ElogSinkError`、`ElogFetchError`（RuntimeError 子類，保留 __cause__）；`MAX_FETCH_FAILURES=3`。維持既有 constructor positional 參數，只新增 keyword-only `tail="drain_then_abort"`、`on_event=None`、`max_records`（預設 16384，1..16384）、`on_cleanup: Callable[[],None] | None = None`；既有 interval keyword 可傳 H0 值。backend 傳 contracts 的 ELOG_TAIL/ELOG_FETCH_RECORDS/ELOG_FETCH_INTERVAL_S；core 不可 import record。另新增 `ElogSession.fetch(*, max_records: int | None = None)`：None 維持舊行為，非 None 將每次要求限制到該上限；recorder 的普通 fetch／尾段都使用 max_records。不能只存參數卻仍讓 fetch 固定送 16384。
+固定新增符號：`ElogRecorder.run(stop: Event | None = None) -> ElogStats`（阻塞）；`ElogSinkError`、`ElogFetchError`（RuntimeError 子類，保留 __cause__）；`MAX_FETCH_FAILURES=3`。維持既有 constructor positional 參數，只新增 keyword-only `tail="drain_then_abort"`、`on_event=None`、`max_records`（預設 16384，1..16384）、`on_cleanup: Callable[[],None] | None = None`；既有 interval keyword 可傳 H0 值。backend 建構時守衛 ELOG_TAIL 必須是 `drain_then_abort` 並固定保存此安全策略，執行時不重讀 tail 常數；讀取筆數與間隔取 ELOG_FETCH_RECORDS/ELOG_FETCH_INTERVAL_S；core 不可 import record。另新增 `ElogSession.fetch(*, max_records: int | None = None)`：None 維持舊行為，非 None 將每次要求限制到該上限；recorder 的普通 fetch／尾段都使用 max_records。不能只存參數卻仍讓 fetch 固定送 16384。
 
 run(stop=None) 用 recorder 內部 Event，有外部 Event 時任一旗標 set 即停止；禁止同一 recorder 重複並行 run/start。start 保留背景相容包裝，內部呼叫同一 run；新 backend **不呼叫 start**。stop(timeout=10.0) 只設旗標、join 自己的背景 thread 並回 bool；thread 未結束回 False 且保留 `_thread`，已結束才清 None；阻塞 run 外部呼叫者用 Event 停止，由呼叫端 worker 管理存活。
 
@@ -213,8 +213,9 @@ run(stop=None) 用 recorder 內部 Event，有外部 Event 時任一旗標 set �
 
 run 在離開讀取迴圈、準備尾段／ABOR（含例外）時先呼叫 on_cleanup（若有）；backend 將自己的 finishing 傳入，這是 C4 能在阻塞 run 返回前開始計時的必要掛點。callback 例外不得跳過 ABOR，完成清理後才回報。run 包 finally：最後的 ABOR:ELOG、查錯、尾段和 sink 全在呼叫 run 的執行緒。
 
-- `drain_then_abort`：停止後先 drain 可取得尾段，再 ABOR；`abort_then_drain`：先 ABOR 再嘗試讀尾段。現有 session.fetch 只允許 RUNNING，C1 必須在 core 內補出 abort 後合法尾段讀取路徑，不可直接讓 STOPPED 呼叫既有 fetch 而假稱策略完成。兩策略尾段都最多 16 個 fetch 批次且 10 s monotonic 預算（每批前檢查，單次 I/O 仍受 VISA timeout）；達上限而仍有積壓則記 gap/notes，不得聲稱完整尾段，不能 drain 無限迴圈；H0 決定可取得完整尾段者。
-- **T0 第二輪定案**：兩策略成功結束尾段與 ABOR 後，不論因 0 筆、已排空或達上限而結束，都須檢查最後估計積壓。只要大於「2 個讀取間隔的筆數＋實際 ABOR 耗時（含查錯）對應筆數」，發 `on_event("tail_incomplete", next_index, missing_estimate)` 並寫 note，不能聲稱完整尾段。`missing_estimate` 為最後估計積壓的完整筆數，不扣容許值；等於容許值不發。ABOR 耗時以 monotonic 量測，積壓使用 stop 凍結的 acquisition elapsed。既有 `tail_limit` 達上限且仍有積壓時的事件與 note 保留；超過容許值時兩事件可同時存在。contracts 新增事件常數 `ELOG_EVENT_TAIL_INCOMPLETE="tail_incomplete"`、`ELOG_EVENT_TAIL_LIMIT="tail_limit"`，不改 H0 暫定策略。
+- 依 HANDOFF §13.9 第 9 項的既有 USB／CH2 探測，E.02.09 在 `ABOR:ELOG` 後 `FETC:ELOG?` 回 `+303`。B-ELOG backend 固定 `drain_then_abort`：停止／到期 → on_cleanup(finishing) → 一般 fetch drain 到空或上限 → ABOR／嚴格查錯 → 尾段估計檢查；ABOR 後不再 FETC。drain 結束到 ABOR 間可能少 1–2 筆，不能宣稱零遺失。
+- core 保留 `abort_then_drain`／`fetch_tail`，只給 H0 腳本探測用，backend 不使用。core 的兩策略尾段都最多 16 個 fetch 批次且 10 s monotonic 預算（每批前檢查，單次 I/O 仍受 VISA timeout）；達上限而仍有積壓則記 gap/notes，不得聲稱完整尾段，不能 drain 無限迴圈。
+- **T0 第二輪定案**：兩策略成功結束尾段與 ABOR 後，不論因 0 筆、已排空或達上限而結束，都須檢查最後估計積壓。只要大於「2 個讀取間隔的筆數＋實際 ABOR 耗時（含查錯）對應筆數」，發 `on_event("tail_incomplete", next_index, missing_estimate)` 並寫 note，不能聲稱完整尾段。`missing_estimate` 為最後估計積壓的完整筆數，不扣容許值；等於容許值不發。ABOR 耗時以 monotonic 量測，積壓使用 stop 凍結的 acquisition elapsed。既有 `tail_limit` 達上限且仍有積壓時的事件與 note 保留；超過容許值時兩事件可同時存在。contracts 新增事件常數 `ELOG_EVENT_TAIL_INCOMPLETE="tail_incomplete"`、`ELOG_EVENT_TAIL_LIMIT="tail_limit"`，backend 策略固定如上，core 的另一策略僅供 H0 探測。
 - sink 拋錯：停止後續 sink、同 worker 嘗試 ABOR 與查錯，再以原始 sink 為 cause 拋 ElogSinkError；ABOR 失敗不能掩蓋原始 sink 例外。
 - 讀取連續失敗達 3 次：同 worker ABOR/查錯後拋 ElogFetchError；成功的合法 fetch（包括 0 筆）清連續失敗數。單次/第二次只呼叫 on_error（如有）並發 `on_event("fetch_error", next_index, 0)`；無損成功 fetch 不發 gap。
 - 積壓大於 **2 個讀取間隔**估計筆數卻讀 0：`on_event("empty_backlog",next_index,estimated_backlog)`；overflow 新增證據：`on_event("overflow",next_index,estimated_lost)`，不中止。每次觀察一個事件，不能把同一 overflow sticky flag 每輪重複當新遺失；backend 旁檔標記 count 為估計，無法估計時用 null。
@@ -223,7 +224,11 @@ run 在離開讀取迴圈、準備尾段／ABOR（含例外）時先呼叫 on_cl
 - **每一步設定、INIT、ABOR、0 筆、讀取失敗之後**讀 `SYST:ERR?` 到 0。現有 session.read_errors 有 50 次上限且遇格式錯誤可提早退出，不能宣稱一定 drain 到 0；C1 只能在自己擁有的 elog.py 補嚴格 helper：到上限仍未見 0／格式錯／讀失敗就拋錯，不可繼續當成功，不改 session.py。設定命令逐步查錯，不只整批結尾查。
 - +310 **只有 autorange 不支援**時降級為 notes，回讀實際 range，UI warning 與旁檔保存；其他 ELOG 功能不支援為 fatal elog_unsupported。+323（含 INIT 才報）是 bad_config，不能開始報 running；任何非零（正或負）都要處理，不用 `<0` 判斷。原始 code/text 留 notes/error。
 
-缺口偵測是估計，不能從這份程式推斷真機溢位丟新／丟舊；H0 才決定。C1 測試涵蓋三次讀錯／單錯恢復、sink錯、兩 tail、ABOR 同 thread、join timeout 保留 thread，fake 故障用 wrapper 注入，不碰 A1 的 fake。
+B-ELOG 將 `overflow`、`empty_backlog`、`tail_limit`、`tail_incomplete` 各事件原樣保存為一筆 gap，count 為 int 估計值；`fetch_error` 只寫 notes，不算 gap。overflow 時同一批遺失資料會同時記成 `overflow` 與 `tail_incomplete` 兩筆缺口（core 行為），**缺口數不等於遺失次數**，也不能將各 count 相加當作實際遺失筆數。
+
+錄製結束的速率核對只寫 note、不新增 gap 或中止：elapsed ≥ 10 s 時，比較 `abs(records - elapsed/period) > max(2 + 2*interval/period, 1e-3*elapsed/period)`；period 為讀回週期，interval 為 recorder 實際 fetch 間隔。容許筆數取整與尾段少 1–2 筆，短錄的微小速率差可能落在兩個讀取間隔容差內；長錄累積的速率偏差仍可觸發 note。持續時鐘／速率偏差也可能觸發 core 的積壓缺口估計。
+
+缺口偵測是估計，不能從這份程式推斷真機溢位丟新／丟舊；仍需 H0 證據。C1 測試涵蓋三次讀錯／單錯恢復、sink錯、兩 tail、ABOR 同 thread、join timeout 保留 thread，fake 故障用 wrapper 注入，不碰 A1 的 fake。
 
 ## C8 DLOG 修正語意（C2）
 
@@ -274,7 +279,7 @@ A1 在 `start_together` 的 INIT 前送 `TRIG:ARB:SOUR IMM,(@...)` 並 write_che
 
 所有錄製 shell 字串文字只放在 `i18n.STRINGS`（zh/en）；`contracts.I18N_KEYS: frozenset[str]` 只列完整 key 清單，`record/*.py` 不放中文。涵蓋模式、機台/通道/V/I/週期/時長、開始停止/另存/載入、狀態六種、elapsed/records/gaps、preview/note/軸/檔名、全部錯誤，以及 ARB slew_warning。測試驗各 key 都存在於 i18n.STRINGS 且兩語 placeholder 相同，不在 contracts 複製翻譯；slew_warning 的欄位語意依 C9。J/K/G/A1 只引用它們或既有 key，缺字串回 T0。Viewer 自有字典依 V 的界線維護。新 web 檔案仍不得含 CJK。
 
-## C11 H0 判定準則（逐字照抄 task-plan §5）
+## C11 H0 判定準則與 B-ELOG 開工授權
 
 **PASS** 需要同時滿足：
 1. 用 1 通道 1 ms、以及 4 通道 V+I 在最短週期（819.2 µs）兩種設定，每 250 ms 讀一次，USB 和 LAN 各連續錄 ≥ 1 h：
@@ -290,11 +295,13 @@ A1 在 `start_together` 的 INIT 前送 `TRIG:ARB:SOUR IMM,(@...)` 並 write_che
 
 上述 §4.0.2 指 HANDOFF 引用的舊專案紀錄，不是本文件章號。未滿 PASS 又未證明 FAIL 時為 INCONCLUSIVE，不能擅自選 B-ELOG 或打開旗標。H0 scripts 只產證據，實測由使用者做。
 
-待 H0 回填常數（contracts 現值明確為暫定，不是量測結果）：
+**2026-11-18 狀態與授權**：H0 仍為 **INCONCLUSIVE**；長測證據只有 USB、CH2 單通道、15 分鐘（HANDOFF §13.9 第 8 項），不滿上述 PASS 門檻。使用者於 **2026-11-18 授權開工 B-ELOG**，第 1–4 步已完成；此授權不代表 H0 PASS 或開啟功能旗標。LAN、多通道、≥1 h 為已知風險；B-ELOG backend 仍待 HANDOFF §13.10 的 H1–H8 實機驗收。
+
+常數與證據範圍（不得把預設值當作 USB／LAN 長錄結論）：
 
 | 常數 | 預設 | H0 回填 |
 |---|---|---|
-| ELOG_TAIL | drain_then_abort | 能保留完整尾段的策略 |
+| ELOG_TAIL | drain_then_abort | E.02.09 ABOR 後 FETC 回 +303；backend 固定此策略，仍有尾段少 1–2 筆限制 |
 | ELOG_FETCH_RECORDS | 16384 | 每次讀取的要求上限（必要時更小） |
 | ELOG_FETCH_INTERVAL_S | 0.250 | 通過 USB/LAN 長錄的間隔 |
 
@@ -314,7 +321,7 @@ A1 在 `start_together` 的 INIT 前送 `TRIG:ARB:SOUR IMM,(@...)` 並 write_che
 
 | 檔案 | Wave 0 | Wave 1 | Wave 2 | Wave 3 | Wave 4–5 |
 |---|---|---|---|---|---|
-| `docs/live-logging-contract.md`、`record/__init__.py`、`record/contracts.py`、`tests/record/test_record_contracts.py` | T0 | | | | |
+| `docs/live-logging-contract.md`、`record/__init__.py`、`record/contracts.py`、`tests/record/test_record_contracts.py` | T0 | | | B-ELOG（契約、分派常數與測試；__init__ 不改） | |
 | `i18n.py`、`docs/analysis-contract.md` | T0 | | | | |
 | `analysis/contracts.py` | T0（Msg、註解） | | G（只改 SELFTEST tuple） | | |
 | `scripts/hw_elog_h0.py`、`tests/test_hw_elog_h0.py` | H0s | | | | |
@@ -328,25 +335,27 @@ A1 在 `start_together` 的 INIT 前送 `TRIG:ARB:SOUR IMM,(@...)` 並 write_che
 | `record/dlogfile.py`、`tests/record/test_dlogfile.py` | | W | | | |
 | `analysis/core.py`、`tests/analysis/test_core.py` | | X1（可選） | | | |
 | `record/snapshot.py`、`tests/record/test_snapshot.py` | | | S | | |
-| `web_record.py`、`webgui.py`、`analysis/gate.py`（預設不改）、`tests/test_web_record.py`、`test_record_gate.py`、`test_webgui.py` | | | G | | |
+| `web_record.py`、`webgui.py`、`analysis/gate.py`（預設不改）、`tests/test_web_record.py`、`test_record_gate.py`、`test_webgui.py` | | | G | B-ELOG（僅 web_record.py 錯誤碼映射、tests/test_web_record.py） | |
 | `web/index.html`、`web/analysis.js`、`tests/js/analysis.test.js` | | | K | | |
-| `web/record.js`、`web/record.css`、`tests/js/record.test.js` | | | J | | |
+| `web/record.js`、`web/record.css`、`tests/js/record.test.js` | | | J | B-ELOG（僅 tests/js/record.test.js） | |
 | `analysis/web/viewer.html`、`analysis/web/shell_stub.html` | | | V | | |
-| `record/backend.py` | | | | B-ELOG ⊕ B-DLOG | |
+| `record/backend.py` | | | | B-ELOG 與 B-DLOG 並存，RECORD_BACKEND 分派 | |
 | `tests/record/test_backend_elog.py` ／ `test_backend_dlog.py` | | | | 各自的 B | |
-| `tests/test_record_integration.py` | | | | | I |
-| `README.md`、`HANDOFF.md`、`HANDOFF_WINDOWS.md`、`packaging/n6705c_seq.spec` | | | | | D |
+| `tests/test_record_integration.py` | | | | B-ELOG（整合案例、固定 DLOG fixture） | I |
+| `README.md`、`HANDOFF.md`、`HANDOFF_WINDOWS.md`、`packaging/n6705c_seq.spec` | | | | B-ELOG（僅 HANDOFF.md 狀態） | D |
 | `docs/live-logging-review-*.md` | | | | | R |
 | **凍結**（沒列出的檔都不得改，例如 `web/app.js`、`web/layout.js`、`web/seq.js`、`web/list.js`、`style.css`、`analysis/server.py`、`analysis/storage.py`、`form.py`、`plan.py`、`synth.py`、`listplan.py`、`e36441a.py`、`core/` 其餘檔案、`pyproject.toml`） | — | — | — | — | — |
 
 
-`analysis/contracts.py` 跨波：T0 僅 OPEN_PUSH/MSG_FIELDS/MSG_TO_IFRAME/OpenPush/計時註解；G 僅 SELFTEST 兩 tuple。`core/fake.py` A1 補 ARB/slew、B-DLOG 才補真正 dlog；C1 故障注入不能改它。B-ELOG/B-DLOG 二選一共用 backend.py。webgui.py 僅 G 的 import 與 Api mixin 兩行；app.js 凍結，若不能完成回報 T0。
+`analysis/contracts.py` 跨波：T0 僅 OPEN_PUSH/MSG_FIELDS/MSG_TO_IFRAME/OpenPush/計時註解；G 僅 SELFTEST 兩 tuple。`core/fake.py` A1 補 ARB/slew、B-DLOG 才補真正 dlog；C1 故障注入不能改它。B-ELOG/B-DLOG 並存於 backend.py，B-ELOG 第 1–4 步不改 core、web/record.js 或 i18n.py。webgui.py 僅 G 的 import 與 Api mixin 兩行；app.js 凍結，若不能完成回報 T0。
 
-本表 R 的 wildcard 展開只有 docs/live-logging-review-codex.md 與 docs/live-logging-review-opus.md；backend 測試為 tests/record/test_backend_elog.py 或 tests/record/test_backend_dlog.py；G 的 test_record_gate.py/test_webgui.py 皆在 tests/；A1 省略 tests/ 前綴的同列檔案皆在 tests/。A3 等 HAs seqnum，不能提前推定 0/1 編號；X1 可選，不阻擋 writer。
+本表 R 的 wildcard 展開只有 docs/live-logging-review-codex.md 與 docs/live-logging-review-opus.md；backend 測試為 tests/record/test_backend_elog.py 與 tests/record/test_backend_dlog.py；G 的 test_record_gate.py/test_webgui.py 皆在 tests/；A1 省略 tests/ 前綴的同列檔案皆在 tests/。A3 等 HAs seqnum，不能提前推定 0/1 編號；X1 可選，不阻擋 writer。
 
 ## 驗收與未確認事項
 
 T0 必跑全套 pytest（基準 838 過／7 跳過，只能增加）與 node --test tests/js（基準 26 過）。tests/record/test_record_contracts.py 以 AST 驗 contracts 僅 stdlib、record 原始碼不含 CJK、翻譯 key 存在且雙語 placeholder 相同、每個錯誤碼有 key，並保留 F12 往返證據。CJK/key、selftest、公用 Api、analysis 邊界既有測試必須仍綠。測試僅 fake/stub／本地資料，不跑真機、不送 *RST。
 
-尚無 H0/HAs/14585A/Windows rename 實機證據；tail、讀取上限/間隔、overflow 時序、觸發因果皆不得寫成已驗證。雙審仍需另一位獨立審閱者完成；自我檢查與 pytest 不冒充另一份審查。
+B-ELOG 第 1–4 步本機測試（2026-11-18）：`PYTHONPATH=$PWD/src /opt/anaconda3/bin/python3 -m pytest -q -p no:cacheprovider` 為 **1574 passed／7 skipped**；`node --test tests/js/*.test.js` 為 **70 passed、0 failed**。只用 fake／故障包裝與本機服務測試，不是實機驗收結果。
+
+H0/HAs 的既有有限實測記錄見 HANDOFF §13.9；H0 仍 INCONCLUSIVE。B-ELOG H1–H8、14585A 相容性與 Windows rename 實機結果仍待補；tail、讀取上限/間隔、overflow 時序、觸發因果的結論均須受既有證據範圍限制。雙審仍需另一位獨立審閱者完成；自我檢查與 pytest 不冒充另一份審查。
 
