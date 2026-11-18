@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier, Event, Lock
+from unittest.mock import Mock
 
 import pytest
 import webview
@@ -110,6 +111,33 @@ def test_dialog_extension_and_confirmation(core):
     core._window.result = False
     assert core._confirm("title", "text") is False
     assert core._window.calls[-1] == ("title", "text")
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_save_path_confirms_existing_appended_extension(core, tmp_path, monkeypatch, confirmed):
+    path = tmp_path / "plan.csv"
+    path.write_text("existing", encoding="utf-8")
+    core._window.result = str(tmp_path / "plan")
+    confirm = Mock(return_value=confirmed)
+    monkeypatch.setattr(core, "_confirm", confirm)
+
+    assert core._save_path(("CSV (*.csv)",), ".csv") == (str(path) if confirmed else None)
+    confirm.assert_called_once_with(
+        i18n.tr("confirm"), i18n.tr("overwrite_confirm", name="plan.csv"))
+
+
+@pytest.mark.parametrize("filename, exists", [("plan", False), ("plan.csv", True), ("plan.txt", True)])
+def test_save_path_without_confirmation(core, tmp_path, monkeypatch, filename, exists):
+    path = tmp_path / filename
+    if exists:
+        path.write_text("existing", encoding="utf-8")
+    core._window.result = str(path)
+    confirm = Mock()
+    monkeypatch.setattr(core, "_confirm", confirm)
+
+    expected = path if path.suffix else path.with_suffix(".csv")
+    assert core._save_path(("CSV (*.csv)",), ".csv") == str(expected)
+    confirm.assert_not_called()
 
 
 def test_config_and_language(core):

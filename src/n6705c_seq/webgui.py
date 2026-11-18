@@ -155,6 +155,9 @@ class _Core:
         path = self._dialog_path(self._window.create_file_dialog(webview.FileDialog.SAVE, file_types=filetypes))
         if path and not Path(path).suffix:
             path += ext
+            if Path(path).exists() and not self._confirm(
+                    tr("confirm"), tr("overwrite_confirm", name=Path(path).name)):
+                return None
         return path
 
     def _save_config(self, resources: list[str], demo: bool) -> None:
