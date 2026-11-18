@@ -340,7 +340,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 | 1 | H0：ELOG 長時間穩定性 | `scripts/hw_elog_h0.py`，≥4 h，USB 與 LAN 各一次 | 決定 B-ELOG 能否開工；失敗退回 DLOG＋MEAS（2026-11-18 短測已能取到資料，見 §13.9 第 1 項，長測未做） |
 | 2 | ARB／TRIG 檢查 | `scripts/hw_arb_trig_check.py`，slew 加 `--allow-reset`，以 seqnum 判定 A3 | 驗證 ARB 修正在真機上的行為 |
 | 3 | HW-P2：14585A 相容性 | 用 14585A 開啟錄出的 `.dlog` | 確認寫出的格式真機軟體讀得懂（Viewer 往返不能代替） |
-| 4 | 真機錄製驗收 | 旗標暫時打開，接真儀器錄一輪 DLOG | 確認設定、下載、發布在真機可用 |
+| 4 | 真機錄製驗收（部分完成，見 §13.9 第 7 項） | 真 `webgui.Api`＋`RecordApi`＋假視窗已跑通 DLOG；真視窗操作與存檔對話框未驗 | 設定、下載、發布、停止延遲與檔案解析已確認；`preview` 旗標已由 PR #24 修正 |
 
 **B. Windows（不一定要儀器；清單在 `HANDOFF_WINDOWS.md` §8，需先把旗標打開）**
 
@@ -371,6 +371,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 6. **`hw_arb_trig_check.py` 實機結果（2026-11-18，CH2，加 `--frame-wide-arb-source`）**：`arbsrc` PASS（不帶通道的 `TRIG:ARB:SOUR IMM`／`BUS` 接受且回讀一致）；`seqnum` PASS（從 0 起算；E.02.09 的 `ARB:SEQ:RES` 後 `LENG?`＝1 而非 0，腳本判定已改為以 baseline 為準，99/100 端點未測）；`slew` PASS（只收集重置前後回覆，`VOLT:SLEW:MAX?` 是布林覆寫旗標，無速率判定）。`bus_delay` PASS：ARB 源 IMM 時波形在 `INIT:TRAN` 就起跑（約 0.1 s 內），ARB 源 BUS 時等到 `*TRG` 才起跑（約 2.1 s），支持「ARB 源」假設；**`residual_bus` PASS＝A1（BUS→IMM）實機驗證（Codex sol 讀 CSV 裁決，限 E.02.09.3271、USB、CH2=N6781A）**：pre-A1 控制組（殘留 BUS、TRAN=IMM、不送 `*TRG`）`STAT:OPER:COND?` 持續 +113 直到逾時，補送 `*TRG`（擷取相對 2.345 s）後 2.447 s 才出波形，證實殘留 BUS 會擋住 INIT 起跑；目前 `start_together` 帶通道遇 `-108` 後改送整台 `TRIG:ARB:SOUR IMM`，回讀 ARB／TRAN 皆 IMM，**不送 `*TRG`** 仍在 INIT 後約 5 ms 起跑（脈波寬 102.5 ms、峰值 1.0013 V，未逾時）。未觀察到「沒波形卻回報成功」。限制：pre-A1 是腳本內重建的控制組、非舊版完整應用程式；勾擷取的舊組 INIT／`*TRG` 只隔 2.1 ms，`at_init` 不能證明啟動來源；單台單通道單次。
    **CH1 是電子負載**：ARB 電壓波形類檢查（`bus_delay`、`residual_bus`）只能在 CH2 做；在 CH1 跑會量不到波形（電壓維持 0 V），不是 bug，也不用補測。
    **命名**：正式任務表 A1＝BUS→IMM（本條）、A3＝序列步驟編號（`seqnum` PASS，見上）。
+7. **GUI 錄製驗收（2026-11-18，真 `webgui.Api`＋`RecordApi`＋假視窗）**：N6705C MY65000515、E.02.09.3271、USB、CH2；週期 1 ms（實際 1.00352 ms），錄約 5 s。開始到 `running` 0.51 s；停止到 `done` 0.04 s（PR #16 修正經實機確認，原約 10 s）；5179 筆，只留 `.dlog` 與 `.dlog.json`、無 `.part`，`complete=True`、`gaps=[]`，gate 回 `IDLE`。**檔案解析**（唯讀、無視窗）：長度整除、索引 trigger＝`0xFFFFFFFF`、write＝5179，時間軸 0～5.196 s 嚴格遞增、間隔 1.00352 ms；`parse_dlog → build_lod → get_values／compute_stats／compute_buckets` 對 V／I／P 全通過。輸出關閉，所以 5179 筆 V、I 全為 0（NaN／Inf 為 0），**無法驗證非零量測與環形排序**。**發現**：(a) 狀態 `preview=True` 但真機無即時預覽（MEAS 被拒、snapshot seq 一直為 0）→ 已由 PR #24 修為 False。(b) 標頭宣告 60 s、實際資料約 5.197 s，旁檔 elapsed 5.228 s；`complete=true` 不代表錄滿宣告時間。(c) 旁檔警告文字暗示索引與筆數不同，實際 write＝筆數，只是 trigger 非零就產生通用警告，文字可改得更準。(d) 儀器標頭時間比旁檔主機 UTC 快約 75～80 秒（標頭無時區，原因不明）。**未驗**：真視窗操作與存檔對話框、Windows 檔案鎖、完整 `open_handle/open_dlog` 開檔與畫面（只驗共用運算路徑）、輸出通電時的錄製值與環形排序、14585A 開啟。
 
 ### 13.10 目前狀態與下一步（2026-11-18 晚，PR #11–#17 皆已合併 main）
 
