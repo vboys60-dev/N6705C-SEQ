@@ -11,6 +11,7 @@ from n6705c.core import dlog
 from n6705c.core.dlog import DlogConfig, DlogSession, DlogState, VALID_DLOG_SOURCES
 from n6705c.core.fake import FakeN6705C
 from n6705c.core.instrument import N6705C
+from n6705c.core.session import ErrorQueueError
 
 
 def test_dlog_duration_accepts_99999_hours():
@@ -295,6 +296,47 @@ def test_failed_csv_download_does_not_delete_either_file(recorded, tmp_path):
     assert session.config.filename in transport.fake.files
     assert session.config.filename[:-5] + ".csv" in transport.fake.files
     assert not any(cmd.startswith("MMEM:DEL ") for cmd in transport.fake.command_log)
+
+
+@pytest.mark.parametrize("raw_download_fails", [True, False])
+def test_retrieve_cleans_downloaded_files_when_error_queue_fails(
+    recorded, tmp_path, monkeypatch, caplog, raw_download_fails
+):
+    session, transport = recorded
+    if raw_download_fails:
+        transport.fail_suffix = ".dlog"
+    read_errors = session.instrument.session.read_errors
+    failed_reads = []
+
+    def fail_cleanup_reads():
+        # Export must still check errors normally; fail only during retrieval cleanup.
+        if any(cmd.startswith("MMEM:DATA?") for cmd in transport.fake.command_log):
+            failed_reads.append(True)
+            raise ErrorQueueError("malformed error queue", errors=[], response="garbled")
+        return read_errors()
+
+    monkeypatch.setattr(session.instrument.session, "read_errors", fail_cleanup_reads)
+    caplog.set_level("DEBUG", logger="n6705c.core.dlog")
+
+    results = session.retrieve(tmp_path)
+
+    remote_dlog = session.config.filename
+    remote_csv = remote_dlog[:-5] + ".csv"
+    expected = {"csv": tmp_path / "session.csv"}
+    if not raw_download_fails:
+        expected["dlog"] = tmp_path / "session.dlog"
+    assert results == expected
+    assert all(path.read_bytes() for path in results.values())
+    assert remote_csv not in transport.fake.files
+    assert (remote_dlog in transport.fake.files) is raw_download_fails
+    assert [cmd for cmd in transport.fake.command_log if cmd.startswith("MMEM:DEL ")] == (
+        [f'MMEM:DEL "{remote_csv}"']
+        + ([] if raw_download_fails else [f'MMEM:DEL "{remote_dlog}"'])
+    )
+    assert len(failed_reads) == 2
+    assert "malformed error queue" in caplog.text
+    if raw_download_fails:
+        assert "injected download failure" in caplog.text
 
 
 @pytest.mark.parametrize("suffix", [".csv", ".dlog"])
