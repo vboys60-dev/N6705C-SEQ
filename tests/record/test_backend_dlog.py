@@ -287,6 +287,15 @@ def test_repeated_meas_error_stops_preview_and_publishes(rig, clock, monkeypatch
     assert not rig.transport.fake.files
 
 
+def test_hardware_sends_no_meas_preview(rig, clock, monkeypatch):
+    rig.cfg["duration_s"] = 1
+    monkeypatch.setattr(type(rig.transport.fake), "description", "VISA (backend=ni)")
+    result = rig.build().run(clock, lambda status: None)
+    assert rig.transport.meas_count == 0
+    assert result["records"] == 1000
+    assert any("No live preview" in note for note in result["notes"])
+
+
 def test_emit_exception_still_aborts_and_saves_without_publication(rig, clock):
     failure = RuntimeError("emit failed")
     def emit(status):

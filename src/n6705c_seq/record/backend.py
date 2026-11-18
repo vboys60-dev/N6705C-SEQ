@@ -351,7 +351,11 @@ class _DlogBackend:
                     status("running")
                     next_sample = started
                     failures = 0
-                    preview_enabled = True
+                    # Real firmware rejects MEAS while the logger runs (+319) after a ~5 s VISA
+                    # timeout, delaying stop; only the simulator gets a live preview.
+                    preview_enabled = str(self._inst.session.description).startswith("Demo mode")
+                    if not preview_enabled:
+                        notes.append("No live preview on hardware: MEAS is not allowed while the data logger runs.")
                     chanlist = format_channel_list(cfg["channels"])
                     while True:
                         now = time.monotonic()
