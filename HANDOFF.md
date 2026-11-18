@@ -2,7 +2,7 @@
 
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。只做時序，不做量測。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-11-18　狀態：模擬器全過（pytest 1518 過／7 跳過）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
+最後更新：2026-11-18　狀態：模擬器全過（pytest 1655 過／7 跳過；JS 70）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
 
 | 區塊 | 狀態 |
 |---|---|
@@ -13,6 +13,7 @@
 | Codex 審查 | 第 2 輪已核准（§8） |
 | 報告分析升級版 | T0–T8 完成，PR #1 已合併，分頁已啟用；Windows 11 實機未驗（§11） |
 | 搜尋儀器（下拉選單） | PR #8 已合併 `c7461c6`；離線與 CI 通過，**未接實機、未在 Windows 實際操作**（§12） |
+| 全專案審查修復（PR #31 `e10f462`） | 三輪審查已修 13 項；**第三輪新發現待處理，見 §14** |
 | 即時資料紀錄＋ARB 修補 | **規劃與任務表完成，尚未開工**（§13、`docs/live-logging-task-plan.md`） |
 
 ## 0. 先讀這幾件事
@@ -41,7 +42,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 
 ## 2. CSV 格式
 
-欄位：`enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a`（最後一欄可省略／留空＝不限流）。
+欄位：`enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a`（最後一欄可省略／留空＝不寫入限流，儀器沿用目前設定，**不是不限流**）。
 - **列順序就是通道編號**：第 1–4 列＝機台 1 CH1–4，第 5–8 列＝機台 2。停用列要留著佔位。
 - 錯誤訊息指出 `line N, column X`。範例 `examples/powerup.csv`（CH7、CH8 停用）。
 
@@ -422,3 +423,55 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 `slew_warnings()` 僅查 override 與目前 rate，不再查 `VOLT:SLEW? MAX`；required 沿用波形／序列 points()，取每通道所有函式 Δt>0 線段的最大 |Δv/Δt|，瞬間跳階不計。僅 override=0 且 rate<required 警告，rate≥INF_SENTINEL（1e37，含 9.9E37）視為不限制。實機 N6781A 預設 rate=3300 V/s、override=0、SLEW? MAX=9.9E37，不再因與哨兵比較而誤報；SEQ/List/CLI 共用此規則。翻譯欄位改為 channel、actual、required。這次只跑 fake/demo，未連實機。
 
 List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，因此依此規則 required=0、不發 slew 警告；List 警告轉送測試用有限斜率 mock 驗證，另測實際編譯的跳階不警告。
+
+
+## 14. 全專案審查與修復（2026-11-18；PR #31 已合併 main `e10f462`）
+
+流程：Codex sol/astra＋Opus 審查 → Opus 規劃任務（檔案互不重疊）→ Codex sol medium 各開 worktree 並行實作 → Opus 驗收（突變驗證 12 項）→ 合併、CI 全綠（3 OS × py3.11/3.13＋build-windows）。pytest 1655 過／7 跳過；JS 70 過。
+
+### 14.1 已修（PR #31）
+- N6705C 開輸出前嚴格檢查耦合 `OUTP:COUP:CHAN?`（`execute._check_coupling`）：耦合集合與計畫有交集且含計畫外通道 → 拒絕；查詢／解析失敗一律拒絕；接受 `(@1,2)`、`1,2`。
+- 「全部關閉」逐台獨立（`web_seq._off_work`，`OFF_TIMEOUT_MS=3000`），失敗彙整並列 `ok/總數`。
+- 重複機台檢查（位址字串＋IDN 製造商/序號，N6705C 與 E36441A）、最多 `MAX_FRAMES` 台；group 建構失敗回滾；CLI 用 `close_all`。
+- 先寫 `CURR` 再寫 `VOLT`（N6705C 與 E36441A）。
+- `Session.read_errors` 嚴格化（csv strict、兩欄、整數 code、最多 50 筆，否則 `ErrorQueueError`），ELOG／backend 共用；ELOG `init_attempted`（INIT 前標記）使 INIT 部分成功時仍送 `ABOR:ELOG`。
+- `all_outputs_off` 加 `ABOR:ACQ`；transport 建構失敗回滾；**不再 `rm.close()`**（pyvisa 同一 VISA library 共用一個 ResourceManager，關它會關掉其他台）。
+- 存檔補副檔名後再確認覆寫；`hw_e36441a_check.py` `touched` 旗標；DLOG 上限 359_996_400 s（`dlog.py` 與 `record/contracts.py` 各留常值，由測試保證相等）；CI／README 改 `(cd tests/js && node --test)`。
+
+### 14.2 第三輪審查（PR #31 後）處理建議（Codex sol high 判 REVISE、Opus 判 APPROVED；Opus 已用 fake＋`run_plan` 重現）
+| # | 項目 | 判定 | 嚴重度 | 建議 |
+|---|---|---|---|---|
+| 2 | `execute.py` 前檢接受 N6791A／N6792A 電子負載當供電通道（fake slots 重現送出 `CURR`、`VOLT 0`、`OUTP ON`、`INIT:TRAN`）。§13.9 實機 CH1 就是 N6791A | 成立 | 高（有條件） | `capability.py` 加 `LOAD_MODELS`／`is_load`；`run_functions` 任何寫入前，計畫含負載通道 → `PlanRejected`（訊息寫清原因）；fake slots 測試。無需實機 |
+| 1 | `execute.py` 開輸出前沒有 `ABOR:TRAN`、沒處理 `INIT:CONT:TRAN`（E36441A 路徑有）。工具自己不會留下執行中 ARB，僅外部狀態（前面板、CONT ON）觸發；hold_dc＋CONT ON 會一直重跑 | 部分成立 | 中 | 在 `_check_coupling` 後、`_set_trigger_sources` 前，對計畫通道依序 `write_checked` `INIT:CONT:TRAN OFF,(@…)` → `ABOR:TRAN (@…)`（順序不能反）；fake 補 `INIT:CONT:TRAN`；E.02.09 若回 -108 退不帶通道。**需實機確認語法** |
+| 3 | `web_seq._off_work` 先 `detect_model`，再 `connect_group` probe；IDN 逾時或 `_safe_query` 的 `read_errors` 遇亂碼 → 整台零關閉動作 | 成立 | 低-中 | except 分支加盲關：裸 `VisaTransport` 逐通道 `OUTP OFF,(@n)`（n=1..4，各自吞錯；不用 `(@1:4)` 以免空槽整條被拒），結果標「已盲送、未確認」。只吞 `ErrorQueueError` 不夠 |
+| 4 | `transport._list_on()` 仍 `rm.close()` | 成立（潛在，只有 scan 子程序呼叫） | 低 | 刪該行 |
+| 5 | `elog.stop()`：ABOR 失敗仍在 `finally` 設 STOPPED、清 `init_attempted`；STOPPED 時 `stop()` 直接 return | 成立 | 低（`RECORD_ENABLED=False`） | 打開 RECORD 前與 `_pending` 上限一起修：成功後才改狀態；`if state in (IDLE, STOPPED) and not self.init_attempted: return` |
+| 6 | (a) `dlog.retrieve`、`arb/runner.py` 在 except 內 `read_errors()` 可能蓋掉原錯誤；(b) `cli.py` `close_all` 失敗仍回傳 0；(c) 限流留空沿用舊值 | (a)(b) 成立；(c) 是設計選擇（README 已寫明） | 低 | (a) 包 `try/except Exception: log`；(b) 記旗標最後回傳 1；(c) 是否在預覽加警告由使用者決定 |
+
+分批建議：
+- **PR-A（不用上機）**：#2、#3、#4、#6a／b，每項補測試。
+- **PR-B（上機確認語法後再合）**：#1＋fake `INIT:CONT:TRAN`。
+- **打開 RECORD 前**：#5＋§14.3 `_pending` 上限。
+- **等使用者決定**：GUI 停止鈕、#6c。
+
+### 14.2.1 待使用者決定（尚未回答；回答前不開工 PR-A）
+1. 電子負載：直接拒絕（Opus 建議；實機選 CH1 的表會被擋，須改用 CH2），或保留負載模式只警告？
+2. #1 遇執行中 ARB／CONT ON：自動關 CONT＋ABOR（與 E36441A 一致，建議），或像耦合檢查直接拒絕？
+3. #3 可否接受「已盲送、未確認」的回報語意？
+4. GUI 停止鈕做不做（要能中斷執行緒並與 `outputs_off` 安全競爭，改動較大；目前替代是前面板 Output Off）；#6c 要不要預覽警告？
+
+### 14.3 仍延後
+- #5 ELOG `_pending` 對齊緩衝無上限（打開 `RECORD_ENABLED` 前做）。
+- GUI 執行中沒有停止手段（`web/app.js:86` `#btn-off` 停用）。
+- 回歸測試缺口大多已補（耦合、全部關閉、重複機台、錯誤佇列亂碼、`ABOR:ACQ`、腳本取消）。
+
+### 14.4 實機待確認
+- `OUTP:COUP:CHAN?` 真機回覆格式（可能 `(@1,2)`），解析已容忍但未實測（F.1.1.0）。
+- 建議上機一次做完（在 CH2 N6781A）：①查 `OUTP:COUP:CHAN?`；②送 `INIT:CONT:TRAN OFF,(@2)`，確認不回 -108／-113；③先 `INIT:CONT:TRAN ON` 再跑一次，確認 ABOR 後 `STAT:OPER:COND?` 為 idle。
+- 耦合通道被一起開啟的行為只在模擬器重現。
+
+### 14.5 操作備忘
+- PR #32（本文件）CI：macOS 3.13 連 3 次剛好 15 分鐘失敗、job 無任何步驟記錄（疑似 macOS arm64 runner 沒接到工作；其他 5 項過、main 與 PR #31 同碼皆過）。待重跑變綠，或經使用者同意在僅文件變更下合併。
+- 派 Codex 平行實作：每任務 `git worktree add ../N6705C-SEQ-wt-Tn -b fix/Tn main`；worktree 內 pytest 一律 `PYTHONPATH=src`（否則 import 到主 repo 的 editable 安裝）。
+- BSD sed 不支援 GNU 語法，批次替換用 Python。
+- 合併後記得刪 worktree 與 `fix/*` 分支。
