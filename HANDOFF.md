@@ -285,14 +285,14 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 - 58c1fc2 Wave 1：A1 `TRIG:ARB:SOUR IMM`＋slew 前檢、A2、C1（`ElogRecorder.run/tail/dedupe/tail_incomplete`）、W（`record/dlogfile.py`）、C2 的 DLOG 兩個 bug。
 - 7e8c738 Wave 2：S `record/snapshot.py`、G `web_record.py`（RecordApi）、K/J/V（`analysis.js`、`record.js`、`viewer.html` open_push）。Opus 審查（含 must-fix 複審）已核准。`RECORD_ENABLED=False`。
 - 7b2a494：`DlogSession.wait()` 在 ARMED/IDLE/ABORTED 不再無限迴圈（回 False）。
-- Wave 3 B-DLOG（commit 見 `git log`）：`record/backend.py`、`tests/record/test_backend_dlog.py`、`core/fake.py`（真格式 .dlog）、`NoRecordsError`（`record/contracts.py`）、`web_record._failure_code` 映射 `no_recording`。Opus＋Codex 雙審 → Codex 修六項（零筆錯誤碼、發布半途失敗旁檔 `complete=False`、下載本機寫入錯誤標 `sink`、刪檔測試假陽性、`SIGALRM` 跨平台、INIT 前失敗清空暫存檔）→ Opus 複審 APPROVED。全套 1441 passed／7 skipped，node 67 過。B-ELOG 等 H0 結果。
+- Wave 3 B-DLOG（commit 見 `git log`）：`record/backend.py`、`tests/record/test_backend_dlog.py`、`core/fake.py`（真格式 .dlog）、`NoRecordsError`（`record/contracts.py`）、`web_record._failure_code` 映射 `no_recording`。Opus＋Codex 雙審 → Codex 修六項（零筆錯誤碼、發布半途失敗旁檔 `complete=False`、下載本機寫入錯誤標 `sink`、刪檔測試假陽性、`SIGALRM` 跨平台、INIT 前失敗清空暫存檔）→ Opus 複審 APPROVED。全套 1441 passed／7 skipped，node 67 過。B-ELOG 第 1–4 步狀態見下方第 8 項；H0 仍 INCONCLUSIVE。
 
 **接手要做**
 1. ~~B-DLOG 雙審~~ 已完成（見上）。
 2. 已知缺口（B-DLOG 審查遺留，皆不擋）：原生 `.part` 無法被 `recover_part()` 復原（沒植入 run_id）；（MEAS 連續失敗讓整個 run 失敗的缺口已於 Wave 5 修正，見第 6 項）契約待補：MEAS 連續失敗上限 3、gap index 用預覽序列且 count=null、`envelope.preview=True` 由 backend 設；覆寫舊檔時第二次 replace 失敗，舊錄音的 `complete=True` 旁檔會被新的 `complete=False` 取代（舊資料檔仍在，比配錯安全）；`_disk` 補欄位後無 errno 的 `OSError` 其 `str()` 顯示 `[Errno None]`；`notes` 重複記同一例外、`started_utc` 用 `+00:00` 而其他欄位用 `Z`；缺測試：發布最後一步（標 `complete=True`）失敗。
-3. **使用者要在真機跑**（Wave 3 B-ELOG 與 A3 卡在這）：`scripts/hw_elog_h0.py`（elog_arb 需 `--yes`；完整 USB＋LAN × 2 設定 × ≥1 h，總計 ≥4 h）與 `scripts/hw_arb_trig_check.py`（`slew` 項送 `*RST`，需 `--allow-reset`；`seqnum` 結果決定 A3）。H0 PASS → 做 B-ELOG（`backend.py` 目前被 B-DLOG 佔用，若兩支並存要照計畫拆成 `backend_elog.py`／`backend_dlog.py`＋分派的 `backend.py`，需重過 T0）；FAIL → 以 B-DLOG 為準，C13 上限 256 MB 生效。
-4. 待決設計：B-ELOG 是否合併 `empty_backlog` 與 `tail_incomplete` 的 gap；長錄時鐘漂移（10 h×100 ppm≈3.6 s）可能造成誤報 `tail_incomplete`；slew 前檢已移除 `VOLT:SLEW? MAX` 查詢，消除其不支援時每台每次約 10 s 的逾時；非 demo 模式現在開兩次 VISA（`detect_model` 再 `connect_group`）。
-5. **Wave 4：I、D 已完成並驗收**（I 整合測試 4 個、selftest 結束碼 0；全套 1445 passed／7 skipped，node 67 過；D 文件打包，同步清單已對照 diff 與 APP 現況核對）。D 已補 README 旗標／互斥／關窗說明、Windows 錄製驗收清單（`HANDOFF_WINDOWS.md` §8）及 spec 的 `collect_submodules("n6705c_seq.record")`；Windows 建置、`build-windows` CI 與實機驗收仍待完成。之後是 **Wave 5：R 雙審**。**H0 結果：尚未實測**；目前 B-DLOG 的存在不代表 H0 FAIL，也不代表 ELOG 已驗收。
+3. **使用者要在真機跑**：H0 完整 USB＋LAN × 2 設定 × ≥1 h（`scripts/hw_elog_h0.py`；elog_arb 需另行授權通電）與 B-ELOG H1–H8（§13.10）。H0 只有 USB 單通道 15 分鐘證據，仍 INCONCLUSIVE；使用者於 2026-11-18 授權開工 B-ELOG。兩 backend 已並存於 `record/backend.py`，由 `RECORD_BACKEND` 分派，預設 `"elog"`，可切回 `"dlog"`；不拆檔、GUI 不可選。C13 256 MiB 上限僅對 B-DLOG 生效。ARB 既有結果見 §13.9，A3 的後續裁決另處理。
+4. B-ELOG 缺口記法已定：`overflow`／`empty_backlog`／`tail_limit`／`tail_incomplete` 各事件原樣記一筆 gap，`fetch_error` 只寫 notes。overflow 時同一批遺失資料會同時記成 `overflow` 與 `tail_incomplete` 兩筆缺口（core 行為），**缺口數不等於遺失次數**。已知風險：長錄時鐘漂移（10 h×100 ppm≈3.6 s）可能造成誤報 `tail_incomplete`；slew 前檢已不再查 `VOLT:SLEW? MAX`（PR #29）；非 demo 模式現在開兩次 VISA（`detect_model` 再 `connect_group`）。
+5. **Wave 4：I、D 已完成並驗收**（I 整合測試 4 個、selftest 結束碼 0；全套 1445 passed／7 skipped，node 67 過；D 文件打包，同步清單已對照 diff 與 APP 現況核對）。D 已補 README 旗標／互斥／關窗說明、Windows 錄製驗收清單（`HANDOFF_WINDOWS.md` §8）及 spec 的 `collect_submodules("n6705c_seq.record")`；Windows 建置、`build-windows` CI 與實機驗收仍待完成。之後是 **Wave 5：R 雙審**。**H0 結果：仍 INCONCLUSIVE**（USB 單通道 15 分鐘，見 §13.9）；目前 B-DLOG 的存在不代表 H0 FAIL，B-ELOG 完成程式與測試也不代表實機驗收通過。
 
    **core 同步清單（`../N6705C-APP` 是手動副本，非 git，只能 additive 同步）**：本次只讀核對，未同步 APP。依 `git log`／`git diff d6b9d2a..HEAD`，core 變更來自 `58c1fc2`、`7b2a494`、`34dd510`；並直接比對 APP 現存檔案：`elog.py`、`fake.py`、`arb/multi.py` 與 `d6b9d2a` 相同，`dlog.py` 已含 `7b2a494` 的 `wait()` 修正。以下逐項合入 APP 對應函式，保留 APP 其他功能；不要整目錄覆蓋，也不要對 APP 使用 git 指令。
 
@@ -327,7 +327,9 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
      - ~~**F（擋打開旗標）**~~ **已修（2026-11-18，分支 fix/record-fault-close）**：`Gate.on_closing()` 在 fault 且 owner 仍在、`worker_done` 為 False 時回 `"power"`（沿用既有「忙碌」提示並擋關窗）；worker 遲到返回後 `worker_done=True` 才放行（仍不解鎖故障）。純分析逾時 fault（owner 為空）行為不變。測試：`test_activity_gate.py`、`test_webgui.py` 各補一個。限制：worker 若永遠卡死，視窗關不掉，只能強殺行程（刻意取捨，優先保護儀器與檔案）。
      - ~~Minor：`analysis.js:147` 從檢視切到錄製只等 idle 10 s~~ **已修（2026-11-18）**：改等 32 s（draining 逾時 30 s＋餘裕，fault 事件會更早結束等待）；`record_meta` 失敗改為 try/catch，分析頁仍顯示、錄製視為關閉；JS 測試補一個。原描述：`analysis.js:147` 從檢視切到錄製只等 idle 10 s，比 draining 逾時 30 s 短，可能停在空白 Viewer；旗標關閉時 analysis 初始化仍 await `record_meta`（唯讀、無 I/O，風險低）。
    - 兩份審查一致確認沒問題：互斥無繞過路徑（異常路徑、對話框取消、關窗皆釋放 token，F 例外）、儀器 I/O 全在單一 worker 且 `record_stop` 只設 Event、import 邊界符合契約、i18n 齊全、旗標關閉時面板隱藏、`open_push` 驗證完整。`core/elog.py` 因 B-ELOG 未接線只審了 import 邊界。
-7. push／PR 已完成（PR #11–#17 皆合併）；打開 `RECORD_ENABLED` 仍需實機驗收，由使用者決定。見 §13.10。
+7. 先前 push／PR 已完成（PR #11–#17 皆合併）；B-ELOG 本次只做本機 commit，不 push、不開 PR。打開 `RECORD_ENABLED` 仍需實機驗收，由使用者決定。見 §13.10。
+8. **B-ELOG 第 1–4 步完成（2026-11-18，feat/b-elog）**：S1 錯誤碼映射與分派常數；S2 ELOG backend 與 fake／故障測試；S3 整合與 JS 測試、預設 `RECORD_BACKEND="elog"`；S4 速率核對改用筆數容差、建構後 tail 固定為 `drain_then_abort`、契約 C5／C7／C11 與交接文件。`RECORD_ENABLED=False`，GUI 不可選 backend；不改 core，無新增 APP 同步項。本次沒有連實機或送 SCPI。測試結果見 §13.10；等待 H1–H8 實機驗收，不能將程式完成視為 H0 PASS。
+   **驗收發現、待實機確認**：INIT 傳輸逾時後，儀器可能已接受命令但 host session 仍在 CONFIGURED，現行失敗路徑不送 ABOR，儀器實際狀態需確認；未 INIT 時 `ABOR:ELOG` 是否報錯尚未確認；60 s 大週期的格點量化／回讀與一格容差的相容性需確認。這些均未在本次對真機探測，H1–H8 驗收時另記結果。
 
 ### 13.8 要接實機的項目（2026-11-18）
 
@@ -337,7 +339,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 
 | # | 項目 | 做法 | 目的 |
 |---|---|---|---|
-| 1 | H0：ELOG 長時間穩定性 | `scripts/hw_elog_h0.py`，≥4 h，USB 與 LAN 各一次 | 決定 B-ELOG 能否開工；失敗退回 DLOG＋MEAS。**2026-11-18 USB 單通道 15 分鐘已穩定**（§13.9 第 8 項）；LAN、多通道、≥1 h 未驗；尾段見第 9 項 |
+| 1 | H0：ELOG 長時間穩定性 | `scripts/hw_elog_h0.py`，≥4 h，USB 與 LAN 各一次 | 補足穩定性證據；B-ELOG 已獲授權開工，DLOG 保留為退路（MEAS 預覽僅 demo）。**2026-11-18 USB 單通道 15 分鐘已穩定**（§13.9 第 8 項）；LAN、多通道、≥1 h 未驗；尾段見第 9 項 |
 | 2 | ARB／TRIG 檢查 | `scripts/hw_arb_trig_check.py`，slew 加 `--allow-reset`，以 seqnum 判定 A3 | 驗證 ARB 修正在真機上的行為 |
 | 3 | HW-P2：14585A 相容性 | 用 14585A 開啟錄出的 `.dlog` | 確認寫出的格式真機軟體讀得懂（Viewer 往返不能代替） |
 | 4 | 真機錄製驗收（部分完成，見 §13.9 第 7 項） | 真 `webgui.Api`＋`RecordApi`＋假視窗已跑通 DLOG；真視窗操作與存檔對話框未驗 | 設定、下載、發布、停止延遲與檔案解析已確認；`preview` 旗標已由 PR #24 修正 |
@@ -357,7 +359,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 |---|---|
 | 9 | 旗標暫時打開，手動點過檢視與錄製兩種模式的完整流程 |
 
-建議順序：先掛上 1（最久），同時做 5–9，有儀器時再做 2–4。B-ELOG 等 1 通過才開始；core 同步回 `../N6705C-APP` 等使用者開口。
+建議順序：先掛上 1（最久），同時做 5–9，有儀器時再做 2–4。B-ELOG 已獲使用者授權且第 1–4 步完成，實機驗收見 §13.10；core 同步回 `../N6705C-APP` 等使用者開口。
 
 ### 13.9 實機快測結果（2026-11-18，N6705C MY65000515，韌體 E.02.09.3271，USB；CH1=N6791A（**電子負載**，不輸出電壓）、CH2=N6781A（SMU 電源）；用 CH2）
 
@@ -376,20 +378,42 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 
 9. **ELOG 停止後尾段探測（2026-11-18，USB，CH2，1 ms，各 10 s，不開輸出）**：用 `ElogSession` 對照停止順序。「drain 到空再 `ABOR:ELOG`」兩次，估算差 2、1 筆；「先 `ABOR:ELOG` 再 fetch」差 0；三次 `fetch_tail`（abort 後）都回 `+303`，錯誤佇列結束為 `+0`。結論：**abort 後讀不到資料，`fetch_tail` 在這台無用**；先 drain 再 abort 只剩約 1–2 ms（drain 結束到 abort 送出的空檔），比 H0 的 7 筆小，因 H0 腳本最後一次 poll 後未再 drain 就 abort。限制：「已產生」是用經過時間除以週期估的，不是儀器回報，故「abort 先」的差 0 不能當零遺失證據；精確筆數需已知訊號（如 ARB 階梯數邊緣）對照，要開輸出，未做。B-ELOG 停止流程建議：drain 到空 → `ABOR:ELOG`，不依賴 `fetch_tail`（或把 `+303` 當預期），結尾最多少 1–2 筆為已知限制。
 
-### 13.10 目前狀態與下一步（2026-11-18 晚，PR #11–#17 皆已合併 main）
+### 13.10 目前狀態與下一步（2026-11-18，B-ELOG 第 1–4 步完成於 feat/b-elog）
 
-**驗證基準**：Python 1518 passed／7 skipped、node 68 passed、CI 六組測試（ubuntu／macOS／Windows × 3.11／3.13）與 `build-windows` 皆通過。`RECORD_ENABLED=False`，使用者看不到即時紀錄功能。
+**先前 main 基準**：Python 1518 passed／7 skipped、node 68 passed；先前 CI 六組測試（ubuntu／macOS／Windows × 3.11／3.13）與 `build-windows` 通過，這些不是本次 B-ELOG 分支的 CI 結果。
 
-**已完成**：Wave 0–5；審查項 A、B（writer 發布順序）、C、D（Windows `os.replace` 重試，程式面）、E（覆寫守衛）、F（fault＋worker 仍活著時擋關窗）、`.part` 殘留、兩個小項；實機相容修正（見 §13.9）。HANDOFF 內對應條目已劃掉。
+**本次 B-ELOG 本機測試**：`PYTHONPATH=$PWD/src /opt/anaconda3/bin/python3 -m pytest -q -p no:cacheprovider` → **1574 passed／7 skipped**（55.73 s）；`node --test tests/js/*.test.js` → **70 passed、0 failed**。ELOG backend 測試為 40 passed，含 1 s 週期錄製 20／60 s 無速率誤報、1 ms 速率偏差超過 0.1% 且累積筆數超過容差時有 note、建構後改 tail 常數仍先 drain 再 abort。速率偏差案例由 20 s 延長至 200 s，持續偏差亦會觸發 core 既有的 empty_backlog／tail_incomplete 估計事件，檔案仍成功發布。`RECORD_BACKEND="elog"`、`RECORD_ENABLED=False`，使用者看不到即時紀錄功能；GUI 不提供 backend 選單。實機驗收見下表（H1–H7 通過，H8 未做）。
+
+**已完成**：Wave 0–5；審查項 A、B（writer 發布順序）、C、D（Windows `os.replace` 重試，程式面）、E（覆寫守衛）、F（fault＋worker 仍活著時擋關窗）、`.part` 殘留、兩個小項；實機相容修正（見 §13.9）。HANDOFF 內對應條目已劃掉。B-ELOG 第 1–4 步亦已完成，細節見 §13.7 第 8 項；ELOG 與 DLOG 並存於同一 backend 模組，等待 H1–H8 實機驗收。
 
 **下一步**
 0. **不需儀器的已做完**：停止延遲（PR #16）、不穩定測試修法（PR #17，Mac 重現不了，**待 Windows 重複跑 ~30 次零失敗**）。剩 Windows 實測（`HANDOFF_WINDOWS.md` §8 第 5–9 項）與 macOS 手動點測，都要人在 GUI 前操作。
 1. ~~**停止延遲**~~ **已修並合併（2026-11-18，PR #16 `fe043a6`）**：真機（`session.description` 非 `Demo mode`）不送 MEAS 預覽，只記 note；模擬器行為不變；待真機確認停止即時。原描述：真機 DLOG 執行中 MEAS 一律被拒（`+319`），第一次 MEAS 吃 VISA 逾時（約 5 s），錯誤清查再吃一次，所以按停止要約 10 s 才生效（`record/backend.py` 預覽迴圈）。建議真機不送 MEAS 預覽（錄製中本來就沒有即時曲線），模擬器行為不變；需要先決定如何判斷是真機（目前 `N6705C` 沒有 demo 旗標），並更新「預覽」相關測試與契約。
-2. **ELOG 長測（需儀器）**：自動量程造成空區塊的問題已修（§13.9 第 1 項）；USB 單通道 15 分鐘已穩定（第 8 項）。尾段已探測（第 9 項：abort 後讀不到，先 drain 再 abort 約少 1–2 筆）；剩 LAN、多通道、≥1 h 未驗，B-ELOG 是否開工等使用者定案。
+2. **ELOG 長測（需儀器）**：自動量程造成空區塊的問題已修（§13.9 第 1 項）；USB 單通道 15 分鐘已穩定（第 8 項）。尾段已探測（第 9 項：abort 後讀不到，先 drain 再 abort 約少 1–2 筆）；H0 仍 INCONCLUSIVE；使用者於 2026-11-18 授權開工 B-ELOG，第 1–4 步完成。LAN、多通道、≥1 h 仍為已知風險，授權不等於 H0 PASS。
 3. **A3 判定（使用者）**：`seqnum` 證據偏向步驟編號從 0 起算（重設後長度 1、寫步驟 0 長度不變、寫步驟 1 變 2；查步驟 1 回「有效範圍 0 到 0」），腳本自己判 INCONCLUSIVE，單台單次。
 4. **下次接上儀器要做**：LAN；從 GUI（`RecordApi`）完整走一次錄製／停止／載入；≥4 h H0；`bus_delay`、`slew`；14585A 開檔（HW-P2）；兩通道以上 DLOG 長錄與覆寫、中途停止；`hw_elog_h0.py` 的 `elog_arb` 通電探測要改成 N6781A 可用（`CURR` 需 current priority）。
 5. **Windows／macOS（不需儀器）**：`HANDOFF_WINDOWS.md` §8 第 5–9 項（旗標暫開）、macOS 手動點過兩種模式。
 6. **使用者決定**：打開 `RECORD_ENABLED`（需 §13.8 的 1–4 有結果）；是否把 core 修改同步回 `../N6705C-APP`（同步清單見 §13.7，本輪新增動到 `core/**` 的檔案：`n6705c/core/arb/runner.py`）。
+
+**B-ELOG 實機驗收 H1–H7（2026-11-18，USB，CH2=N6781A，fa222fc 內容，無 `*RST`）：全部通過**；每項開始前／結束後 `SYST:ERR?` 皆 +0，結束時 CH1／CH2 `OUTP?`=0、鎖已釋放。儀器面板無錯誤指示（使用者目視確認，2026-11-18）。
+
+| 項目 | 結果 |
+|---|---|
+| H1 | 1 ms、60 s、V+I：period 1.00352 ms；59,793 筆（期望 59,794.2）；gaps=[]；無 +303／-420；parse_dlog 通過、無 .part；ABOR 後 FETC 0 次 |
+| H2 | 10 ms、60 s：period 9.99424 ms；6,003 筆（期望 6,003.6）；gaps=[] |
+| H3 | 真 RecordApi：開始→running 0.109 s、停止→done 0.050 s；錄製中 snapshot seq 2→46 嚴格遞增、preview=False；10,172 筆、gaps 0；record_load 可開（tint 1.00352 ms）；gate 回 IDLE；錄製中無 MEAS |
+| H4 | duration 5 s：5.07 s 自動結束、5,019 筆、gaps=[]（到期後多一次讀取，已知） |
+| H5 | starting 階段停止：`NoRecordsError`（Recording cancelled before INIT:ELOG）；INIT／ABOR／FETC 皆 0 次；無殘留檔 |
+| H6 | 1 ms、900 s：896,813 筆（期望 896,820.8，差 −7.8）；整段速率 996.484 rec/s（H0 為 996.43–996.55）；gaps=[]、無速率 note、無 +303／-420 |
+| H7 | CH2 0.5 V／0.1 A 通電錄 10 s（使用者已同意）：ELOG V 平均 0.500143 V，與錄製前後 MEAS（0.5001352／0.5001416 V）差 0.007／0.001 mV；I 平均 47.9 µA；9,966 筆、gaps=[]；錄製中 MEAS 0 次（無 +319）；結束 `OUTP OFF`，`OUTP?`=0 |
+
+**觀察／風險**：(1) H6 的空區塊逐漸增加（第 1 分鐘 1 次、第 5 分鐘 81 次、之後每分鐘約 226–232 次，共 2,100 次），讀取次數約 7.9 次／s（預期 4 次／s），實際速率比 1/period 慢約 8.6 ppm；15 分鐘內未觸發 empty_backlog、資料連續，但屬時鐘漂移早期徵兆，≥1 h 長測可能誤報 `tail_incomplete`／`empty_backlog`，需追蹤。(2) 各項結尾少 0.5–2.9 筆（H6 含漂移 7.8 筆），符合「少 1–2 筆」。(3) 輸出關閉時錄到的 V、I 皆 0.0。(4) `MEAS:VOLT?` 每次約 2.83 s；backend 把 FORM 留在 REAL，H7 在 MEAS 前先送 `FORM ASCII`，儀器目前停在 FORM ASCII。(5) 每分鐘速率受 0.25 s 讀取粒度影響（995.2–997.7），只有整段速率可與 H0 比。原始紀錄在 scratchpad（`belog/hw/`，不入 repo）。
+
+| 項目 | 待執行內容與判準 |
+|---|---|
+| H8 | 條件具備後補 LAN ≥15 min、≥1 h、14585A 開檔（HW-P2）、Windows exe 錄一輪；各自記錄結果，不互相代替 |
+
+**另待實機確認**（§13.7 第 8 項）：INIT 傳輸逾時後的儀器狀態；無 INIT 時 ABOR:ELOG 是否報錯；60 s 大週期格點量化。既有 fake 測試無法裁決這三項。長週期取整造成的速率 note 誤報已改用 `max(2 + 2*interval/period, 1e-3*elapsed/period)` 筆容差；此為程式修正，不能代替大週期實測。
 
 **注意**：本機沒有儀器時，真機相關程式只能靠模擬器驗證；模擬器對 `TRIG:ARB:SOUR`、`CURR` 等寫法比真機寬鬆，這次的相容問題就是這樣漏掉的。
 

@@ -91,6 +91,7 @@ test('record: fixed defaults and a copied, exact bridge configuration', async ()
     period_s: 0.001, duration_s: 3600}, ['USB-0', 'USB-1'], true]);
   assert.equal(h.nodes('record_start')[0].disabled, false);
   const machine = descendants(h.pane).find(n => n.tagName === 'select');
+  assert.equal(descendants(h.pane).filter(n => n.tagName === 'select').length, 1);
   machine.value = '1'; h.inputs[1].checked = true; h.inputs[4].checked = false;
   await h.nodes('record_start')[0].click();
   assert.deepEqual(JSON.parse(JSON.stringify(received[0])), {machine_index: 1, channels: [1, 2], sense_volt: false,
@@ -259,6 +260,25 @@ test('record: hardware DLOG with an empty snapshot hides preview indicators', as
     assert.equal(h.nodes('record_preview_note')[0].hidden, true, state);
   }
   assert.equal(h.statusRow.children[2].textContent, '1000 records');
+});
+
+test('record: ELOG live snapshot (preview false) draws data and keeps preview indicators hidden', async () => {
+  let seq = 0;
+  const h = harness({record_snapshot: async () => snapshot('a', ++seq, {
+    preview: false, period_s: 0.00100352, keys: {
+      V2: {t0: 0, dt: 0.00100352, min: [1, 2], max: [3, 4]},
+      I2: {t0: 0, dt: 0.00100352, min: [0.1, 0.2], max: [0.3, 0.4]},
+    },
+  })});
+  h.setStatus(status('a', 'running', {preview: false, records: 498})); await h.show();
+  for (const records of [498, 996]) {
+    h.record(status('a', 'running', {preview: false, records})); await h.tick();
+    assert.equal(h.canvas.draws.filter(d => d[0] === 'stroke').length, 2);
+    assert.ok(h.canvas.draws.some(d => d[0] === 'lineTo'));
+    assert.equal(h.statusRow.children[4].hidden, true);
+    assert.equal(h.nodes('record_preview_note')[0].hidden, true);
+    assert.equal(h.statusRow.children[2].textContent, `${records} records`);
+  }
 });
 
 test('record: envelope draws both extrema, skips nulls, and supports one bucket and constant values', async () => {

@@ -1,4 +1,4 @@
-"""Single-worker internal DLOG capture with a separate MEAS preview."""
+"""Single-worker internal DLOG capture or streaming ELOG recording."""
 
 from copy import deepcopy
 from contextlib import contextmanager
@@ -17,13 +17,14 @@ import uuid
 import numpy as np
 
 from n6705c.core.dlog import DlogConfig, DlogSession
-from n6705c.core.parsing import parse_definite_block
+from n6705c.core.elog import ElogConfig, ElogRecorder, ElogSession, ElogState
+from n6705c.core.parsing import ElogSelection, parse_definite_block
 from n6705c.core.scpi import format_channel_list
 
 from . import contracts as c
 from .dlogfile import (
     _claim, _fsync_directory, _paths, _release, _safe_paths, _write_sidecar,
-    replace_with_retry,
+    DlogWriter, elog_block, replace_with_retry,
 )
 from .snapshot import Envelope
 
@@ -511,7 +512,206 @@ class _DlogBackend:
             _release(final)
 
 
+class _Deadline:
+    """Combine user cancellation and duration expiry for the core recorder."""
+
+    def __init__(self, stop, deadline):
+        self._stop = stop
+        self._deadline = deadline
+
+    def is_set(self):
+        return self._stop.is_set() or time.monotonic() >= self._deadline
+
+
+class _ElogBackend:
+    def __init__(self, inst, cfg, final_path, *, untimed, finishing, target_state=None):
+        if c.ELOG_TAIL != "drain_then_abort":
+            raise ValueError("ELOG backend requires drain_then_abort; abort_then_drain is unsafe")
+        self._tail = "drain_then_abort"
+        self._inst = inst
+        self._cfg = deepcopy(cfg)
+        self._cfg.setdefault("run_id", uuid.uuid4().hex)
+        self._cfg["channels"] = sorted(self._cfg["channels"])
+        self._final = Path(final_path)
+        self._target_state = target_state
+        self._untimed = untimed
+        self._finishing = finishing
+        self._used = False
+        self._keys = [f"{kind}{ch}" for ch in self._cfg["channels"]
+                      for kind, enabled in (("V", cfg["sense_volt"]), ("I", cfg["sense_curr"]))
+                      if enabled]
+        self._envelope = Envelope(self._keys, cfg["period_s"], run_id=self._cfg["run_id"])
+
+    @property
+    def preview(self):
+        return False
+
+    def snapshot(self, since_seq):
+        return self._envelope.snapshot(since_seq)
+
+    @staticmethod
+    def _bounds(period, duration, fields):
+        for name, value, low, high in (
+            ("period", period, c.PERIOD_FLOOR_TABLE[fields], c.PERIOD_MAX_S),
+            ("duration", duration, c.DURATION_MIN_S, c.DURATION_MAX_S),
+        ):
+            if (type(value) not in (int, float) or not math.isfinite(value)
+                    or not low <= value <= high):
+                raise _bad_config(f"Invalid {name}: {value!r}")
+        if math.ceil(duration / period) > 2 ** 32 - 1:
+            raise _bad_config("Estimated ELOG records exceed the UInt32 limit")
+
+    def run(self, stop: Event, emit: c.EmitStatus) -> c.RunResult:
+        self._finishing()
+        if self._used:
+            raise RuntimeError("A recording backend can only run once")
+        self._used = True
+        cfg = self._cfg
+        notes, gaps = [], []
+        records, elapsed = 0, 0.0
+        state, last_emit = None, 0.0
+        session = writer = meta = None
+
+        def status(next_state):
+            nonlocal state, last_emit
+            now = time.monotonic()
+            if state != next_state or now - last_emit >= 0.5:
+                state, last_emit = next_state, now
+                emit(dict(run_id=cfg["run_id"], state=state, elapsed_s=elapsed,
+                          records=records, gaps=len(gaps), preview=False, name=self._final.name))
+
+        def sink(chunk):
+            nonlocal records, elapsed
+            if chunk.start_index != records:
+                raise RuntimeError("ELOG index discontinuity")
+            block = elog_block(chunk.data, chunk.fields, cfg["channels"])
+            with _disk(part):
+                writer.append(block)
+            records += len(block)
+            self._envelope.append(block)
+            elapsed = session.elapsed
+            status("running")
+
+        def on_event(kind, index, count):
+            if kind == "fetch_error":
+                notes.append(f"ELOG fetch_error at record {index}")
+            else:
+                gaps.append(dict(kind=kind, index=index, count=int(count)))
+            status("running")
+
+        status("starting")
+        fields = len(self._keys)
+        self._bounds(cfg["period_s"], cfg["duration_s"], fields)
+        if any(ch not in self._inst.populated_channels for ch in cfg["channels"]):
+            raise _bad_config("Selected ELOG channel is not populated")
+        try:
+            paths = _paths(self._final)
+        except ValueError as exc:
+            raise OSError(errno.EINVAL, str(exc), str(self._final)) from exc
+        final, part, side, side_part = paths
+        if not _safe_paths(paths):
+            raise OSError(errno.EINVAL, "Unsafe DLOG path", str(final))
+        targets = (self._target_state if self._target_state is not None
+                   else _target_state((final, side)))
+        try:
+            try:
+                session = ElogSession(self._inst, ElogConfig(
+                    channels=cfg["channels"], period=cfg["period_s"], trigger_source="BUS",
+                    selection=ElogSelection(voltage_avg=cfg["sense_volt"],
+                                            current_avg=cfg["sense_curr"], voltage_min=False,
+                                            voltage_max=False, current_min=False, current_max=False)))
+            except ValueError as exc:
+                raise _bad_config(str(exc)) from exc
+            session.configure()
+            period = session.actual_period
+            self._bounds(period, cfg["duration_s"], fields)
+            if abs(period - cfg["period_s"]) > c.PERIOD_GRANULARITY_S:
+                raise _bad_config("ELOG period readback differs from the request")
+            if not math.isclose(period, cfg["period_s"], rel_tol=1e-6):
+                notes.append(f"Instrument adjusted the ELOG period from {cfg['period_s']} s to {period} s.")
+            self._envelope = Envelope(self._keys, period, run_id=cfg["run_id"])
+            identity = self._inst.identity
+            idn = ",".join((identity.manufacturer, identity.model, identity.serial, identity.firmware))
+            models = {ch: self._inst.capabilities[ch].model for ch in cfg["channels"]}
+            meta = dict(backend="elog", preview=False, run_id=cfg["run_id"],
+                        requested=deepcopy(cfg),
+                        actual=dict(period_s=period, ranges=dict(voltage="MAX", current="MAX")), idn=idn,
+                        gaps=gaps, notes=notes, elapsed_s=0.0)
+            with _disk(part):
+                writer = DlogWriter(final, channels=cfg["channels"], sense_volt=cfg["sense_volt"],
+                                    sense_curr=cfg["sense_curr"], tint=period, models=models, sidecar=meta)
+            if not self._untimed():
+                raise RuntimeError("record owner is no longer active")
+            if stop.is_set():
+                raise c.NoRecordsError("Recording cancelled before INIT:ELOG")
+            session.start()
+            started = time.monotonic()
+            status("running")
+            recorder = ElogRecorder(
+                session, sink, interval=c.ELOG_FETCH_INTERVAL_S, tail=self._tail,
+                max_records=c.ELOG_FETCH_RECORDS, on_event=on_event,
+                on_error=lambda exc: notes.append(f"ELOG fetch failed: {exc!r}"),
+                on_cleanup=self._finishing)
+            recorder.run(stop=_Deadline(stop, started + cfg["duration_s"]))
+            self._finishing()
+            elapsed = session.stats.elapsed
+            notes.extend(n for n in session.notes if n not in notes)
+            expected_records = elapsed / period
+            rate_tolerance = max(2 + 2 * recorder.interval / period, 1e-3 * expected_records)
+            if elapsed >= 10 and abs(records - expected_records) > rate_tolerance:
+                notes.append(f"ELOG measured rate {records / elapsed:.9g} records/s differs from "
+                             f"the period-derived rate {1 / period:.9g} records/s.")
+            meta.update(elapsed_s=elapsed)
+            status("stopping")
+            if records == 0:
+                raise c.NoRecordsError("Recording contains no complete records")
+            current = _target_state(targets)
+            conflicts = [path for path, before in targets.items()
+                         if not _same_target(before, current[path])]
+            if conflicts:
+                names = ", ".join(path.name for path in conflicts)
+                raise FileExistsError(errno.EEXIST,
+                                      f"Target created or changed by another writer: {names}; "
+                                      f"recording retained at {part} and {side_part}", str(final))
+            with _disk(final):
+                writer.finalize()
+            return dict(run_id=cfg["run_id"], final_path=self._final, elapsed_s=elapsed,
+                        records=records, gaps=len(gaps), preview=False, notes=list(notes))
+        except BaseException as exc:
+            # Cleanup must never replace a configuration, fetch or sink failure.
+            try:
+                self._finishing()
+            except BaseException as cleanup_exc:
+                exc.add_note(f"ELOG cleanup failed: {cleanup_exc!r}")
+            if session is not None:
+                if session.state in (ElogState.INITIATED, ElogState.RUNNING):
+                    try:
+                        session.stop()
+                    except BaseException as cleanup_exc:
+                        exc.add_note(f"ELOG cleanup failed: {cleanup_exc!r}")
+                try:
+                    errors = self._inst.session.read_errors()
+                    notes.append(f"ELOG best-effort error drain: {[str(error) for error in errors]!r}")
+                except BaseException as cleanup_exc:
+                    notes.append(f"ELOG best-effort error drain failed: {cleanup_exc!r}")
+                notes.extend(n for n in session.notes if n not in notes)
+                elapsed = session.stats.elapsed
+            notes.append(repr(exc))
+            if writer is not None:
+                meta.update(elapsed_s=elapsed, ended_utc=_utc())
+                try:
+                    writer.abort(keep_part=records > 0)
+                except BaseException as cleanup_exc:
+                    exc.add_note(f"ELOG writer cleanup failed: {cleanup_exc!r}")
+            raise
+
+
 def make_backend(inst, cfg: c.Config, final_path: Path, *,
                  untimed: c.Untimed, finishing: c.Finishing, target_state=None) -> c.Backend:
     """Construct an inert backend; caller retains instrument/token ownership."""
-    return _DlogBackend(inst, cfg, final_path, untimed=untimed, finishing=finishing, target_state=target_state)
+    kind = c.RECORD_BACKEND
+    cls = {"elog": _ElogBackend, "dlog": _DlogBackend}.get(kind)
+    if cls is None:
+        raise ValueError(f"unknown RECORD_BACKEND {kind!r}")
+    return cls(inst, cfg, final_path, untimed=untimed,
+               finishing=finishing, target_state=target_state)
