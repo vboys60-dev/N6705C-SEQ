@@ -17,7 +17,7 @@ from n6705c.core.dlog import DlogConfig, DlogSession
 from n6705c.core.fake import FakeN6705C
 from n6705c.core.instrument import N6705C
 from n6705c_seq.analysis.core import parse_dlog
-from n6705c_seq.record import backend as module, contracts as c
+from n6705c_seq.record import backend as module, contracts as c, dlogfile
 from n6705c_seq.record.backend import make_backend
 
 
@@ -334,6 +334,39 @@ def test_publication_failure_keeps_part_and_remote(rig, clock, monkeypatch, fail
     # The bridge can recognize even an OSError raised only from a descriptor.
     from n6705c_seq.web_record import _failure_code
     assert _failure_code(caught.value, "fetch") is c.RecordCode.SINK
+
+
+@pytest.mark.parametrize("stage", ["sidecar", "data", "complete_sidecar"])
+def test_publication_retries_windows_locks(rig, clock, monkeypatch, stage):
+    rig.cfg["duration_s"] = 1
+    real_replace = module.os.replace
+    attempts, sleeps = [], []
+    side = Path(str(rig.final) + ".json")
+    side_part = Path(str(side) + ".part")
+
+    def replace(src, dst):
+        target = (Path(dst) == rig.final if stage == "data" else
+                  Path(dst) == side and (Path(src) == side_part if stage == "sidecar"
+                                        else json.loads(Path(src).read_text())["complete"]))
+        if target:
+            attempts.append((src, dst))
+            if len(attempts) <= 2:
+                error = PermissionError("injected sharing violation")
+                error.winerror = 32
+                raise error
+        if Path(dst) == rig.final:
+            assert read_meta(rig)["complete"] is False
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(dlogfile, "os", SimpleNamespace(**dict(vars(module.os), name="nt", replace=replace)))
+    monkeypatch.setattr(dlogfile.time, "sleep", sleeps.append)
+    result = rig.build().run(clock, lambda status: None)
+    assert result["records"] > 0
+    assert len(attempts) == 3 and sleeps == [0.05, 0.1]
+    assert read_meta(rig)["complete"] is True
+    assert rig.final.exists() and not Path(str(rig.final) + ".part").exists()
+    assert not side_part.exists()
+    assert rig.transport.fake.dlog_file not in rig.transport.fake.files
 
 
 def test_download_exception_survives_finishing_callback_failure(rig, clock):
