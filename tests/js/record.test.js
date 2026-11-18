@@ -249,6 +249,18 @@ test('record: preview uses status or snapshot and never substitutes sample count
   assert.equal(h.statusRow.children[4].textContent, strings.get('record_preview')[0]);
 });
 
+test('record: hardware DLOG with an empty snapshot hides preview indicators', async () => {
+  const h = harness({record_snapshot: async () => snapshot('a', 0, {keys: {}})});
+  h.setStatus(status('a', 'running', {preview: false})); await h.show();
+  for (const state of ['running', 'stopping', 'done']) {
+    h.record(status('a', state, {preview: false, records: state === 'done' ? 1000 : 0}));
+    await flush();
+    assert.equal(h.statusRow.children[4].hidden, true, state);
+    assert.equal(h.nodes('record_preview_note')[0].hidden, true, state);
+  }
+  assert.equal(h.statusRow.children[2].textContent, '1000 records');
+});
+
 test('record: envelope draws both extrema, skips nulls, and supports one bucket and constant values', async () => {
   const h = harness({record_snapshot: async () => snapshot('a', 1, {keys: {
     V1: {t0: 0, dt: 1, min: [-8, null], max: [12, null]},

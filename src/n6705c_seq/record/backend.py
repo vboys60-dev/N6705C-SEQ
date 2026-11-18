@@ -235,15 +235,19 @@ class _DlogBackend:
         self._untimed = untimed
         self._finishing = finishing
         self._used = False
+        # Real firmware rejects MEAS during DLOG (+319); only demo sessions
+        # supply a separate live preview. Keep every published flag consistent.
+        self._preview = str(inst.session.description).startswith("Demo mode")
         keys = [f"{kind}{ch}" for ch in self._cfg["channels"]
                 for kind, enabled in (("V", cfg["sense_volt"]), ("I", cfg["sense_curr"])) if enabled]
         self._keys = keys
-        self._envelope = Envelope(keys, _PREVIEW_PERIOD, run_id=self._cfg["run_id"])
-        self._envelope.preview = True
+        self._envelope = Envelope(keys, _PREVIEW_PERIOD if self.preview else self._cfg["period_s"],
+                                  run_id=self._cfg["run_id"])
+        self._envelope.preview = self.preview
 
     @property
     def preview(self):
-        return True
+        return self._preview
 
     def snapshot(self, since_seq):
         return self._envelope.snapshot(since_seq)
@@ -266,7 +270,7 @@ class _DlogBackend:
             if state != next_state or now - last_emit >= 0.5:
                 state, last_emit = next_state, now
                 emit(dict(run_id=cfg["run_id"], state=state, elapsed_s=elapsed,
-                          records=records, gaps=len(gaps), preview=True, name=self._final.name))
+                          records=records, gaps=len(gaps), preview=self.preview, name=self._final.name))
 
         status("starting")
         fields = len(cfg["channels"]) * (cfg["sense_volt"] + cfg["sense_curr"])
@@ -298,9 +302,11 @@ class _DlogBackend:
             raise _bad_config("DLOG period/duration readback differs from the request")
         if not math.isclose(period, cfg["period_s"], rel_tol=1e-6):
             notes.append(f"Instrument adjusted the DLOG period from {cfg['period_s']} s to {period} s.")
+        if not self.preview:
+            self._envelope = Envelope(self._keys, period, run_id=cfg["run_id"])
         idn = checked.query("*IDN?")
         meta = dict(schema_version=1, producer="n6705c_seq.record", run_id=cfg["run_id"],
-                    backend="dlog", preview=True, name=final.name, requested=deepcopy(cfg),
+                    backend="dlog", preview=self.preview, name=final.name, requested=deepcopy(cfg),
                     actual=dict(channels=list(cfg["channels"]), sense_volt=cfg["sense_volt"],
                                 sense_curr=cfg["sense_curr"], period_s=period, duration_s=duration,
                                 ranges=ranges), idn=idn,
@@ -353,7 +359,7 @@ class _DlogBackend:
                     failures = 0
                     # Real firmware rejects MEAS while the logger runs (+319) after a ~5 s VISA
                     # timeout, delaying stop; only the simulator gets a live preview.
-                    preview_enabled = str(self._inst.session.description).startswith("Demo mode")
+                    preview_enabled = self.preview
                     if not preview_enabled:
                         notes.append("No live preview on hardware: MEAS is not allowed while the data logger runs.")
                     chanlist = format_channel_list(cfg["channels"])
@@ -477,7 +483,7 @@ class _DlogBackend:
                     # its warning cannot retroactively invalidate that copy.
                     notes.append(f"Could not persist remote cleanup warning: {side_exc!r}")
             return dict(run_id=cfg["run_id"], final_path=self._final, elapsed_s=elapsed,
-                        records=records, gaps=len(gaps), preview=True, notes=list(notes))
+                        records=records, gaps=len(gaps), preview=self.preview, notes=list(notes))
         except BaseException as exc:
             try:
                 empty = owned_part and part.stat().st_size == 0
