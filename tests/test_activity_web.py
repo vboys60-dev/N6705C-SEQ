@@ -251,12 +251,12 @@ def test_closing_timeout_exits_even_if_cleanup_stuck(api, monkeypatch, stuck):
 def test_blocked_instrument_call_times_out_and_late_release_keeps_fault(api, monkeypatch, operation):
     monkeypatch.setattr(c, "POWER_FINISH_TIMEOUT_S", 0.03)
     entered, resume = threading.Event(), threading.Event()
-    def detect(resource):
+    def detect(resource, **kw):
         entered.set()
         assert resume.wait(2)
         return "E36441A"
     monkeypatch.setattr(web_seq, "detect_model", detect)
-    monkeypatch.setattr(web_seq, "off_resources", lambda resources: None)
+    monkeypatch.setattr(web_seq, "off_resources", lambda resources, **kw: None)
     token = api._reserve("power")
     worker = threading.Thread(target=api._test if operation == "test" else api._off_work,
         args=(["x"], False, token) if operation == "test" else (["x"], token))
