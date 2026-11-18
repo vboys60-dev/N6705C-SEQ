@@ -337,7 +337,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 
 | # | 項目 | 做法 | 目的 |
 |---|---|---|---|
-| 1 | H0：ELOG 長時間穩定性 | `scripts/hw_elog_h0.py`，≥4 h，USB 與 LAN 各一次 | 決定 B-ELOG 能否開工；失敗退回 DLOG＋MEAS。**2026-11-18 USB 單通道 15 分鐘已穩定**（§13.9 第 8 項）；LAN、多通道、≥1 h、停止後尾段未驗 |
+| 1 | H0：ELOG 長時間穩定性 | `scripts/hw_elog_h0.py`，≥4 h，USB 與 LAN 各一次 | 決定 B-ELOG 能否開工；失敗退回 DLOG＋MEAS。**2026-11-18 USB 單通道 15 分鐘已穩定**（§13.9 第 8 項）；LAN、多通道、≥1 h 未驗；尾段見第 9 項 |
 | 2 | ARB／TRIG 檢查 | `scripts/hw_arb_trig_check.py`，slew 加 `--allow-reset`，以 seqnum 判定 A3 | 驗證 ARB 修正在真機上的行為 |
 | 3 | HW-P2：14585A 相容性 | 用 14585A 開啟錄出的 `.dlog` | 確認寫出的格式真機軟體讀得懂（Viewer 往返不能代替） |
 | 4 | 真機錄製驗收（部分完成，見 §13.9 第 7 項） | 真 `webgui.Api`＋`RecordApi`＋假視窗已跑通 DLOG；真視窗操作與存檔對話框未驗 | 設定、下載、發布、停止延遲與檔案解析已確認；`preview` 旗標已由 PR #24 修正 |
@@ -374,6 +374,8 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 7. **GUI 錄製驗收（2026-11-18，真 `webgui.Api`＋`RecordApi`＋假視窗）**：N6705C MY65000515、E.02.09.3271、USB、CH2；週期 1 ms（實際 1.00352 ms），錄約 5 s。開始到 `running` 0.51 s；停止到 `done` 0.04 s（PR #16 修正經實機確認，原約 10 s）；5179 筆，只留 `.dlog` 與 `.dlog.json`、無 `.part`，`complete=True`、`gaps=[]`，gate 回 `IDLE`。**檔案解析**（唯讀、無視窗）：長度整除、索引 trigger＝`0xFFFFFFFF`、write＝5179，時間軸 0～5.196 s 嚴格遞增、間隔 1.00352 ms；`parse_dlog → build_lod → get_values／compute_stats／compute_buckets` 對 V／I／P 全通過。輸出關閉，所以 5179 筆 V、I 全為 0（NaN／Inf 為 0），**無法驗證非零量測與環形排序**。**發現**：(a) 狀態 `preview=True` 但真機無即時預覽（MEAS 被拒、snapshot seq 一直為 0）→ 已由 PR #24 修為 False。(b) 標頭宣告 60 s、實際資料約 5.197 s，旁檔 elapsed 5.228 s；`complete=true` 不代表錄滿宣告時間。(c) 旁檔警告文字暗示索引與筆數不同，實際 write＝筆數，只是 trigger 非零就產生通用警告，文字可改得更準。(d) 儀器標頭時間比旁檔主機 UTC 快約 75～80 秒（標頭無時區，原因不明）。**未驗**：真視窗操作與存檔對話框、Windows 檔案鎖、完整 `open_handle/open_dlog` 開檔與畫面（只驗共用運算路徑）、輸出通電時的錄製值與環形排序、14585A 開啟。
 8. **H0 縮短長測（2026-11-18，USB，CH2 單通道，1 ms，900 s；使用者決定每個設定改跑 15 分鐘，非 3600 s）**：產生約 896,852 筆、收到 896,845 筆，差 7 筆（在時間估算容許範圍內）；每分鐘速率 996.43–996.55 筆／秒，無錯誤、`empty_backlog=0`、無 overflow，只有首讀 1 個空區塊。取數期間穩定，沒有掉資料的證據。**尾段未確認**：停止（`ABOR:ELOG`）後再 fetch 回 `+303`，另有 `-420 Query UNTERMINATED`，`after_abort_records=0`，所以「中止後尾段是否保留」仍未知（需 `tail` 探測的 drain→abort 與 abort→drain 對照）。腳本判 INCONCLUSIVE（停止後錯誤，且 900 s < 3600 s 門檻）。**沒跑**：`four_vi`（這台只有 CH1＝N6791A、CH2＝N6781A，無 CH3／CH4）、LAN（`scan_resources` 找不到 TCPIP 位址）、≥1 h。結論只能是「15 分鐘內穩定」，慢性問題（時鐘漂移、緩衝累積）看不到；B-ELOG 是否開工由使用者定案，建議可開（單通道＋USB），尾段與 LAN 記為已知風險。
 
+9. **ELOG 停止後尾段探測（2026-11-18，USB，CH2，1 ms，各 10 s，不開輸出）**：用 `ElogSession` 對照停止順序。「drain 到空再 `ABOR:ELOG`」兩次，估算差 2、1 筆；「先 `ABOR:ELOG` 再 fetch」差 0；三次 `fetch_tail`（abort 後）都回 `+303`，錯誤佇列結束為 `+0`。結論：**abort 後讀不到資料，`fetch_tail` 在這台無用**；先 drain 再 abort 只剩約 1–2 ms（drain 結束到 abort 送出的空檔），比 H0 的 7 筆小，因 H0 腳本最後一次 poll 後未再 drain 就 abort。限制：「已產生」是用經過時間除以週期估的，不是儀器回報，故「abort 先」的差 0 不能當零遺失證據；精確筆數需已知訊號（如 ARB 階梯數邊緣）對照，要開輸出，未做。B-ELOG 停止流程建議：drain 到空 → `ABOR:ELOG`，不依賴 `fetch_tail`（或把 `+303` 當預期），結尾最多少 1–2 筆為已知限制。
+
 ### 13.10 目前狀態與下一步（2026-11-18 晚，PR #11–#17 皆已合併 main）
 
 **驗證基準**：Python 1518 passed／7 skipped、node 68 passed、CI 六組測試（ubuntu／macOS／Windows × 3.11／3.13）與 `build-windows` 皆通過。`RECORD_ENABLED=False`，使用者看不到即時紀錄功能。
@@ -383,7 +385,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 **下一步**
 0. **不需儀器的已做完**：停止延遲（PR #16）、不穩定測試修法（PR #17，Mac 重現不了，**待 Windows 重複跑 ~30 次零失敗**）。剩 Windows 實測（`HANDOFF_WINDOWS.md` §8 第 5–9 項）與 macOS 手動點測，都要人在 GUI 前操作。
 1. ~~**停止延遲**~~ **已修並合併（2026-11-18，PR #16 `fe043a6`）**：真機（`session.description` 非 `Demo mode`）不送 MEAS 預覽，只記 note；模擬器行為不變；待真機確認停止即時。原描述：真機 DLOG 執行中 MEAS 一律被拒（`+319`），第一次 MEAS 吃 VISA 逾時（約 5 s），錯誤清查再吃一次，所以按停止要約 10 s 才生效（`record/backend.py` 預覽迴圈）。建議真機不送 MEAS 預覽（錄製中本來就沒有即時曲線），模擬器行為不變；需要先決定如何判斷是真機（目前 `N6705C` 沒有 demo 旗標），並更新「預覽」相關測試與契約。
-2. **ELOG 長測（需儀器）**：自動量程造成空區塊的問題已修（§13.9 第 1 項）；USB 單通道 15 分鐘已穩定（第 8 項）。剩尾段（abort 後 fetch）、LAN、多通道、≥1 h 未驗，B-ELOG 是否開工等使用者定案。
+2. **ELOG 長測（需儀器）**：自動量程造成空區塊的問題已修（§13.9 第 1 項）；USB 單通道 15 分鐘已穩定（第 8 項）。尾段已探測（第 9 項：abort 後讀不到，先 drain 再 abort 約少 1–2 筆）；剩 LAN、多通道、≥1 h 未驗，B-ELOG 是否開工等使用者定案。
 3. **A3 判定（使用者）**：`seqnum` 證據偏向步驟編號從 0 起算（重設後長度 1、寫步驟 0 長度不變、寫步驟 1 變 2；查步驟 1 回「有效範圍 0 到 0」），腳本自己判 INCONCLUSIVE，單台單次。
 4. **下次接上儀器要做**：LAN；從 GUI（`RecordApi`）完整走一次錄製／停止／載入；≥4 h H0；`bus_delay`、`slew`；14585A 開檔（HW-P2）；兩通道以上 DLOG 長錄與覆寫、中途停止；`hw_elog_h0.py` 的 `elog_arb` 通電探測要改成 N6781A 可用（`CURR` 需 current priority）。
 5. **Windows／macOS（不需儀器）**：`HANDOFF_WINDOWS.md` §8 第 5–9 項（旗標暫開）、macOS 手動點過兩種模式。
