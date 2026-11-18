@@ -224,7 +224,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 - **已知限制**：LAN 廣播跨不了子網路；同一台儀器可能出現兩筆（後端寫法不同，或同時接 USB 與 LAN）；列舉階段有後端卡住時，該次其他後端的結果會丟失（`scan_resources` 的 `ponytail:` 註解）。
 - **接手要做**：接實機按「搜尋儀器」，確認清單與型號；沒搜到就對照 `HANDOFF_WINDOWS.md` §3.4 判讀。這功能已隨 `v0.2.0` pre-release 發出（2026-11-05，使用者決定先預先發行）；Windows 驗收後才轉正式，見 `HANDOFF_WINDOWS.md` §5。
 
-## 13. 即時資料紀錄（放進 Viewer 分頁）與 ARB 修補（2026-11-17 規劃；**Wave 0–5 與審查修正已合併 main（PR #11–#14）**，見 §13.7、§13.8）
+## 13. 即時資料紀錄（放進 Viewer 分頁）與 ARB 修補（2026-11-17 規劃；**Wave 0–5、審查修正與實機相容修正已合併 main（PR #11–#15）**，見 §13.7–§13.10）
 
 來源：參考舊專案 Keysight 14585A（反編譯、字串擷取），再由 Opus 與 Codex Astra 討論三輪（完整輸出在 scratchpad `r1/r2/r3_final.txt`，不在 repo 內）。Astra 引用的 Keysight 手冊頁碼（p.291、p.311、p.373-374）Opus 沒核對，**待確認**。**使用者尚未說「開工」，下列只是決策。**
 
@@ -280,7 +280,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 ### 13.7 進度與接手要做（2026-11-18 更新）
 **工作方式（使用者指定）**：Opus 規劃 → **Codex `gpt-6.1-sol`（`-c model_reasoning_effort=medium`；使用者 2026-11-18 起指定中檔）寫全部程式** → Opus 子代理審查 → 我在沙盒外驗證。使用者說「開工 Wave N」才開波；commit 只在使用者說時做；使用者用繁體中文。Codex 呼叫：`codex exec --skip-git-repo-check -s workspace-write -m gpt-6.1-sol -c model_reasoning_effort=medium "$(cat prompt.txt)" </dev/null > out.txt 2>&1`（`</dev/null` 必加；macOS 無 `timeout`，用 `perl -e 'alarm N; exec @ARGV'`）。Codex 沙盒禁 socket bind，HTTP 測試會失敗（約 8 failed/24 errors，是環境限制），**一律在沙盒外重跑** `/opt/anaconda3/bin/python -m pytest -q -p no:cacheprovider` 與 `node --test tests/js/*.test.js`（要用 glob，目錄形式會失敗）。
 
-**分支 `docs/handoff-live-logging`（未 push）**：
+**以下 commit 已於 PR #11 合併進 main（分支已刪）**：
 - d6b9d2a Wave 0：契約 `docs/live-logging-contract.md`（C1–C13）、`record/contracts.py`、i18n +46 key（之後凍結）、`scripts/hw_elog_h0.py`、`scripts/hw_arb_trig_check.py`。
 - 58c1fc2 Wave 1：A1 `TRIG:ARB:SOUR IMM`＋slew 前檢、A2、C1（`ElogRecorder.run/tail/dedupe/tail_incomplete`）、W（`record/dlogfile.py`）、C2 的 DLOG 兩個 bug。
 - 7e8c738 Wave 2：S `record/snapshot.py`、G `web_record.py`（RecordApi）、K/J/V（`analysis.js`、`record.js`、`viewer.html` open_push）。Opus 審查（含 must-fix 複審）已核准。`RECORD_ENABLED=False`。
@@ -327,7 +327,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
      - ~~**F（擋打開旗標）**~~ **已修（2026-11-18，分支 fix/record-fault-close）**：`Gate.on_closing()` 在 fault 且 owner 仍在、`worker_done` 為 False 時回 `"power"`（沿用既有「忙碌」提示並擋關窗）；worker 遲到返回後 `worker_done=True` 才放行（仍不解鎖故障）。純分析逾時 fault（owner 為空）行為不變。測試：`test_activity_gate.py`、`test_webgui.py` 各補一個。限制：worker 若永遠卡死，視窗關不掉，只能強殺行程（刻意取捨，優先保護儀器與檔案）。
      - ~~Minor：`analysis.js:147` 從檢視切到錄製只等 idle 10 s~~ **已修（2026-11-18）**：改等 32 s（draining 逾時 30 s＋餘裕，fault 事件會更早結束等待）；`record_meta` 失敗改為 try/catch，分析頁仍顯示、錄製視為關閉；JS 測試補一個。原描述：`analysis.js:147` 從檢視切到錄製只等 idle 10 s，比 draining 逾時 30 s 短，可能停在空白 Viewer；旗標關閉時 analysis 初始化仍 await `record_meta`（唯讀、無 I/O，風險低）。
    - 兩份審查一致確認沒問題：互斥無繞過路徑（異常路徑、對話框取消、關窗皆釋放 token，F 例外）、儀器 I/O 全在單一 worker 且 `record_stop` 只設 Event、import 邊界符合契約、i18n 齊全、旗標關閉時面板隱藏、`open_push` 驗證完整。`core/elog.py` 因 B-ELOG 未接線只審了 import 邊界。
-7. 之後才討論 push／PR 與打開 `RECORD_ENABLED`（需實機驗收；使用者決定）。
+7. push／PR 已完成（PR #11–#15 皆合併）；打開 `RECORD_ENABLED` 仍需實機驗收，由使用者決定。見 §13.10。
 
 ### 13.8 要接實機的項目（2026-11-18）
 
@@ -368,3 +368,19 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 3. **DLOG 錄製在真機可完成（已修）**：本機 DLOG（BUS 觸發）設定、錄製、下載、發布全程成功，旁檔 `complete=True`。修了兩處假設：(a) 儀器把週期量化到 10.24 µs 格（要 1 ms 得 1.00352 ms）→ backend 允許一格差異並記 note；(b) 原生檔索引 trigger=`0xFFFFFFFF`、write 不等於筆數 → backend 與 Viewer（`parse_dlog` 原本讀 `>Q`）改讀兩個 `>I`，`0xFFFFFFFF` 時以位元組長度定筆數，其他非零 trigger 拒絕；環形排序未驗證（write 與筆數不符時旁檔記 note）。
 4. **MEAS 預覽在 DLOG 執行中不可用**：儀器回 `+319 Measurement is not allowed while data logger running`，第一次 MEAS 還要吃一次 VISA 逾時（約 5 s），之後 backend 會停用預覽，錄製本身不受影響；結果是**真機上錄製期間畫面沒有即時曲線**，且 5 s 錄製實際耗時約 10 s。要即時曲線需另找方法（例如 DLOG 中途不可行，只能錄完再載入）。
 5. 沒測：透過 GUI／`RecordApi` 走一次完整流程（只跑了 backend）、LAN、Windows。
+
+### 13.10 目前狀態與下一步（2026-11-18 晚，PR #11–#15 皆已合併 main；本機與遠端只剩 `main`）
+
+**驗證基準**：Python 1516 passed／7 skipped、node 68 passed、CI 六組測試（ubuntu／macOS／Windows × 3.11／3.13）與 `build-windows` 皆通過。`RECORD_ENABLED=False`，使用者看不到即時紀錄功能。
+
+**已完成**：Wave 0–5；審查項 A、B（writer 發布順序）、C、D（Windows `os.replace` 重試，程式面）、E（覆寫守衛）、F（fault＋worker 仍活著時擋關窗）、`.part` 殘留、兩個小項；實機相容修正（見 §13.9）。HANDOFF 內對應條目已劃掉。
+
+**下一步**
+1. **停止延遲（不需儀器，尚未修）**：真機 DLOG 執行中 MEAS 一律被拒（`+319`），第一次 MEAS 吃 VISA 逾時（約 5 s），錯誤清查再吃一次，所以按停止要約 10 s 才生效（`record/backend.py` 預覽迴圈）。建議真機不送 MEAS 預覽（錄製中本來就沒有即時曲線），模擬器行為不變；需要先決定如何判斷是真機（目前 `N6705C` 沒有 demo 旗標），並更新「預覽」相關測試與契約。
+2. **ELOG 在 E.02.09 取不到資料（需儀器）**：`FETC:ELOG?` 錄製中回空區塊、停止後 `+303`，通電也一樣。要重新評估 ELOG 在此韌體的正確用法（是否缺少觸發或其他前置指令）後，才決定 B-ELOG 是否開工；在那之前走 DLOG＋MEAS 路線（MEAS 又不可用，見上）。
+3. **A3 判定（使用者）**：`seqnum` 證據偏向步驟編號從 0 起算（重設後長度 1、寫步驟 0 長度不變、寫步驟 1 變 2；查步驟 1 回「有效範圍 0 到 0」），腳本自己判 INCONCLUSIVE，單台單次。
+4. **下次接上儀器要做**：LAN；從 GUI（`RecordApi`）完整走一次錄製／停止／載入；≥4 h H0；`bus_delay`、`slew`；14585A 開檔（HW-P2）；兩通道以上 DLOG 長錄與覆寫、中途停止；`hw_elog_h0.py` 的 `elog_arb` 通電探測要改成 N6781A 可用（`CURR` 需 current priority）。
+5. **Windows／macOS（不需儀器）**：`HANDOFF_WINDOWS.md` §8 第 5–9 項（旗標暫開）、macOS 手動點過兩種模式。
+6. **使用者決定**：打開 `RECORD_ENABLED`（需 §13.8 的 1–4 有結果）；是否把 core 修改同步回 `../N6705C-APP`（同步清單見 §13.7，本輪新增動到 `core/**` 的檔案：`n6705c/core/arb/runner.py`）。
+
+**注意**：本機沒有儀器時，真機相關程式只能靠模擬器驗證；模擬器對 `TRIG:ARB:SOUR`、`CURR` 等寫法比真機寬鬆，這次的相容問題就是這樣漏掉的。
