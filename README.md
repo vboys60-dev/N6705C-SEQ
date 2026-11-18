@@ -87,7 +87,7 @@ enabled,name,delay_ms,low_v,high_v,rise_ms,hold_ms,fall_ms,current_limit_a
 ```
 
 - 第 N 個資料列＝全域通道 N；每台主機 4 通道（CH1–4 在第 1 台，CH5–8 在第 2 台…）。
-- 時間單位 ms、電壓 V、電流 A；`current_limit_a` 可留空（不設電流限制）。
+- 時間單位 ms、電壓 V、電流 A；`current_limit_a` 留空時，不寫入電流限制，儀器沿用目前的限流設定（不是不限流）；執行前請確認儀器上的現有值。
 - `enabled` 為 0 的列不輸出。
 - 範例見 `examples/powerup.csv`（8 通道）與 `examples/hw_smoke.csv`（單通道實機煙霧測試）。
 
@@ -133,7 +133,7 @@ git tag v0.1.0 && git push origin v0.1.0   # CI 測試 → 建置 → 自動建�
 ```bash
 PYTHONPATH=src python3 -m pytest -q          # 不需儀器、不開 GUI 視窗；大檔與 74445 預設 skip
 PYTHONPATH=src python3 -m pytest -q tests/analysis   # 只跑分析模組
-node --test tests/js                          # 需要 node（CI 用 node 20）
+(cd tests/js && node --test)                  # 需要 node（CI 用 node 20）
 ```
 
 分析模組的選用環境變數（都預設關閉）：
