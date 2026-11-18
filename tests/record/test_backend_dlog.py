@@ -290,9 +290,24 @@ def test_repeated_meas_error_stops_preview_and_publishes(rig, clock, monkeypatch
 def test_hardware_sends_no_meas_preview(rig, clock, monkeypatch):
     rig.cfg["duration_s"] = 1
     monkeypatch.setattr(type(rig.transport.fake), "description", "VISA (backend=ni)")
-    result = rig.build().run(clock, lambda status: None)
+    backend = rig.build()
+    assert rig.transport.calls == []
+    assert backend.preview is False
+    initial = backend.snapshot(-1)
+    assert initial["preview"] is False and initial["seq"] == 0
+    assert initial["period_s"] == rig.cfg["period_s"]
+    statuses = []
+    result = backend.run(clock, statuses.append)
     assert rig.transport.meas_count == 0
     assert result["records"] == 1000
+    assert result["preview"] is False
+    assert {status["state"] for status in statuses} == {"starting", "running", "stopping"}
+    assert all(status["preview"] is False for status in statuses)
+    snapshot = backend.snapshot(-1)
+    assert snapshot["preview"] is False and snapshot["seq"] == 0
+    assert snapshot["period_s"] == read_meta(rig)["actual"]["period_s"]
+    assert all(series["min"] == series["max"] == [] for series in snapshot["keys"].values())
+    assert read_meta(rig)["preview"] is False
     assert any("No live preview" in note for note in result["notes"])
 
 
@@ -825,7 +840,10 @@ def test_native_trigger_other_than_sentinel_is_rejected(tmp_path):
 
 
 @pytest.mark.parametrize('shift, ok', [(3e-6, True), (200e-6, False)])
-def test_instrument_period_quantisation_is_accepted_but_large_change_is_not(rig, clock, monkeypatch, shift, ok):
+@pytest.mark.parametrize('hardware', [False, True])
+def test_instrument_period_quantisation_is_accepted_but_large_change_is_not(rig, clock, monkeypatch, shift, ok, hardware):
+    if hardware:
+        monkeypatch.setattr(type(rig.transport.fake), 'description', 'VISA (backend=ni)')
     rig.cfg['duration_s'] = 1
     configure = DlogSession.configure
     def shifted(self):
@@ -839,6 +857,8 @@ def test_instrument_period_quantisation_is_accepted_but_large_change_is_not(rig,
     if ok:
         backend.run(clock, lambda status: None)
         assert any('adjusted the DLOG period' in note for note in read_meta(rig)['notes'])
+        assert backend.snapshot(-1)['period_s'] == pytest.approx(
+            rig.cfg['period_s'] + shift if hardware else 0.025)
     else:
         with pytest.raises(ValueError, match="readback differs"):
             backend.run(clock, lambda status: None)

@@ -63,26 +63,51 @@ def stop(recording):
     return recording.api.record_status()
 
 
-def test_demo_record_stop_load_and_real_server_open(recording):
+def _capture_and_check_preview(recording, monkeypatch, hardware):
+    meas_calls = []
+    if hardware:
+        # Exercise the hardware policy through fake I/O; never connect to VISA.
+        monkeypatch.setattr(fake.FakeN6705C, 'description', 'VISA (backend=ni)')
+        query = fake.FakeN6705C.query
+
+        def no_meas(self, command):
+            if command.startswith('MEAS:'):
+                meas_calls.append(command)
+            return query(self, command)
+
+        monkeypatch.setattr(fake.FakeN6705C, 'query', no_meas)
     wall_started = time.monotonic()
     r = recording
     start(r)
-    # Preview is real MEAS through the demo instrument, not synthetic samples.
-    wait_for(lambda: r.api.record_snapshot(-1)["seq"] > 0)
+    assert r.api.record_status()["preview"] is (not hardware)
+    if hardware:
+        snapshot = r.api.record_snapshot(-1)
+        assert snapshot["preview"] is False and snapshot["seq"] == 0
+        assert snapshot["period_s"] == r.cfg["period_s"]
+    else:
+        # Preview is real MEAS through the demo instrument, not synthetic samples.
+        wait_for(lambda: r.api.record_snapshot(-1)["seq"] > 0)
+        assert r.api.record_snapshot(-1)["preview"] is True
     r.clock.now += 2.0
     status = stop(r)
     assert status["state"] == "done", status
+    assert meas_calls == []
     assert status["elapsed_s"] == pytest.approx(2.0)
     assert status["records"] == 2000
-    assert status["preview"] is True
+    assert status["preview"] is (not hardware)
+    if hardware:
+        assert r.api.record_snapshot(-1) == snapshot
     assert r.path.is_file()
     assert not Path(str(r.path) + ".part").exists()
     sidecar = json.loads(Path(str(r.path) + ".json").read_text())
     assert sidecar["complete"] is True
     assert sidecar["records"] == status["records"]
     assert sidecar["run_id"] == status["run_id"]
+    assert sidecar["preview"] is (not hardware)
 
     events = r.api.poll()
+    if hardware:
+        assert all(event[1]["preview"] is False for event in events if event[0] == "record")
     states = [event[1]["state"] for event in events if event[0] == "state"]
     assert states[-2:] == ["power", "idle"]
     idle = max(i for i, event in enumerate(events)
@@ -91,6 +116,17 @@ def test_demo_record_stop_load_and_real_server_open(recording):
                 if event[0] == "record" and event[1]["state"] == "done")
     assert idle < done
 
+    return status, wall_started
+
+
+@pytest.mark.parametrize('hardware', [False, True])
+def test_record_preview_policy_through_bridge(recording, monkeypatch, hardware):
+    _capture_and_check_preview(recording, monkeypatch, hardware)
+
+
+def test_demo_record_stop_load_and_real_server_open(recording, monkeypatch):
+    status, wall_started = _capture_and_check_preview(recording, monkeypatch, False)
+    r = recording
     entered, viewer = enter(r.api)
     loaded = r.api.record_load(entered["gen"])
     assert set(loaded) == {"ok", "gen", "grant", "name"}

@@ -152,6 +152,8 @@ RunResult 必填 `{run_id,final_path:Path,elapsed_s,records,gaps,preview,notes:l
 B-ELOG：ElogSession 設定／讀回，sink→elog_block→DlogWriter.append→Envelope.append；旁檔保存要求/讀回/IDN/UTC/gaps/notes。所有 I/O 包括磁碟寫入在 worker，sink 必須快；不另啟 ElogRecorder.start 的 thread，而呼叫阻塞 run。
 B-DLOG：DlogSession 設定與觸發；單 worker 約 25ms 一輪 MEAS:VOLT?/MEAS:CURR?，實際速度受 I/O 限制，不保證精準 40Hz。MEAS 只入 Envelope、preview=True；**僅模擬器（`session.description` 以 `Demo mode` 開頭）才送 MEAS，真機韌體在 DLOG 執行中回 `+319` 且先吃約 5 s 逾時，會拖慢停止，所以真機不預覽、只記 note**；正式 records 以下載檔為準；到期/stop 後 ABOR，下載到 .part，校驗／持久化／發布後回 RunResult。fake 在 ABOR／到期產生真格式，不能沿用 placeholder。
 
+B-DLOG 的 `Backend.preview`、status、snapshot、RunResult 與旁檔 `preview` 一致表示該 run 是否提供 MEAS 預覽：模擬器為 True（保留既有語意，含預覽錯誤後保留的資料），真機從建構起即為 False，空快照 seq 維持 0、各 series 無樣本，`period_s` 配置前為要求的錄製週期、配置後為讀回的實際錄製週期。False 不影響原生 DLOG 錄製。
+
 ## C6 DLOG Writer、格式、旁檔與恢復
 
 固定 `record/dlogfile.py`，介面與 contracts 的 Protocol 相同：
