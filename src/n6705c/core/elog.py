@@ -104,7 +104,8 @@ class ElogConfig:
     channels: list[int]
     selection: ElogSelection = field(default_factory=ElogSelection)
     period: float = 0.1
-    #: ``None`` selects autoranging for that quantity.
+    #: ``None`` keeps the instrument's present range: ELOG autoranging returns
+    #: no records on E.02.09 + N6781A (hardware, 2026-11-18).
     voltage_range: float | None = None
     current_range: float | None = None
     trigger_source: str = "BUS"
@@ -279,7 +280,6 @@ class ElogSession:
 
     #: SCPI code for "the command is not supported by this model".  Positive,
     #: unlike the standard negative codes -- do not test errors with ``< 0``.
-    UNSUPPORTED = 310
 
     def _read_errors(self, context: str) -> list[ScpiError]:
         """Require a valid zero terminator, rather than silently truncating."""
@@ -318,54 +318,6 @@ class ElogSession:
         finally:
             self._check_errors(command)
 
-    def _request_autorange(self, quantity: str, command: str) -> None:
-        """Ask for measurement autoranging, tolerating a model that lacks it.
-
-        Not every module has ELOG autoranging: an N6762A rejects
-        ``SENS:ELOG:VOLT:RANG:AUTO ON`` with +310 while accepting the explicit
-        range commands.  Autoranging is the *default* here, so letting that
-        abort configure() made ordinary logging impossible on such a module --
-        found only by running against real hardware.
-
-        A refusal is therefore recorded and stepped over.  Any other error is
-        still fatal: this must not become a general "ignore ELOG errors".
-        """
-        session = self.instrument.session
-        try:
-            session.write(command)
-        finally:
-            errors = self._read_errors(command)
-        unsupported = False
-        fatal: list[ScpiError] = []
-        for error in errors:
-            if error.code == self.UNSUPPORTED:
-                note = (
-                    f"this module does not support ELOG {quantity} autoranging; "
-                    f"the instrument's existing {quantity} range was used. Set an "
-                    f"explicit range to control it."
-                )
-                log.warning("%s (%s)", note, command)
-                self.notes.append(note)
-                unsupported = True
-                continue
-            fatal.append(error)
-        if fatal:
-            for extra in fatal[1:]:
-                fatal[0].add_note(str(extra))
-            raise fatal[0]
-        if unsupported:
-            quantity_scpi = "VOLT" if quantity == "voltage" else "CURR"
-            query = f"SENS:ELOG:{quantity_scpi}:RANG? {self.chanlist}"
-            try:
-                ranges = session.query_floats(query)
-            finally:
-                self._check_errors(query)
-            if len(ranges) != len(self.config.channels) or any(
-                not math.isfinite(value) or value < 0 for value in ranges
-            ):
-                raise RuntimeError(f"invalid ELOG {quantity} range readback: {ranges}")
-            self.notes.append(f"ELOG actual {quantity} ranges: {ranges}")
-
     def configure(self) -> None:
         """Apply the configuration and read back what the instrument accepted."""
         session = self.instrument.session
@@ -380,13 +332,27 @@ class ElogSession:
             self._write_checked(command)
 
         if config.voltage_range is None:
-            self._request_autorange("voltage", f"SENS:ELOG:VOLT:RANG:AUTO ON,{chan}")
+            # E.02.09 + N6781A accepts VOLT:RANG:AUTO ON without error, then
+            # FETC:ELOG? returns only empty #10 blocks (hardware, 2026-11-18).
+            self._write_checked(f"SENS:ELOG:VOLT:RANG:AUTO OFF,{chan}")
+            self._write_checked(f"SENS:ELOG:VOLT:RANG MAX,{chan}")
+            self.notes.append(
+                "ELOG voltage autoranging is not used (it yields no records on "
+                "E.02.09/N6781A); the maximum voltage range was used. "
+                "Set voltage_range to control it."
+            )
         else:
             self._write_checked(f"SENS:ELOG:VOLT:RANG:AUTO OFF,{chan}")
             self._write_checked(f"SENS:ELOG:VOLT:RANG {config.voltage_range:G},{chan}")
 
         if config.current_range is None:
-            self._request_autorange("current", f"SENS:ELOG:CURR:RANG:AUTO ON,{chan}")
+            self._write_checked(f"SENS:ELOG:CURR:RANG:AUTO OFF,{chan}")
+            self._write_checked(f"SENS:ELOG:CURR:RANG MAX,{chan}")
+            self.notes.append(
+                "ELOG current autoranging is not used (it yields no records on "
+                "E.02.09/N6781A); the maximum current range was used. "
+                "Set current_range to control it."
+            )
         else:
             self._write_checked(f"SENS:ELOG:CURR:RANG:AUTO OFF,{chan}")
             self._write_checked(f"SENS:ELOG:CURR:RANG {config.current_range:G},{chan}")

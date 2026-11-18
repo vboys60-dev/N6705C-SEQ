@@ -614,26 +614,19 @@ def test_positive_fatal_scpi_codes_are_drained_and_do_not_start_running(rig, con
     assert any("-200" in note for note in session.notes)
 
 
-def test_only_autorange_310_is_tolerated_with_actual_range_and_raw_error_in_notes(rig):
-    session, io, transport = rig
+def test_default_ranges_never_request_autorange(rig):
+    # E.02.09 + N6781A: VOLT:RANG:AUTO ON makes FETC:ELOG? return only empty blocks.
+    session, io, _ = rig
     session.stop()
-
-    def unsupported_autorange(command):
-        if "RANG:AUTO ON" in command:
-            transport.errors.append((310, "autorange unsupported"))
-
-    def ranges(command):
-        if command.startswith("SENS:ELOG:VOLT:RANG?"):
-            return "20"
-        if command.startswith("SENS:ELOG:CURR:RANG?"):
-            return "2"
-
-    io.on_write, io.on_query = unsupported_autorange, ranges
     session.configure()
-    assert not transport.errors
-    assert any("+310" in note and "autorange unsupported" in note for note in session.notes)
-    assert any("actual voltage ranges: [20.0]" in note for note in session.notes)
-    assert any("actual current ranges: [2.0]" in note for note in session.notes)
+    sent = commands(io)
+    assert not any(c.startswith("SENS:ELOG:VOLT:RANG:AUTO ON") for c in sent)
+    assert any(c.startswith("SENS:ELOG:VOLT:RANG:AUTO OFF") for c in sent)
+    assert not any(c.startswith("SENS:ELOG:CURR:RANG:AUTO ON") for c in sent)
+    assert any(c.startswith("SENS:ELOG:VOLT:RANG MAX") for c in sent)
+    assert any(c.startswith("SENS:ELOG:CURR:RANG MAX") for c in sent)
+    assert any("voltage autoranging is not used" in n for n in session.notes)
+    assert any("current autoranging is not used" in n for n in session.notes)
 
 
 @pytest.mark.parametrize("reply", ["garbage", "0", '0,"unterminated', OSError("error query failed")])

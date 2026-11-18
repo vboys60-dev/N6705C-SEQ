@@ -337,7 +337,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 
 | # | 項目 | 做法 | 目的 |
 |---|---|---|---|
-| 1 | H0：ELOG 長時間穩定性 | `scripts/hw_elog_h0.py`，≥4 h，USB 與 LAN 各一次 | 決定 B-ELOG 能否開工；失敗退回 DLOG＋MEAS |
+| 1 | H0：ELOG 長時間穩定性 | `scripts/hw_elog_h0.py`，≥4 h，USB 與 LAN 各一次 | 決定 B-ELOG 能否開工；失敗退回 DLOG＋MEAS（2026-11-18 短測已能取到資料，見 §13.9 第 1 項，長測未做） |
 | 2 | ARB／TRIG 檢查 | `scripts/hw_arb_trig_check.py`，slew 加 `--allow-reset`，以 seqnum 判定 A3 | 驗證 ARB 修正在真機上的行為 |
 | 3 | HW-P2：14585A 相容性 | 用 14585A 開啟錄出的 `.dlog` | 確認寫出的格式真機軟體讀得懂（Viewer 往返不能代替） |
 | 4 | 真機錄製驗收 | 旗標暫時打開，接真儀器錄一輪 DLOG | 確認設定、下載、發布在真機可用 |
@@ -363,7 +363,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 
 **限制**：單台、USB、數秒到數十秒的短測；LAN、≥4 h 長測、14585A 相容性（HW-P2）都沒做，所以 H0 仍是 INCONCLUSIVE，不是 PASS 也不是最終 FAIL。
 
-1. **ELOG 在這台取不到資料**：`FETC:ELOG?` 在錄製中一直回空區塊（`#10`），停止後回 `+303 no valid acquisition`；輸出通電（0.5 V／0.1 A 限制）也一樣，所以不是輸出關閉造成。依既定決策，B-ELOG 暫停，維持 DLOG＋MEAS 路線；要重新評估需先查 ELOG 在此韌體的正確用法。`scripts/hw_elog_h0.py` 新增 `--channel`（原本寫死 CH1，N6781A 的 `elog_arb` 探測還會因 `CURR` 要求 current priority 而 `+315`，腳本的 ARB 通電探測尚未改成 N6781A 可用）。
+1. **ELOG 在這台可用，先前取不到資料是設定造成的（2026-11-18 更正）**：舊判定「`FETC:ELOG?` 一直回空區塊（`#10`）、停止後 `+303`」的根因是 ELOG **自動量程**：E.02.09＋N6781A 收下 `SENS:ELOG:VOLT:RANG:AUTO ON`／`CURR:RANG:AUTO ON` 不報錯，之後 `FETC:ELOG?` 只回空區塊（有選到的量用 AUTO 都會）；電流固定在 0.1 A 量程也一樣沒資料，固定 3 A 或 `RANG MAX` 才有。修正：`core/elog.py` 的 `configure()` 在未指定量程時改送 `AUTO OFF` 加 `RANG MAX`（並記 note）。實機（CH2，USB，輸出通電 0.5 V／0.1 A 限制）：2 s 取得 201 組，電壓 0.50021 V（`MEAS:VOLT?` 0.50015 V）、電流約 −1 µA，錯誤佇列全 +0；預設設定 10 ms／1 ms 週期皆有資料；`hw_elog_h0.py` 的 firstread／format／maxrec／stall／tail 短測都取得資料（stall/5 保留 4997／約 5002 筆），但仍 INCONCLUSIVE（短測、僅 USB、無時間戳）。**B-ELOG 恢復為可評估**，H0 長測（≥4 h、USB＋LAN）尚未做。另外 WTG-meas 狀態位是 bit 3（值 8），讀 `STAT:OPER:COND? (@2)`；14585A 的 ELOG 指令順序與我們一致，`FETC:ELOG?` 它用 maxrecords 100000，也可行。`scripts/hw_elog_h0.py` 新增 `--channel`（原本寫死 CH1，N6781A 的 `elog_arb` 探測還會因 `CURR` 要求 current priority 而 `+315`，腳本的 ARB 通電探測尚未改成 N6781A 可用）。
 2. **韌體 E.02.09 與 F.1.1.0 的指令差異（已修）**：`TRIG:ARB:SOUR` 在 E.02.09 是整台共用，帶通道清單會 `-108 Parameter not allowed`（`execute._set_arb_source_imm` 先試帶通道、遇 `-108` 改送不帶通道）；序列長度查詢正確寫法是 `ARB:SEQ:LENG?`（`LEN?` 是 `-113`，已改 `runner.py` 與 `hw_arb_trig_check.py`）。**`hw_arb_trig_check.py` 的 `TRIG:ARB:SOUR?`／`TRIG:ARB:SOUR <src>,(@ch)` 仍帶通道，在此韌體上會失敗，A3 的 seqnum 判定尚未做**。
 3. **DLOG 錄製在真機可完成（已修）**：本機 DLOG（BUS 觸發）設定、錄製、下載、發布全程成功，旁檔 `complete=True`。修了兩處假設：(a) 儀器把週期量化到 10.24 µs 格（要 1 ms 得 1.00352 ms）→ backend 允許一格差異並記 note；(b) 原生檔索引 trigger=`0xFFFFFFFF`、write 不等於筆數 → backend 與 Viewer（`parse_dlog` 原本讀 `>Q`）改讀兩個 `>I`，`0xFFFFFFFF` 時以位元組長度定筆數，其他非零 trigger 拒絕；環形排序未驗證（write 與筆數不符時旁檔記 note）。
 4. **MEAS 預覽在 DLOG 執行中不可用**：儀器回 `+319 Measurement is not allowed while data logger running`，第一次 MEAS 還要吃一次 VISA 逾時（約 5 s），之後 backend 會停用預覽，錄製本身不受影響；結果是**真機上錄製期間畫面沒有即時曲線**，且 5 s 錄製實際耗時約 10 s。要即時曲線需另找方法（例如 DLOG 中途不可行，只能錄完再載入）。
@@ -381,7 +381,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 **下一步**
 0. **不需儀器的已做完**：停止延遲（PR #16）、不穩定測試修法（PR #17，Mac 重現不了，**待 Windows 重複跑 ~30 次零失敗**）。剩 Windows 實測（`HANDOFF_WINDOWS.md` §8 第 5–9 項）與 macOS 手動點測，都要人在 GUI 前操作。
 1. ~~**停止延遲**~~ **已修並合併（2026-11-18，PR #16 `fe043a6`）**：真機（`session.description` 非 `Demo mode`）不送 MEAS 預覽，只記 note；模擬器行為不變；待真機確認停止即時。原描述：真機 DLOG 執行中 MEAS 一律被拒（`+319`），第一次 MEAS 吃 VISA 逾時（約 5 s），錯誤清查再吃一次，所以按停止要約 10 s 才生效（`record/backend.py` 預覽迴圈）。建議真機不送 MEAS 預覽（錄製中本來就沒有即時曲線），模擬器行為不變；需要先決定如何判斷是真機（目前 `N6705C` 沒有 demo 旗標），並更新「預覽」相關測試與契約。
-2. **ELOG 在 E.02.09 取不到資料（需儀器）**：`FETC:ELOG?` 錄製中回空區塊、停止後 `+303`，通電也一樣。要重新評估 ELOG 在此韌體的正確用法（是否缺少觸發或其他前置指令）後，才決定 B-ELOG 是否開工；在那之前走 DLOG＋MEAS 路線（MEAS 又不可用，見上）。
+2. **ELOG 長測（需儀器）**：自動量程造成空區塊的問題已修（§13.9 第 1 項）；剩 H0 長測（≥4 h、USB＋LAN）決定 B-ELOG 是否開工。
 3. **A3 判定（使用者）**：`seqnum` 證據偏向步驟編號從 0 起算（重設後長度 1、寫步驟 0 長度不變、寫步驟 1 變 2；查步驟 1 回「有效範圍 0 到 0」），腳本自己判 INCONCLUSIVE，單台單次。
 4. **下次接上儀器要做**：LAN；從 GUI（`RecordApi`）完整走一次錄製／停止／載入；≥4 h H0；`bus_delay`、`slew`；14585A 開檔（HW-P2）；兩通道以上 DLOG 長錄與覆寫、中途停止；`hw_elog_h0.py` 的 `elog_arb` 通電探測要改成 N6781A 可用（`CURR` 需 current priority）。
 5. **Windows／macOS（不需儀器）**：`HANDOFF_WINDOWS.md` §8 第 5–9 項（旗標暫開）、macOS 手動點過兩種模式。
