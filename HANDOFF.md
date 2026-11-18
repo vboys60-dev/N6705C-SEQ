@@ -382,7 +382,7 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 
 **先前 main 基準**：Python 1518 passed／7 skipped、node 68 passed；先前 CI 六組測試（ubuntu／macOS／Windows × 3.11／3.13）與 `build-windows` 通過，這些不是本次 B-ELOG 分支的 CI 結果。
 
-**本次 B-ELOG 本機測試**：`PYTHONPATH=$PWD/src /opt/anaconda3/bin/python3 -m pytest -q -p no:cacheprovider` → **1574 passed／7 skipped**（55.73 s）；`node --test tests/js/*.test.js` → **70 passed、0 failed**。ELOG backend 測試為 40 passed，含 1 s 週期錄製 20／60 s 無速率誤報、1 ms 速率偏差超過 0.1% 且累積筆數超過容差時有 note、建構後改 tail 常數仍先 drain 再 abort。速率偏差案例由 20 s 延長至 200 s，持續偏差亦會觸發 core 既有的 empty_backlog／tail_incomplete 估計事件，檔案仍成功發布。`RECORD_BACKEND="elog"`、`RECORD_ENABLED=False`，使用者看不到即時紀錄功能；GUI 不提供 backend 選單。本次不連實機、不送 SCPI、不 push、不開 PR。
+**本次 B-ELOG 本機測試**：`PYTHONPATH=$PWD/src /opt/anaconda3/bin/python3 -m pytest -q -p no:cacheprovider` → **1574 passed／7 skipped**（55.73 s）；`node --test tests/js/*.test.js` → **70 passed、0 failed**。ELOG backend 測試為 40 passed，含 1 s 週期錄製 20／60 s 無速率誤報、1 ms 速率偏差超過 0.1% 且累積筆數超過容差時有 note、建構後改 tail 常數仍先 drain 再 abort。速率偏差案例由 20 s 延長至 200 s，持續偏差亦會觸發 core 既有的 empty_backlog／tail_incomplete 估計事件，檔案仍成功發布。`RECORD_BACKEND="elog"`、`RECORD_ENABLED=False`，使用者看不到即時紀錄功能；GUI 不提供 backend 選單。實機驗收見下表（H1–H7 通過，H8 未做）。
 
 **已完成**：Wave 0–5；審查項 A、B（writer 發布順序）、C、D（Windows `os.replace` 重試，程式面）、E（覆寫守衛）、F（fault＋worker 仍活著時擋關窗）、`.part` 殘留、兩個小項；實機相容修正（見 §13.9）。HANDOFF 內對應條目已劃掉。B-ELOG 第 1–4 步亦已完成，細節見 §13.7 第 8 項；ELOG 與 DLOG 並存於同一 backend 模組，等待 H1–H8 實機驗收。
 
@@ -395,17 +395,22 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 5. **Windows／macOS（不需儀器）**：`HANDOFF_WINDOWS.md` §8 第 5–9 項（旗標暫開）、macOS 手動點過兩種模式。
 6. **使用者決定**：打開 `RECORD_ENABLED`（需 §13.8 的 1–4 有結果）；是否把 core 修改同步回 `../N6705C-APP`（同步清單見 §13.7，本輪新增動到 `core/**` 的檔案：`n6705c/core/arb/runner.py`）。
 
-**B-ELOG 待實機驗收 H1–H8**（沿用 PLAN §5；本表尚未執行）：使用 CH2=N6781A、USB，不送 `*RST`；每項開始前／結束後記錄錯誤佇列，結束須為 +0 並確認面板無錯誤。不故意觸發錯誤、不開輸出；H7 需另獲使用者同意。CH1 為電子負載，不做 ELOG／多通道測試；LAN 與多通道需具備條件並另行安排。
+**B-ELOG 實機驗收 H1–H7（2026-11-18，USB，CH2=N6781A，fa222fc 內容，無 `*RST`）：全部通過**；每項開始前／結束後 `SYST:ERR?` 皆 +0，結束時 CH1／CH2 `OUTP?`=0、鎖已釋放。儀器面板有無錯誤指示須人工目視（agent 無法確認）。
+
+| 項目 | 結果 |
+|---|---|
+| H1 | 1 ms、60 s、V+I：period 1.00352 ms；59,793 筆（期望 59,794.2）；gaps=[]；無 +303／-420；parse_dlog 通過、無 .part；ABOR 後 FETC 0 次 |
+| H2 | 10 ms、60 s：period 9.99424 ms；6,003 筆（期望 6,003.6）；gaps=[] |
+| H3 | 真 RecordApi：開始→running 0.109 s、停止→done 0.050 s；錄製中 snapshot seq 2→46 嚴格遞增、preview=False；10,172 筆、gaps 0；record_load 可開（tint 1.00352 ms）；gate 回 IDLE；錄製中無 MEAS |
+| H4 | duration 5 s：5.07 s 自動結束、5,019 筆、gaps=[]（到期後多一次讀取，已知） |
+| H5 | starting 階段停止：`NoRecordsError`（Recording cancelled before INIT:ELOG）；INIT／ABOR／FETC 皆 0 次；無殘留檔 |
+| H6 | 1 ms、900 s：896,813 筆（期望 896,820.8，差 −7.8）；整段速率 996.484 rec/s（H0 為 996.43–996.55）；gaps=[]、無速率 note、無 +303／-420 |
+| H7 | CH2 0.5 V／0.1 A 通電錄 10 s（使用者已同意）：ELOG V 平均 0.500143 V，與錄製前後 MEAS（0.5001352／0.5001416 V）差 0.007／0.001 mV；I 平均 47.9 µA；9,966 筆、gaps=[]；錄製中 MEAS 0 次（無 +319）；結束 `OUTP OFF`，`OUTP?`=0 |
+
+**觀察／風險**：(1) H6 的空區塊逐漸增加（第 1 分鐘 1 次、第 5 分鐘 81 次、之後每分鐘約 226–232 次，共 2,100 次），讀取次數約 7.9 次／s（預期 4 次／s），實際速率比 1/period 慢約 8.6 ppm；15 分鐘內未觸發 empty_backlog、資料連續，但屬時鐘漂移早期徵兆，≥1 h 長測可能誤報 `tail_incomplete`／`empty_backlog`，需追蹤。(2) 各項結尾少 0.5–2.9 筆（H6 含漂移 7.8 筆），符合「少 1–2 筆」。(3) 輸出關閉時錄到的 V、I 皆 0.0。(4) `MEAS:VOLT?` 每次約 2.83 s；backend 把 FORM 留在 REAL，H7 在 MEAS 前先送 `FORM ASCII`，儀器目前停在 FORM ASCII。(5) 每分鐘速率受 0.25 s 讀取粒度影響（995.2–997.7），只有整段速率可與 H0 比。原始紀錄在 scratchpad（`belog/hw/`，不入 repo）。
 
 | 項目 | 待執行內容與判準 |
 |---|---|
-| H1 | backend 1 ms、60 s、V+I：讀回 period=1.00352 ms；筆數與 elapsed/period 差 ≤2 筆＋2 個 fetch 間隔；gaps=[]、無 +303／-420、parse_dlog 通過、無 .part |
-| H2 | backend 10 ms、60 s：period=9.99424 ms，其餘同 H1 |
-| H3 | 真 RecordApi 錄製／停止／載入：開始至 running <1 s、停止至 done <1 s、snapshot seq 持續增加、record_load 可開、gate 回 IDLE |
-| H4 | duration=5 s 自動停止；不按停止也能完成，筆數約 5/period |
-| H5 | starting 階段停止；無 INIT／ABOR、無暫存殘留、錯誤佇列 +0 |
-| H6 | 1 ms、15 分鐘：速率 996.4–996.6 rec/s、gaps=[]、無速率提醒 note |
-| H7 | 僅在使用者另行同意後，CH2 0.5 V／0.1 A 限流、開輸出錄 10 s 再關閉；錄製前後各一次 MEAS，錄製中不送 MEAS；V 平均與 MEAS 差 <1 mV |
 | H8 | 條件具備後補 LAN ≥15 min、≥1 h、14585A 開檔（HW-P2）、Windows exe 錄一輪；各自記錄結果，不互相代替 |
 
 **另待實機確認**（§13.7 第 8 項）：INIT 傳輸逾時後的儀器狀態；無 INIT 時 ABOR:ELOG 是否報錯；60 s 大週期格點量化。既有 fake 測試無法裁決這三項。長週期取整造成的速率 note 誤報已改用 `max(2 + 2*interval/period, 1e-3*elapsed/period)` 筆容差；此為程式修正，不能代替大週期實測。
