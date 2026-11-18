@@ -7,6 +7,7 @@
   const SAVE_PURPOSES = ["png", "html", "markers", "csv"];
   const ACTIVE_STATES = ["starting", "running", "stopping"];
   const SELFTEST_STEP_TIMEOUT_MS = 10000; // = contracts.SELFTEST_STEP_TIMEOUT_MS
+  const DRAINING_WAIT_MS = 32000; // contracts.DRAINING_TIMEOUT_S (30 s) + margin: fault ends the wait first
   const REQ_ID = /^[A-Za-z0-9_-]{1,64}$/;
   const frame = document.getElementById("analysis-frame");
   const pane = document.getElementById("record-pane");
@@ -144,7 +145,7 @@
           if (!reply.ok) throw new Error(reply.error || App.t("analysis_denied_draining"));
         }
         unload();
-        if (!(await idle(request, SELFTEST_STEP_TIMEOUT_MS)) || request !== intent) {
+        if (!(await idle(request, DRAINING_WAIT_MS)) || request !== intent) {
           if (request === intent) { mode = "view"; await displayMode(); }
           return false;
         }
@@ -272,7 +273,8 @@
   App.register({
     async init() {
       if (App.config.analysis_enabled !== true) return;
-      recordEnabled = (await App.api.record_meta()).enabled === true;
+      // Read-only metadata: if it fails, keep the analysis tab and treat recording as off.
+      try { recordEnabled = (await App.api.record_meta()).enabled === true; } catch { recordEnabled = false; }
       document.getElementById("analysis-modes").hidden = !recordEnabled;
       if (recordEnabled) {
         viewButton.addEventListener("click", () => chooseMode("view"));

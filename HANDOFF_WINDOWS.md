@@ -117,6 +117,7 @@ Start-Process -FilePath $gui -Wait
 | 6 | 錄製中關窗 | 錄製中及停止收尾時按關窗，之後等停止完成再關窗 | 錄製／收尾中拒絕關窗並提示先停止；完成後可關閉，工作管理員無殘留 exe |
 | 7 | 互斥 | 錄製時切到電源分頁、嘗試執行及分析開檔；另測電源執行或分析檢視時嘗試錄製 | 電源執行、分析檢視、錄製不能同時進行；停止並收尾後才恢復可操作 |
 | 8 | exe 的 record 匯入 | 對打包 exe 執行下列清單檢查，再以旗標 `True` 的 exe 在 Demo 完整開始／停止一輪 | archive 含 `n6705c_seq.record` 的 contracts、backend、dlogfile、snapshot；實際錄製路徑無 `ModuleNotFoundError`／`ImportError`，可成功產檔（清單檢查不能取代執行驗證） |
+| 9 | Defender 暫時鎖檔重試 | Windows 開啟 Defender 即時防護，錄製大檔後立即停止，觀察剛結束的大檔發布與收尾時間，記錄是否出現暫時鎖檔或重試 | 預期直接發布成功或暫時鎖檔重試後成功；觀察最終 `.dlog` 可讀、旁檔 `complete=True`、不留 `.part`，記錄錯誤文字與收尾耗時；未遇鎖檔時註明重試情境未觸發 |
 
 ```powershell
 pyi-archive_viewer -l -r .\dist\N6705C-SEQ\N6705C-SEQ.exe | Select-String 'n6705c_seq.record'

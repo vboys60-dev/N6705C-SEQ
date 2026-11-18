@@ -98,7 +98,7 @@ function setup({ enabled = true, recordEnabled = false, recordState = 'idle', se
     setRecordState(s) { recordState = s; },
     async start() { await fire('pywebviewready'); await flush(); },
     async poll(...events) { queue.push(...events); await take(100); },
-    async timeout() { await take(10000); },
+    async timeout(ms = 10000) { await take(ms); },
     async message(data, { source = viewerWindow, origin = VIEWER } = {}) { fire('message', { data, source, origin }); await flush(); },
   };
 }
@@ -756,14 +756,21 @@ test('record mode drain timeout warns, returns to view and restores controls', a
   const switching = t.els['analysis-mode-record'].click();
   await flush();
   await t.poll(state('draining', 1, 2));
-  assert.ok(t.timers.some(x => x.ms === 10000));
-  await t.timeout();
+  assert.ok(t.timers.some(x => x.ms === 32000));
+  await t.timeout(32000);
   await switching;
   assert.equal(t.els['record-pane'].hidden, true);
   assert.equal(t.els['analysis-frame'].hidden, false);
   assert.equal(t.els['analysis-mode-view'].attrs['aria-pressed'], 'true');
   assert.equal(t.els['analysis-mode-record'].disabled, false);
   assert.equal(t.results.length, 1);
+});
+
+test('record_meta failure keeps the analysis tab and leaves recording off', async () => {
+  const t = setup({recordEnabled: true, api: {record_meta: async () => { throw new Error('meta unavailable'); }}});
+  await t.start();
+  assert.equal(t.els['tab-analysis'].hidden, false);
+  assert.equal(t.els['analysis-modes'].hidden, true);
 });
 
 test('record mode leave rejection or exception returns to view without showing recording', async () => {

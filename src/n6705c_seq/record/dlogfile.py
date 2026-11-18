@@ -21,7 +21,7 @@ from xml.sax.saxutils import escape
 
 import numpy as np
 
-__all__ = ["DlogWriter", "elog_block", "recover_part"]
+__all__ = ["DlogWriter", "elog_block", "recover_part", "replace_with_retry"]
 
 _PRODUCER = "n6705c_seq.record"
 _MAX_RECORDS = 2**32 - 1
@@ -29,6 +29,19 @@ _MAX_HEADER = 1024**2
 _TIME_WIDTH = 24
 _registry_lock = threading.Lock()
 _active = set()
+_REPLACE_DELAYS = (0.05, 0.1, 0.2, 0.4)
+
+
+def replace_with_retry(src, dst):
+    """Replace atomically, tolerating brief Windows antivirus/indexer locks."""
+    for attempt in range(len(_REPLACE_DELAYS) + 1):
+        try:
+            return os.replace(src, dst)
+        except PermissionError as exc:
+            if (os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32, 33}
+                    or attempt == len(_REPLACE_DELAYS)):
+                raise
+            time.sleep(_REPLACE_DELAYS[attempt])
 
 
 def _claim(path):
@@ -182,7 +195,7 @@ def _write_sidecar(path, meta):
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -217,8 +230,8 @@ def _publish(paths, meta):
     final, part, side, side_part = paths
     incomplete = dict(meta, complete=False, ended_utc=None)
     _write_sidecar(side_part, incomplete)
-    os.replace(side_part, side)
-    os.replace(part, final)
+    replace_with_retry(side_part, side)
+    replace_with_retry(part, final)
     try:
         _write_sidecar(side, meta)
     except Exception as exc:

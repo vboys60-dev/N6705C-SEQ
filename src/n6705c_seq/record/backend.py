@@ -23,6 +23,7 @@ from n6705c.core.scpi import format_channel_list
 from . import contracts as c
 from .dlogfile import (
     _claim, _fsync_directory, _paths, _release, _safe_paths, _write_sidecar,
+    replace_with_retry,
 )
 from .snapshot import Envelope
 
@@ -441,8 +442,8 @@ class _DlogBackend:
                 # Publish an incomplete sidecar first, including on overwrite.
                 # Only mark it complete once the matching data is in place.
                 _write_sidecar(side_part, meta)
-                os.replace(side_part, side)
-                os.replace(part, final)
+                replace_with_retry(side_part, side)
+                replace_with_retry(part, final)
                 meta["complete"] = True
                 _write_sidecar(side, meta)
             _fsync_directory(final.parent)

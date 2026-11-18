@@ -7,6 +7,7 @@ import stat
 import struct
 import sys
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -39,6 +40,119 @@ def _change_metadata(path, change):
 
 def _snapshot(directory):
     return {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+
+
+def _permission_error(winerror):
+    error = PermissionError("injected Windows lock")
+    error.winerror = winerror
+    return error
+
+
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_replace_retries_two_windows_locks_then_succeeds(monkeypatch, winerror):
+    calls, sleeps = [], []
+
+    def replace(src, dst):
+        calls.append((src, dst))
+        if len(calls) <= 2:
+            raise _permission_error(winerror)
+
+    monkeypatch.setattr(dlogfile, "os", SimpleNamespace(name="nt", replace=replace))
+    monkeypatch.setattr(dlogfile.time, "sleep", sleeps.append)
+    dlogfile.replace_with_retry("source", "destination")
+    assert calls == [("source", "destination")] * 3
+    assert sleeps == [0.05, 0.1]
+
+
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_replace_retry_exhaustion_preserves_last_error(monkeypatch, winerror):
+    errors, sleeps = [], []
+
+    def replace(src, dst):
+        errors.append(_permission_error(winerror))
+        raise errors[-1]
+
+    monkeypatch.setattr(dlogfile, "os", SimpleNamespace(name="nt", replace=replace))
+    monkeypatch.setattr(dlogfile.time, "sleep", sleeps.append)
+    with pytest.raises(PermissionError) as caught:
+        dlogfile.replace_with_retry("source", "destination")
+    assert len(errors) == 5
+    assert caught.value is errors[-1]
+    assert caught.value.winerror == winerror
+    assert sleeps == [0.05, 0.1, 0.2, 0.4]
+
+
+@pytest.mark.parametrize("platform,error", [
+    ("nt", _permission_error(2)),
+    ("nt", PermissionError("no winerror")),
+    ("nt", FileNotFoundError("missing source")),
+    ("nt", OSError("disk failure")),
+    ("posix", _permission_error(32)),
+])
+def test_replace_does_not_retry_other_failures(monkeypatch, platform, error):
+    calls, sleeps = [], []
+
+    def replace(src, dst):
+        calls.append((src, dst))
+        raise error
+
+    monkeypatch.setattr(dlogfile, "os", SimpleNamespace(name=platform, replace=replace))
+    monkeypatch.setattr(dlogfile.time, "sleep", sleeps.append)
+    with pytest.raises(type(error)) as caught:
+        dlogfile.replace_with_retry("source", "destination")
+    assert caught.value is error
+    assert calls == [("source", "destination")]
+    assert sleeps == []
+
+
+def test_replace_non_windows_replaces_existing_file(tmp_path, monkeypatch):
+    source, destination = tmp_path / "source", tmp_path / "destination"
+    source.write_bytes(b"new")
+    destination.write_bytes(b"old")
+    monkeypatch.setattr(dlogfile, "os", SimpleNamespace(**dict(vars(dlogfile.os), name="posix")))
+    sleeps = []
+    monkeypatch.setattr(dlogfile.time, "sleep", sleeps.append)
+    dlogfile.replace_with_retry(source, destination)
+    assert destination.read_bytes() == b"new"
+    assert not source.exists()
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("recover", [False, True])
+@pytest.mark.parametrize("stage", ["sidecar_temp", "incomplete_sidecar", "data", "complete_sidecar"])
+def test_publication_retries_windows_locks_to_completion(tmp_path, monkeypatch, recover, stage):
+    writer = _writer(tmp_path)
+    writer.append(np.ones((2, 4), dtype=np.float32))
+    final = tmp_path / "record.dlog"
+    part, side, side_part = _paths(final)
+    if recover:
+        writer.abort(keep_part=True)
+    real_replace = dlogfile.os.replace
+    attempts, sleeps = [], []
+
+    def replace(src, dst):
+        target = {
+            "sidecar_temp": Path(dst) == side_part,
+            "incomplete_sidecar": Path(src) == side_part and Path(dst) == side,
+            "data": Path(dst) == final,
+            "complete_sidecar": Path(dst) == side and _metadata(Path(src))["complete"],
+        }[stage]
+        if target:
+            attempts.append((src, dst))
+            if len(attempts) <= 2:
+                raise _permission_error(32)
+        if Path(dst) == final:
+            assert _metadata(side)["complete"] is False
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(dlogfile, "os", SimpleNamespace(**dict(vars(dlogfile.os), name="nt", replace=replace)))
+    monkeypatch.setattr(dlogfile.time, "sleep", sleeps.append)
+    assert (recover_part(part) if recover else writer.finalize()) == final
+    assert len(attempts) == 3
+    assert sleeps == [0.05, 0.1]
+    assert _metadata(side)["complete"] is True
+    assert parse_dlog(final.read_bytes())["nRecords"] == 2
+    assert set(_snapshot(tmp_path)) == {final.name, side.name}
 
 
 def test_writer_imports_only_stdlib_and_numpy():
