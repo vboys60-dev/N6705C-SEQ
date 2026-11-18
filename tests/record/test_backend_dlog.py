@@ -826,7 +826,7 @@ def _native(path, trigger, write, records=3):
     return dict(channels=[2], sense_volt=True, sense_curr=True)
 
 
-@pytest.mark.parametrize('trigger, write, note', [(0, 3, False), (0xFFFFFFFF, 9742, True), (0, 9742, True)])
+@pytest.mark.parametrize('trigger, write, note', [(0, 3, False), (0xFFFFFFFF, 3, False), (0xFFFFFFFF, 9742, True), (0, 9742, True)])
 def test_native_indices_hardware_sentinel_is_accepted_with_note(tmp_path, trigger, write, note):
     cfg = _native(tmp_path / 'x.part', trigger, write)
     layout = module._layout(tmp_path / 'x.part', cfg, 0.001024)

@@ -217,9 +217,10 @@ def _layout(part, cfg, period):
         raise c.NoRecordsError("Recording contains no complete records")
     layout = dict(header_bytes=end, record_bytes=record_bytes, time_offset=time_match.start(1),
                   time_width=len(time_match[1]), records=records)
-    if trigger != 0 or write != records:
-        layout["note"] = (f"Native DLOG indices trigger={trigger}, write={write} differ from the "
-                          f"{records} records implied by file size; samples are taken in file order "
+    # trigger=0xFFFFFFFF alone is the normal BUS-trigger sentinel; warn only when write != count.
+    if write != records:
+        layout["note"] = (f"Native DLOG write index {write} differs from the "
+                          f"{records} records implied by file size (trigger={trigger}); samples are taken in file order "
                           "(ring-buffer ordering is unverified).")
     return layout
 
