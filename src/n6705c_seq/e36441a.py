@@ -15,11 +15,13 @@ import math
 import time
 from typing import Callable
 
+from n6705c.core.instrument import Identity
 from n6705c.core.scpi import format_channel_list
 from n6705c.core.session import Session
 from n6705c.core.transport import VisaTransport
 
-from .execute import OutputsNotConfirmedOff, PlanRejected, close_all, fire_together, run_callback
+from .execute import (OutputsNotConfirmedOff, PlanRejected, check_unique_identities,
+                      check_unique_resources, close_all, fire_together, run_callback)
 from .plan import SeqRow
 
 #: Wait for the output to reach the low level before the list is armed.
@@ -37,11 +39,11 @@ def prepare_commands(row: SeqRow, ch: int) -> list[str]:
         f"INIT:CONT OFF,{chan}",
         f"VOLT:SLEW:RIS INF,{chan}",
         f"VOLT:SLEW:FALL INF,{chan}",
-        f"VOLT {row.low_v:.6G},{chan}",
     ]
     if row.current_limit is not None:
         commands.append(f"CURR {row.current_limit:.6G},{chan}")
     commands += [
+        f"VOLT {row.low_v:.6G},{chan}",
         f"CURR:MODE FIX,{chan}",
         f"VOLT:MODE FIX,{chan}",
         f"OUTP ON,{chan}",
@@ -192,11 +194,13 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
         return sessions[(r.channel - 1) // 4], (r.channel - 1) % 4 + 1
 
     try:
-        kind = kind_of([model_of(s.query("*IDN?")) for s in sessions])
+        replies = [s.query("*IDN?") for s in sessions]
+        kind = kind_of([model_of(reply) for reply in replies])
     except ValueError as exc:
         raise PlanRejected(str(exc)) from exc
     if kind != "E36441A":
         raise PlanRejected("run_rows requires E36441A instruments")
+    check_unique_identities([Identity.parse(reply) for reply in replies])
     frames: dict[int, tuple[Session, list[int]]] = {}
     for r in active:
         session, ch = where(r)
@@ -290,6 +294,7 @@ def run_resources(resources: list[str], rows: list[SeqRow], *, hold_dc: bool = F
                   backend: str = "auto", timeout_ms: int = 10_000,
                   on_cleanup: Callable[[], None] | None = None) -> None:
     """Open each resource as an E36441A frame, run the table, close."""
+    check_unique_resources(resources)
     transports = _sessions(resources, backend, timeout_ms)
     try:
         run_rows([Session(t) for t in transports], rows, hold_dc=hold_dc,
