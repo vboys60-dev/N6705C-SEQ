@@ -368,6 +368,8 @@ H0 方法：單通道固定週期，觸發後立刻每 250 ms fetch，每次只�
 3. **DLOG 錄製在真機可完成（已修）**：本機 DLOG（BUS 觸發）設定、錄製、下載、發布全程成功，旁檔 `complete=True`。修了兩處假設：(a) 儀器把週期量化到 10.24 µs 格（要 1 ms 得 1.00352 ms）→ backend 允許一格差異並記 note；(b) 原生檔索引 trigger=`0xFFFFFFFF`、write 不等於筆數 → backend 與 Viewer（`parse_dlog` 原本讀 `>Q`）改讀兩個 `>I`，`0xFFFFFFFF` 時以位元組長度定筆數，其他非零 trigger 拒絕；環形排序未驗證（write 與筆數不符時旁檔記 note）。
 4. **MEAS 預覽在 DLOG 執行中不可用**：儀器回 `+319 Measurement is not allowed while data logger running`，第一次 MEAS 還要吃一次 VISA 逾時（約 5 s），之後 backend 會停用預覽，錄製本身不受影響；結果是**真機上錄製期間畫面沒有即時曲線**，且 5 s 錄製實際耗時約 10 s。要即時曲線需另找方法（例如 DLOG 中途不可行，只能錄完再載入）。
 5. 沒測：透過 GUI／`RecordApi` 走一次完整流程（只跑了 backend）、LAN、Windows。
+6. **`hw_arb_trig_check.py` 實機結果（2026-11-18，CH2，加 `--frame-wide-arb-source`）**：`arbsrc` PASS（不帶通道的 `TRIG:ARB:SOUR IMM`／`BUS` 接受且回讀一致）；`seqnum` PASS（從 0 起算；E.02.09 的 `ARB:SEQ:RES` 後 `LENG?`＝1 而非 0，腳本判定已改為以 baseline 為準，99/100 端點未測）；`slew` PASS（只收集重置前後回覆，`VOLT:SLEW:MAX?` 是布林覆寫旗標，無速率判定）。`bus_delay` PASS：ARB 源 IMM 時波形在 `INIT:TRAN` 就起跑（約 0.1 s 內），ARB 源 BUS 時等到 `*TRG` 才起跑（約 2.1 s），支持「ARB 源」假設；**`residual_bus` PASS＝A1（BUS→IMM）實機驗證（Codex sol 讀 CSV 裁決，限 E.02.09.3271、USB、CH2=N6781A）**：pre-A1 控制組（殘留 BUS、TRAN=IMM、不送 `*TRG`）`STAT:OPER:COND?` 持續 +113 直到逾時，補送 `*TRG`（擷取相對 2.345 s）後 2.447 s 才出波形，證實殘留 BUS 會擋住 INIT 起跑；目前 `start_together` 帶通道遇 `-108` 後改送整台 `TRIG:ARB:SOUR IMM`，回讀 ARB／TRAN 皆 IMM，**不送 `*TRG`** 仍在 INIT 後約 5 ms 起跑（脈波寬 102.5 ms、峰值 1.0013 V，未逾時）。未觀察到「沒波形卻回報成功」。限制：pre-A1 是腳本內重建的控制組、非舊版完整應用程式；勾擷取的舊組 INIT／`*TRG` 只隔 2.1 ms，`at_init` 不能證明啟動來源；單台單通道單次。
+   **命名**：正式任務表 A1＝BUS→IMM（本條）、A3＝序列步驟編號（`seqnum` PASS，見上）。
 
 ### 13.10 目前狀態與下一步（2026-11-18 晚，PR #11–#17 皆已合併 main）
 
