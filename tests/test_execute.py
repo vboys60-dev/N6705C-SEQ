@@ -476,7 +476,7 @@ def test_trigger_sources_levels_output_load_and_init_keep_hardware_order(monkeyp
         for inst in group.instruments:
             commands = sent(inst)
             assert "OUTP ON,(@1)" in commands
-            assert not any(c.startswith(("ARB:", "INIT:")) for c in commands)
+            assert not any(c.startswith(("ARB:", "INIT:TRAN")) for c in commands)
         loaded.append(runner)
         load(runner)
 
@@ -526,7 +526,7 @@ def test_rejected_arb_source_aborts_before_output_on_and_forces_all_off(monkeypa
         run_plan(group, [row(1), row(5)])
     for index, inst in enumerate(group.instruments):
         commands = sent(inst)[before[index]:]
-        assert not any(c.startswith(("VOLT ", "CURR ", "OUTP ON", "ARB:", "INIT:")) for c in commands)
+        assert not any(c.startswith(("VOLT ", "CURR ", "OUTP ON", "ARB:", "INIT:TRAN")) for c in commands)
         assert any(c.startswith("OUTP OFF") for c in commands)
         assert not any(inst.output_state(inst.populated_channels).values())
 

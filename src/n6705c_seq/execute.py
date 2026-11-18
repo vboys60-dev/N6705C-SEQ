@@ -21,6 +21,7 @@ from n6705c.core.instrument import N6705C
 from n6705c.core.parsing import decode_real32, split_block_list
 from n6705c.core.scpi import format_channel_list, parse_channel_list
 from n6705c.core.session import ScpiError
+from n6705c.core.status import OperationStatus
 from n6705c.core.transport import VisaTransport
 
 from .i18n import tr
@@ -210,6 +211,33 @@ def _check_coupling(group: InstrumentGroup, functions) -> None:
         planned = set(channels)
         if coupled & planned and coupled - planned:
             raise PlanRejected(f"frame {frame}: coupled channels {sorted(coupled)} extend beyond plan channels {sorted(planned)}")
+
+
+def _check_idle(group: InstrumentGroup, functions) -> None:
+    """Refuse channels whose transient system is armed/running or in continuous mode.
+
+    A running ARB ignores VOLT/CURR, and continuous mode re-initiates after ABOR, so
+    the plan must start from a quiet channel. Unreadable state is also refused.
+    """
+    busy = int(OperationStatus.WTG_TRAN | OperationStatus.TRAN_ACTIVE)
+    for instrument, channels in _frames(group, functions):
+        frame = group.instruments.index(instrument) + 1
+        chans = format_channel_list(channels)
+        try:
+            states = instrument.operation_status(channels)
+            cont = instrument.session.query(f"INIT:CONT:TRAN? {chans}")
+            instrument.session.check_errors("INIT:CONT:TRAN?")
+            flags = [int(x) for x in cont.replace('"', "").split(",")]
+            if len(flags) != len(channels):
+                raise ValueError(f"unexpected reply {cont!r}")
+        except Exception as exc:  # noqa: BLE001 - unreadable state is unsafe
+            raise PlanRejected(f"frame {frame}: cannot check transient state ({exc})") from exc
+        for ch, flag in zip(channels, flags):
+            if int(states[ch]) & busy or flag:
+                raise PlanRejected(
+                    f"frame {frame} CH{ch}: transient/ARB is active or continuous trigger is ON; "
+                    "stop it (ABORt:TRANsient, INIT:CONT:TRAN OFF) before running"
+                )
 
 
 def _set_arb_source_imm(instrument: N6705C, channels: list[int]) -> None:
@@ -455,6 +483,7 @@ def run_functions(
                 "electronic-load modules cannot be used as supply channels; use another channel"
             )
     _check_coupling(group, functions)
+    _check_idle(group, functions)
     try:
         for warning in slew_warnings(group, functions):
             if on_warning is not None:
