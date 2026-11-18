@@ -22,7 +22,7 @@ FIXTURE = ROOT / "tests/analysis/fixtures/default_20260803_092740.dlog"
 def test_record_backend_defaults_and_tail_constant():
     assert record.RECORD_ENABLED is False
     assert record.RECORD_BACKEND in {"elog", "dlog"}
-    assert record.RECORD_BACKEND == "dlog"
+    assert record.RECORD_BACKEND == "elog"
     assert record.ELOG_TAIL == "drain_then_abort"
 
 

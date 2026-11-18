@@ -1,13 +1,15 @@
 """Real demo recording -> finalized DLOG -> authenticated analysis HTTP open."""
 
 import json
+from threading import Condition, Event
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from n6705c.core import dlog, fake
+from n6705c.core import dlog, elog, fake
+from n6705c.core.group import InstrumentGroup
 from n6705c_seq.record import backend, contracts as c
 
 # Reuse the real server/core/storage fixture and Viewer wire protocol checks.
@@ -35,7 +37,7 @@ def recording(api, tmp_path, monkeypatch):
     clock = Clock()
     # Replace module references, never the process-wide time.monotonic: gate
     # timers, HTTP and test deadlines must continue to use real time.
-    for module in (backend, dlog, fake):
+    for module in (backend, dlog, elog, fake):
         monkeypatch.setattr(module, "time", clock)
     monkeypatch.setattr(c, "RECORD_ENABLED", True)
     path = tmp_path / "capture.dlog"
@@ -63,6 +65,185 @@ def stop(recording):
     assert not recording.api._record_thread.is_alive()
     assert recording.api._gate.state()[0] == "idle"
     return recording.api.record_status()
+
+
+class StrictAfterAbort:
+    """Wrap only fake I/O, rejecting the fetches forbidden by E.02.09."""
+
+    def __init__(self, base):
+        self.base = base
+        self.commands = []
+        self.aborted = False
+        self.fetches_after_abort = []
+        self.periods = []
+
+    def __getattr__(self, name):
+        return getattr(self.base, name)
+
+    def write(self, command):
+        self.commands.append(command)
+        if command.startswith("ABOR:ELOG"):
+            self.aborted = True
+        elif command.startswith("INIT:ELOG"):
+            self.aborted = False
+        return self.base.write(command)
+
+    def query(self, command):
+        self.commands.append(command)
+        response = self.base.query(command)
+        if command.startswith("SENS:ELOG:PER?"):
+            self.periods.extend(float(value) for value in response.split(","))
+        return response
+
+    def query_binary(self, command):
+        self.commands.append(command)
+        if self.aborted and command.startswith("FETC:ELOG?"):
+            self.fetches_after_abort.append(command)
+            self.base.errors.extend([(303, "ELOG not running"), (-420, "Query UNTERMINATED")])
+        return self.base.query_binary(command)
+
+
+@pytest.fixture
+def elog_recording(recording, monkeypatch):
+    monkeypatch.setattr(c, "RECORD_BACKEND", "elog")
+    r = recording
+
+    def demo(frames, slots):
+        assert frames == 1
+        r.io = StrictAfterAbort(fake.FakeN6705C(slots))
+        return InstrumentGroup.from_transports([r.io])
+
+    monkeypatch.setattr(InstrumentGroup, "demo", demo)
+    # Advance only after the worker has calculated its next fetch deadline.
+    # A condition keeps the fake clock deterministic without changing real
+    # gate/HTTP deadlines or auto-advancing the recording to completion.
+    condition = Condition()
+    waiting = False
+
+    class RecorderWait(Event):
+        def wait(self, timeout=None):
+            nonlocal waiting
+            with condition:
+                before = r.clock.now
+                waiting = True
+                condition.notify_all()
+                try:
+                    condition.wait_for(lambda: self.is_set() or r.clock.now != before, timeout)
+                finally:
+                    waiting = False
+                return self.is_set()
+
+    recorder_class = backend.ElogRecorder
+
+    def recorder(*args, **kwargs):
+        result = recorder_class(*args, **kwargs)
+        result._stop = RecorderWait()
+        return result
+
+    def advance(seconds):
+        with condition:
+            assert condition.wait_for(lambda: waiting, timeout=2), "recorder did not wait"
+            r.clock.now += seconds
+            condition.notify_all()
+
+    monkeypatch.setattr(backend, "ElogRecorder", recorder)
+    r.advance = advance
+    return r
+
+
+def _elog_capture(recording):
+    r = recording
+    start(r)
+    actual = r.io.periods[0]
+    assert r.io.periods == [actual, actual]
+    assert actual == pytest.approx(1.00352e-3)
+    assert actual != r.cfg["period_s"]
+    assert r.api.record_status()["preview"] is False
+    seq = 0
+    for seconds in (0.5, 0.5):
+        r.advance(seconds)
+        wait_for(lambda: r.api.record_snapshot(-1)["seq"] > seq)
+        snapshot = r.api.record_snapshot(seq)
+        assert snapshot["seq"] > seq
+        assert snapshot["preview"] is False
+        assert snapshot["period_s"] == actual
+        assert snapshot["run_id"] == r.api.record_status()["run_id"]
+        assert set(snapshot["keys"]) == {"V1", "I1", "V2", "I2"}
+        assert all(series["min"] and series["max"] for series in snapshot["keys"].values())
+        assert r.api.record_status()["state"] == "running"
+        seq = snapshot["seq"]
+    r.advance(1.0)
+    status = stop(r)
+    assert status["state"] == "done", status
+    assert status["preview"] is False
+    assert status["elapsed_s"] == pytest.approx(2.0)
+    assert status["records"] == int(2.0 / actual)
+    sidecar = json.loads(Path(str(r.path) + ".json").read_text())
+    assert sidecar["backend"] == "elog"
+    assert sidecar["preview"] is False
+    assert sidecar["complete"] is True
+    assert sidecar["actual"]["period_s"] == actual
+    assert sidecar["records"] == status["records"]
+    assert sidecar["run_id"] == status["run_id"]
+    assert sidecar["gaps"] == []
+    assert not Path(str(r.path) + ".part").exists()
+    assert not Path(str(r.path) + ".json.part").exists()
+
+    events = r.api.poll()
+    assert all(event[1]["preview"] is False for event in events if event[0] == "record")
+    idle = max(i for i, event in enumerate(events)
+               if event[0] == "state" and event[1]["state"] == "idle")
+    done = next(i for i, event in enumerate(events)
+                if event[0] == "record" and event[1]["state"] == "done")
+    assert idle < done
+    return status, actual
+
+
+def test_elog_demo_record_stop_load_and_real_server_open(elog_recording):
+    r = elog_recording
+    status, actual = _elog_capture(r)
+    entered, viewer = enter(r.api)
+    loaded = r.api.record_load(entered["gen"])
+    assert set(loaded) == {"ok", "gen", "grant", "name"}
+    assert loaded["ok"] is True and loaded["name"] == r.path.name
+    assert loaded["gen"] == entered["gen"]
+    meta = viewer.open(loaded["grant"])
+    assert meta["fileName"] == r.path.name
+    assert len(meta["handle"]) == 40
+    assert meta["tint"] == actual
+    assert meta["tint"] != r.cfg["period_s"]
+    assert meta["nRecords"] == status["records"]
+    assert meta["activeChannels"] == r.cfg["channels"]
+    assert viewer.req("GET", f"/samples?h={meta['handle']}&lo=0&hi=9")[0] == 200
+    assert r.api.analysis_leave(entered["gen"])["ok"] is True
+    wait_state(r.api, "idle", timeout=2)
+
+
+def test_elog_hardware_description_still_no_meas_and_no_fetch_after_abort(elog_recording, monkeypatch):
+    monkeypatch.setattr(fake.FakeN6705C, "description", "VISA (backend=ni)")
+    r = elog_recording
+    _elog_capture(r)
+    assert not any(command.startswith("MEAS:") for command in r.io.commands)
+    aborts = [i for i, command in enumerate(r.io.commands) if command.startswith("ABOR:ELOG")]
+    fetches = [i for i, command in enumerate(r.io.commands) if command.startswith("FETC:ELOG?")]
+    assert len(aborts) == 1
+    assert fetches and max(fetches) < aborts[0]
+    assert r.io.fetches_after_abort == []
+    assert not r.io.base.errors
+
+
+def test_elog_zero_records_return_no_recording(elog_recording):
+    _check_zero_records_return_no_recording(elog_recording)
+    assert elog_recording.api.record_status()["preview"] is False
+
+
+@pytest.mark.parametrize("kind", ["elog", "dlog"])
+def test_record_api_rejects_gui_backend_selection(recording, kind):
+    r = recording
+    assert r.api.record_start({**r.cfg, "backend": kind}, [], True)["code"] == "bad_config"
+    assert r.api._gate.state()[0] == "idle"
+    assert r.api._record_thread is None
+    assert not r.path.exists()
 
 
 def _capture_and_check_preview(recording, monkeypatch, hardware):
@@ -102,6 +283,7 @@ def _capture_and_check_preview(recording, monkeypatch, hardware):
     assert r.path.is_file()
     assert not Path(str(r.path) + ".part").exists()
     sidecar = json.loads(Path(str(r.path) + ".json").read_text())
+    assert sidecar["backend"] == "dlog"
     assert sidecar["complete"] is True
     assert sidecar["records"] == status["records"]
     assert sidecar["run_id"] == status["run_id"]
@@ -156,10 +338,9 @@ def test_analysis_enter_is_rejected_during_demo_recording(recording):
     assert stop(recording)["state"] == "done"
 
 
-def test_zero_records_return_no_recording_without_final_file(recording):
+def _check_zero_records_return_no_recording(recording):
     start(recording)
-    # The instrument clock never advances, so even a preview round cannot
-    # create a complete on-instrument DLOG record before the real stop call.
+    # No fake instrument time has elapsed, so neither backend has a record.
     status = stop(recording)
     assert status["state"] == "failed"
     assert status["code"] == "no_recording"
@@ -170,6 +351,10 @@ def test_zero_records_return_no_recording_without_final_file(recording):
     assert not Path(str(recording.path) + ".part").exists()
     assert not Path(str(recording.path) + ".json.part").exists()
     assert recording.api.record_stop()["code"] == "no_recording"
+
+
+def test_zero_records_return_no_recording_without_final_file(recording):
+    _check_zero_records_return_no_recording(recording)
 
 
 def test_record_start_disabled_before_dialog_or_worker(api, monkeypatch):

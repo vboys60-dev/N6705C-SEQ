@@ -11,7 +11,7 @@ from typing import Any, Callable, Literal, NotRequired, Protocol, TypedDict
 
 RECORD_ENABLED = False
 BackendKind = Literal["elog", "dlog"]
-RECORD_BACKEND: BackendKind = "dlog"
+RECORD_BACKEND: BackendKind = "elog"
 SNAPSHOT_MAX_POINTS = 2000
 SNAPSHOT_POLL_MS = 500
 SNAPSHOT_POLL_MIN_MS = 250
