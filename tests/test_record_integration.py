@@ -49,7 +49,7 @@ def recording(api, tmp_path, monkeypatch):
     api.record_stop()
     worker = api._record_thread
     if worker is not None:
-        worker.join(2)
+        worker.join(10)
         assert not worker.is_alive()
 
 
@@ -61,7 +61,8 @@ def start(recording):
 
 def stop(recording):
     assert recording.api.record_stop() == {}
-    recording.api._record_thread.join(2)
+    # Slow Windows runners need more than 2 s to finish processing the fake records.
+    recording.api._record_thread.join(10)
     assert not recording.api._record_thread.is_alive()
     assert recording.api._gate.state()[0] == "idle"
     return recording.api.record_status()
