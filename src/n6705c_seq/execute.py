@@ -201,10 +201,8 @@ def _check_coupling(group: InstrumentGroup, functions) -> None:
     for instrument, channels in _frames(group, functions):
         frame = group.instruments.index(instrument) + 1
         try:
-            try:
-                raw = instrument.session.query(command)
-            finally:
-                instrument.session.check_errors(command)
+            raw = instrument.session.query(command)
+            instrument.session.check_errors(command)
             answer = "".join(raw.split()).replace('"', '').replace("'", '').upper()
             coupled = set() if answer in ("", "0", "NONE") else set(parse_channel_list(answer)) - {0}
         except Exception as exc:  # noqa: BLE001 - every unreadable coupling state is unsafe

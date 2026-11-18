@@ -381,7 +381,7 @@ def test_all_off_failure_continues_to_next_resource(api, threads, monkeypatch, s
     assert calls[-3:] == [("detect", "second"), ("connect", ["second"]), ("outputs_off", group)]
     results = _results(api)
     assert len(results) == 1 and results[0][1] == "error"
-    assert results[0][3] == f"1: first: {stage} " + ("failed" if stage == "off" else "timed out")
+    assert results[0][3] == f"1/2 ok\n1: first: {stage} " + ("failed" if stage == "off" else "timed out")
     assert closed == ([True, True] if stage == "off" else [True])
     assert not (api._gate.state()[0] == "power")
 
@@ -395,7 +395,7 @@ def test_all_off_aggregates_failures(api, threads, monkeypatch):
     assert api.all_off(["first", "second"], False) == {}
     threads.pop().run()
     assert _results(api) == [["result", "error", i18n.tr("run_result"),
-                              "1: first: first timed out\n2: second: second timed out"]]
+                              "0/2 ok\n1: first: first timed out\n2: second: second timed out"]]
     assert not (api._gate.state()[0] == "power")
 
 

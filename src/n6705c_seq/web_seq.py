@@ -208,7 +208,8 @@ class SeqApi:
                 except Exception as exc:
                     failures.append(f"{number}: {r}: {exc}")
             if failures:
-                self._seq_result("error", "\n".join(failures))
+                ok = len(resources) - len(failures)
+                self._seq_result("error", f"{ok}/{len(resources)} ok\n" + "\n".join(failures))
             else:
                 self._seq_result("info", tr("off_done"))
         finally:

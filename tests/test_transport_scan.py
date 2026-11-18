@@ -12,7 +12,7 @@ from n6705c.core import transport
 
 
 @pytest.mark.parametrize("close_fails", [False, True])
-def test_visa_open_failure_closes_manager_before_fallback(monkeypatch, close_fails):
+def test_visa_open_failure_falls_back_without_closing_shared_manager(monkeypatch, close_fails):
     events = []
     inst = SimpleNamespace()
 
@@ -42,13 +42,13 @@ def test_visa_open_failure_closes_manager_before_fallback(monkeypatch, close_fai
     assert result._inst is inst
     assert result._backend_used == "@py"
     assert events == [
-        ("manager", ""), ("open", ""), ("close", ""),
+        ("manager", ""), ("open", ""),
         ("manager", "@py"), ("open", "@py"),
     ]
 
 
 @pytest.mark.parametrize("close_fails", [False, True])
-def test_visa_timeout_failure_closes_instrument_and_manager(monkeypatch, close_fails):
+def test_visa_timeout_failure_closes_instrument_only(monkeypatch, close_fails):
     closed = []
     failure = ValueError("injected timeout failure")
 
@@ -81,7 +81,7 @@ def test_visa_timeout_failure_closes_instrument_and_manager(monkeypatch, close_f
         transport.VisaTransport("USB1", backend="test")
 
     assert caught.value is failure
-    assert closed == ["inst", "rm"]
+    assert closed == ["inst"]
 
 
 def _success(conn, candidates):

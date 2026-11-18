@@ -198,12 +198,9 @@ class VisaTransport:
                     _register_libusb()
                 rm = pyvisa.ResourceManager(candidate)
                 inst = rm.open_resource(resource)
-            except Exception as exc:  # pragma: no cover - depends on host setup
-                if rm is not None:
-                    try:
-                        rm.close()
-                    except Exception:
-                        pass
+            except Exception as exc:
+                # Never rm.close() here: pyvisa shares one ResourceManager per VISA
+                # library, and closing it would close every sibling instrument.
                 last_error = exc
                 errors.append(f"  [{candidate or 'ivi'}] {exc}")
                 continue
@@ -233,10 +230,6 @@ class VisaTransport:
         except Exception:
             try:
                 self._inst.close()
-            except Exception:
-                pass
-            try:
-                self._rm.close()
             except Exception:
                 pass
             raise
@@ -273,10 +266,9 @@ class VisaTransport:
             raise TransportError(f"binary query failed for {command!r}: {exc}") from exc
 
     def close(self) -> None:
-        try:
-            self._inst.close()
-        finally:
-            self._rm.close()
+        # Close only our own session: the pyvisa ResourceManager is shared per VISA
+        # library, so rm.close() would also close every other open instrument.
+        self._inst.close()
 
 
 def native_visa_available() -> bool:
