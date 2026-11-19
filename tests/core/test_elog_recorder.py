@@ -118,7 +118,7 @@ def test_sink_failure_keeps_cause_and_aborts_on_calling_thread_even_if_abort_fai
     assert len([c for c in commands(io) if c.startswith("FETC:ELOG?")]) == 1
     assert commands(io)[-1] == "SYST:ERR?"
     assert "ABOR timed out" in " ".join(caught.value.__notes__)
-    assert session.state is elog.ElogState.STOPPED
+    assert session.state is not elog.ElogState.STOPPED  # unconfirmed ABOR stays retryable
 
 
 def test_three_consecutive_fetch_failures_are_fatal_after_abort(rig, monkeypatch):
@@ -665,6 +665,10 @@ def test_arm_tracks_attempt_before_failed_error_check_and_stop_resets_it(rig, re
     assert isinstance(caught.value.__cause__, ErrorQueueError if isinstance(reply, str) else TimeoutError)
     with pytest.raises(elog._ElogErrorQueueError):
         session.stop()
+    assert session.state is elog.ElogState.CONFIGURED  # failed ABOR keeps the retry flag
+    assert session.init_attempted is True
+    io.on_query = None
+    session.stop()
     assert session.state is elog.ElogState.STOPPED
     assert session.init_attempted is False
 
@@ -699,3 +703,34 @@ def test_background_api_reports_fatal_sink_after_abort(rig):
     assert recorder.stop(2)
     assert isinstance(reported[0], elog.ElogSinkError)
     assert reported[0].__cause__ is original
+
+
+def test_failed_abor_keeps_session_retryable(rig):
+    session, io, _ = rig
+    io.on_write = lambda command: (_ for _ in ()).throw(TimeoutError("ABOR timed out")) if command.startswith("ABOR:ELOG") else None
+    with pytest.raises(TimeoutError):
+        session.stop()
+    assert session.state is elog.ElogState.RUNNING and session.init_attempted is True
+    io.on_write = None
+    session.stop()
+    assert session.state is elog.ElogState.STOPPED and session.init_attempted is False
+    assert sum(c.startswith("ABOR:ELOG") for c in commands(io)) == 2
+
+
+def test_pending_cap_stops_unaligned_channels():
+    inst = N6705C.demo(slots=("N6781A", "N6781A"))
+    try:
+        session = elog.ElogSession(inst, elog.ElogConfig([1, 2], period=0.01))
+        session.configure()
+        session.start()
+        session._pending[1] = [np.zeros((elog.MAX_PENDING_RECORDS + 10, 2), dtype="<f4")]
+        with pytest.raises(elog.ElogAlignmentError):
+            session.fetch()
+        # the recorder treats it as fatal at once, not as a transient fetch failure
+        session._pending[2] = []
+        rec = record(session, lambda chunk: None)
+        with pytest.raises(elog.ElogFetchError) as caught:
+            rec._fetch_one(after_abort=False)
+        assert isinstance(caught.value.__cause__, elog.ElogAlignmentError)
+    finally:
+        inst.close()

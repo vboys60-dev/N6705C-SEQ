@@ -50,6 +50,7 @@ __all__ = [
     "ElogState",
     "ElogSession",
     "ElogRecorder",
+    "ElogAlignmentError",
     "ElogSinkError",
     "ElogFetchError",
     "MAX_FETCH_FAILURES",
@@ -69,6 +70,14 @@ MAX_FETCH_FAILURES = 3
 
 class ElogSinkError(RuntimeError):
     """A sink or persistence callback failed; the original error is the cause."""
+
+
+class ElogAlignmentError(RuntimeError):
+    """One channel stopped delivering records while others kept coming (pending cap hit)."""
+
+
+#: Per-channel records held back waiting for the slowest channel before giving up.
+MAX_PENDING_RECORDS = 200_000
 
 
 class ElogFetchError(RuntimeError):
@@ -423,15 +432,14 @@ class ElogSession:
         self.fire()
 
     def stop(self) -> None:
-        if self.state in (ElogState.IDLE, ElogState.STOPPED):
+        if self.state in (ElogState.IDLE, ElogState.STOPPED) and not self.init_attempted:
             return
         if self.state is ElogState.RUNNING:
             self.stats.elapsed = self.elapsed
-        try:
-            self._write_checked(f"ABOR:ELOG {self.chanlist}")
-        finally:
-            self.state = ElogState.STOPPED
-            self.init_attempted = False
+        # Only a confirmed ABOR clears the flags; a failure stays retryable.
+        self._write_checked(f"ABOR:ELOG {self.chanlist}")
+        self.state = ElogState.STOPPED
+        self.init_attempted = False
 
     # -- Fetching -----------------------------------------------------------
 
@@ -490,6 +498,11 @@ class ElogSession:
         for channel, records in zip(self.config.channels, per_channel):
             if records.shape[0]:
                 self._pending[channel].append(records)
+        held = {ch: sum(a.shape[0] for a in parts) for ch, parts in self._pending.items()}
+        if held and max(held.values()) - min(held.values()) > MAX_PENDING_RECORDS:
+            raise ElogAlignmentError(
+                f"channels cannot be aligned: pending records per channel {held} differ by more than "
+                f"{MAX_PENDING_RECORDS}")
 
         chunk = self._take_aligned()
         if chunk.is_empty:
@@ -757,7 +770,7 @@ class ElogRecorder:
                 # These describe unsupported functionality / invalid setup,
                 # rather than a transient transport failure.
                 raise
-            if isinstance(exc, _ElogErrorQueueError) or self._fetch_failures >= MAX_FETCH_FAILURES:
+            if isinstance(exc, (_ElogErrorQueueError, ElogAlignmentError)) or self._fetch_failures >= MAX_FETCH_FAILURES:
                 raise ElogFetchError("ELOG fetching failed") from exc
             self._callback(self.on_error, exc)
             self._event("fetch_error", 0)
