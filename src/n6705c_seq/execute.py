@@ -240,6 +240,28 @@ def _check_idle(group: InstrumentGroup, functions) -> None:
                 )
 
 
+def _check_sense_bandwidth(group: InstrumentGroup, functions) -> None:
+    """HIGH voltage bandwidth needs 4-wire sense: refuse 2-wire on such a channel.
+
+    An unreadable bandwidth is not fatal (some modules have none); the instrument
+    itself still answers -221 when the sense write conflicts.
+    """
+    for fn in functions:
+        if fn.sense != "2wire":
+            continue
+        instrument, local = group.instrument_for(fn.channel)
+        try:
+            bandwidth = instrument.session.query(f"VOLT:BWID? {format_channel_list(local)}")
+            instrument.session.check_errors("VOLT:BWID?")
+        except Exception:  # noqa: BLE001 - see docstring
+            continue
+        if bandwidth.strip().strip('"').upper().startswith("HIGH"):
+            raise PlanRejected(
+                f"CH{fn.channel}: 2-wire sense is not allowed with {bandwidth.strip()} voltage bandwidth; "
+                "choose 4-wire or set the bandwidth to LOW"
+            )
+
+
 def _set_arb_source_imm(instrument: N6705C, channels: list[int]) -> None:
     """TRIG:ARB:SOUR is per-channel on F.1.1.0 but frame-wide on E.02.09 (-108 with a channel list)."""
     try:
@@ -288,6 +310,8 @@ def _apply_levels(group: InstrumentGroup, functions) -> None:
     for fn in functions:
         instrument, local = group.instrument_for(fn.channel)
         chan = format_channel_list(local)
+        if fn.sense:
+            instrument.session.write_checked(f"VOLT:SENS:SOUR {'EXT' if fn.sense == '4wire' else 'INT'},{chan}")
         if fn.current:  # the table rejects a 0 A limit, so 0.0 here only ever means "none"
             # N678xA SMUs run voltage priority by default and reject CURR (+315); their limit is CURR:LIM.
             smu = instrument.capabilities[local].model.upper() in SMU_MODELS
@@ -488,6 +512,7 @@ def run_functions(
             )
     _check_coupling(group, functions)
     _check_idle(group, functions)
+    _check_sense_bandwidth(group, functions)
     try:
         for warning in slew_warnings(group, functions):
             if on_warning is not None:

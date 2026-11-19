@@ -9,7 +9,7 @@
   let plan = {channels: Array.from({length: 8}, (_, i) => emptyChannel(i + 1, i === 0)),
     repeat: 1, hold_last: false, dwell: null};
   function emptyChannel(number, enabled = false) {
-    return {channel: number, enabled, label: "", delay: 0, current_limit: null, segments: []};
+    return {channel: number, enabled, label: "", delay: 0, current_limit: null, segments: [], sense: ""};
   }
   function element(tag, parent, key, cls) {
     const node = document.createElement(tag);
@@ -35,6 +35,14 @@
     fields[name] = node;
     return node;
   }
+  function selectField(parent, key, name, options) {
+    const label = element("label", parent, null, "list-field");
+    const node = element("select", label, null, "field");
+    for (const [value, text] of options) { const o = element("option", node, text); o.value = value; }
+    element("span", label, key);
+    fields[name] = node;
+    return node;
+  }
   function current(create = false) {
     let ch = plan.channels.find(ch => ch.channel === channel);
     if (!ch && create) { ch = emptyChannel(channel); plan.channels.push(ch); }
@@ -42,7 +50,7 @@
   }
   function settings() {
     return {channel, enabled: fields.enabled.checked, label: fields.label.value,
-      delay: fields.delay.value, limit: fields.limit.value, repeat: fields.repeat.value,
+      delay: fields.delay.value, limit: fields.limit.value, sense: fields.sense.value, repeat: fields.repeat.value,
       hold_last: fields.hold_last.checked, dwell_mode: fields.manual.checked ? "manual" : "auto",
       dwell: fields.dwell.value};
   }
@@ -113,6 +121,7 @@
     fields.label.value = ch.label;
     fields.delay.value = String(ch.delay);
     fields.limit.value = ch.current_limit === null ? "" : String(ch.current_limit);
+    fields.sense.value = ch.sense || "";
     selectSegment(ch.segments.length ? 0 : null);
     if (!ch.segments.length) preview();
   }
@@ -271,6 +280,7 @@
   input(channelBar, "name", "label", "");
   input(channelBar, "channel_delay_s", "delay", "0");
   input(channelBar, "current_limit_optional", "limit", "");
+  selectField(channelBar, "sense_mode", "sense", [["", "sense_keep"], ["2wire", "sense_2wire"], ["4wire", "sense_4wire"]]);
   const stripBar = element("div", root, null, "row list-strip-bar");
   button(stripBar, null, () => navigate("first"), "\u25c0\u25c0");
   button(stripBar, null, () => navigate(-1), "\u25c0");

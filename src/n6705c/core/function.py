@@ -29,7 +29,9 @@ from .channel_delay import ChannelDelay, DelayMechanism, resolve_delay
 from .delay import DEFAULT_MAX_DELAY, OutputDelay, shutdown_seconds
 from .scpi import format_channel_list
 
-__all__ = ["ChannelFunction", "ChannelTrace", "FunctionPlan"]
+SENSE_MODES = ("", "2wire", "4wire")
+
+__all__ = ["SENSE_MODES", "ChannelFunction", "ChannelTrace", "FunctionPlan"]
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +68,8 @@ class ChannelFunction:
     #: Wait this long after the starting event before driving. Which event
     #: that is depends on ``arb_enabled``; see :mod:`.channel_delay`.
     delay: float = 0.0
+    #: Sense wiring: "" = leave as is, "2wire" = internal, "4wire" = external (remote sense).
+    sense: str = ""
     #: The waveform to play. ``None`` while one has not been chosen yet.
     spec: ArbSpec | ArbSequence | None = None
 
