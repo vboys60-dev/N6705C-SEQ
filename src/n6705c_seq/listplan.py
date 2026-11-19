@@ -7,6 +7,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+SENSE_MODES = ("", "2wire", "4wire")
 SHAPES = ("step", "ramp", "trapezoid", "sine", "triangle", "staircase", "exponential")
 
 FIELDS: dict[str, tuple[str, ...]] = {
@@ -44,6 +45,8 @@ class ChannelList:
     delay: float = 0.0
     current_limit: float | None = None
     segments: list[Segment] = field(default_factory=list)
+    #: "" = leave the instrument as is, "2wire" = internal sense, "4wire" = remote (external) sense.
+    sense: str = ""
 
 
 @dataclass
@@ -127,6 +130,9 @@ def load_json(path: str | Path) -> ListPlan:
             _number(current_limit, "current_limit", location)
             if current_limit <= 0:
                 raise ValueError(f"{location}: current_limit must be > 0 (leave blank for no limit)")
+        sense = raw_ch.get("sense", "")
+        if sense not in SENSE_MODES:
+            raise ValueError(f"{location}: sense must be one of {SENSE_MODES}")
         raw_segments = raw_ch.get("segments", [])
         _list(raw_segments, "segments", location)
         segments: list[Segment] = []
@@ -157,7 +163,7 @@ def load_json(path: str | Path) -> ListPlan:
             seg_repeat = raw_seg.get("repeat", 1)
             _integer(seg_repeat, "repeat", seg_location)
             segments.append(Segment(shape, params, seg_repeat))
-        channels.append(ChannelList(channel, enabled, label, delay, current_limit, segments))
+        channels.append(ChannelList(channel, enabled, label, delay, current_limit, segments, sense))
     return ListPlan(channels, repeat, hold_last, dwell)
 
 

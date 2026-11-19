@@ -66,6 +66,8 @@ class ChannelFunction:
     #: Wait this long after the starting event before driving. Which event
     #: that is depends on ``arb_enabled``; see :mod:`.channel_delay`.
     delay: float = 0.0
+    #: Sense wiring: "" = leave as is, "2wire" = internal, "4wire" = external (remote sense).
+    sense: str = ""
     #: The waveform to play. ``None`` while one has not been chosen yet.
     spec: ArbSpec | ArbSequence | None = None
 

@@ -231,7 +231,7 @@ def to_functions(plan: ListPlan, c: Compiled) -> list[ChannelFunction]:
     return [
         ChannelFunction(
             channel=ch.channel, voltage=c.levels[ch.channel][0],
-            current=ch.current_limit or 0.0, output_on=True, arb_enabled=True, delay=0.0,
+            current=ch.current_limit or 0.0, output_on=True, arb_enabled=True, delay=0.0, sense=ch.sense,
             spec=ArbSpec(
                 channel=ch.channel,
                 waveform=ConstantDwellArb(levels=c.levels[ch.channel], dwell=c.dwell),

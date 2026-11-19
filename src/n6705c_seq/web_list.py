@@ -25,7 +25,7 @@ def _plan(raw):
         raise TypeError("dwell must be a number or null")
     for ch in raw.get("channels", []):
         _typed(ch, dict, "channel")
-        for key, kind in (("channel", int), ("enabled", bool), ("label", str), ("segments", list)):
+        for key, kind in (("channel", int), ("enabled", bool), ("label", str), ("segments", list), ("sense", str)):
             if key in ch:
                 _typed(ch[key], kind, key)
         for key in ("delay", "current_limit"):
@@ -48,7 +48,7 @@ def _settings(plan):
     ch = plan.channels[0] if plan.channels else ChannelList(1, enabled=False)
     fmt = list_form.format_number
     return {"channel": ch.channel, "enabled": ch.enabled, "label": ch.label,
-            "delay": fmt(ch.delay), "limit": "" if ch.current_limit is None else fmt(ch.current_limit),
+            "sense": ch.sense, "delay": fmt(ch.delay), "limit": "" if ch.current_limit is None else fmt(ch.current_limit),
             "repeat": str(plan.repeat), "hold_last": plan.hold_last,
             "dwell_mode": "auto" if plan.dwell is None else "manual",
             "dwell": "0.00001024" if plan.dwell is None else fmt(plan.dwell)}

@@ -838,3 +838,18 @@ def test_stop_switches_off_even_with_hold_dc():
     group2 = demo(1)
     run_plan(group2, [row(1)], hold_dc=True)
     assert not any(c.startswith("OUTP OFF") for c in sent(group2.instruments[0]))
+
+
+@pytest.mark.parametrize("sense,want", [("2wire", "INT"), ("4wire", "EXT"), ("", None)])
+def test_sense_mode_written_before_output_on(sense, want):
+    from n6705c.core.function import ChannelFunction
+
+    group = demo(1)
+    fn = ChannelFunction(channel=1, voltage=1.0, current=0.5, output_on=True, sense=sense)
+    from n6705c_seq import execute
+    execute._apply_levels(group, [fn])
+    cmds = sent(group.instruments[0])
+    sens = [c for c in cmds if c.startswith("VOLT:SENS:SOUR")]
+    assert sens == ([f"VOLT:SENS:SOUR {want},(@1)"] if want else [])
+    if want:
+        assert cmds.index(sens[0]) < cmds.index("OUTP ON,(@1)")

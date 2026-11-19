@@ -288,6 +288,8 @@ def _apply_levels(group: InstrumentGroup, functions) -> None:
     for fn in functions:
         instrument, local = group.instrument_for(fn.channel)
         chan = format_channel_list(local)
+        if fn.sense:
+            instrument.session.write_checked(f"VOLT:SENS:SOUR {'EXT' if fn.sense == '4wire' else 'INT'},{chan}")
         if fn.current:  # the table rejects a 0 A limit, so 0.0 here only ever means "none"
             # N678xA SMUs run voltage priority by default and reject CURR (+315); their limit is CURR:LIM.
             smu = instrument.capabilities[local].model.upper() in SMU_MODELS

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import synth
 from .i18n import tr
-from .listplan import FIELDS, SHAPES, TIMES, ChannelList, ListPlan, Segment, load_json
+from .listplan import FIELDS, SENSE_MODES, SHAPES, TIMES, ChannelList, ListPlan, Segment, load_json
 
 SHAPE_NAMES = ("Step", "Ramp", "Trapezoid", "Sine", "Triangle", "Staircase", "Exponential")
 
@@ -61,12 +61,16 @@ def read_segment(shape: str, params: dict[str, str], repeat: str) -> Segment:
 
 
 def parse_settings(raw: dict) -> dict:
-    types = {"channel": int, "enabled": bool, "label": str, "delay": str, "limit": str,
+    types = {"channel": int, "enabled": bool, "label": str, "delay": str, "limit": str, "sense": str,
              "repeat": str, "hold_last": bool, "dwell_mode": str, "dwell": str}
+    if isinstance(raw, dict):
+        raw = {"sense": "", **raw}  # older callers omit it: leave the instrument as is
     if not isinstance(raw, dict) or raw.keys() != types.keys() or any(type(raw[key]) is not kind for key, kind in types.items()):
         raise TypeError("settings must contain the specified fields and types")
     if raw["dwell_mode"] not in ("auto", "manual"):
         raise TypeError("dwell_mode must be auto or manual")
+    if raw["sense"] not in SENSE_MODES:
+        raise TypeError("sense must be '', 2wire or 4wire")
     settings = dict(raw)
     settings["delay"] = number(raw["delay"], tr("channel_delay"), minimum=0)
     settings["limit"] = number(raw["limit"], tr("current_limit"), positive=True) if raw["limit"].strip() else None
@@ -85,6 +89,7 @@ def apply_settings(plan: ListPlan, settings: dict) -> ListPlan:
     if new:
         ch = ChannelList(channel, enabled=False)
     ch.enabled, ch.label, ch.delay, ch.current_limit = settings["enabled"], settings["label"], settings["delay"], settings["limit"]
+    ch.sense = settings["sense"]
     if new and ch != ChannelList(channel, enabled=False):
         result.channels.append(ch)
     result.repeat, result.hold_last, result.dwell = settings["repeat"], settings["hold_last"], settings["dwell"]

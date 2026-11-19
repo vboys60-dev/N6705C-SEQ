@@ -273,3 +273,22 @@ def test_missing_and_extra_fields_report_english_details(tmp_path):
     assert str(error.value) == (
         "CH2 segment 3: params fields do not match; missing: ramp_time; extra: rise_time"
     )
+
+
+def test_sense_mode_roundtrip_and_validation(tmp_path):
+    import json
+    import pytest
+    from n6705c_seq.listplan import ChannelList, ListPlan, Segment, load_json, write_json
+
+    path = tmp_path / "p.json"
+    plan = ListPlan([ChannelList(2, True, "x", 0.0, None, [Segment("step", {"start": 0, "end": 1, "delay": 0, "end_time": .1})], "4wire")])
+    write_json(plan, path)
+    assert load_json(path).channels[0].sense == "4wire"
+    raw = json.loads(path.read_text())
+    raw["channels"][0]["sense"] = "3wire"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="sense"):
+        load_json(path)
+    del raw["channels"][0]["sense"]
+    path.write_text(json.dumps(raw))
+    assert load_json(path).channels[0].sense == ""
