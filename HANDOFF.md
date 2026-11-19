@@ -475,6 +475,8 @@ List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，�
 - GUI 執行中沒有停止手段（`web/app.js:86` `#btn-off` 停用）。
 - 回歸測試缺口大多已補（耦合、全部關閉、重複機台、錯誤佇列亂碼、`ABOR:ACQ`、腳本取消）。
 
+**ELOG（fix/elog-stop-pending）**：`ElogSession.stop()` 只在 ABOR 確認成功後才設 STOPPED／清 `init_attempted`，失敗保持可重試（STOPPED 但 `init_attempted` 仍會再送 ABOR）；新增 `ElogAlignmentError`＋`MAX_PENDING_RECORDS=200000`（通道間待對齊筆數差超限即致命停止，recorder 視為 fatal）。以模擬器驗證，未上機。
+
 ### 14.4 實機確認（2026-11-19，N6705C E.02.09.3271；CH1=N6791A、CH2=N6781A，僅兩通道）
 - 已確認 `OUTP:COUP:CHAN?` 回覆為**不帶括號的逗號清單**：無耦合 `''`、耦合 CH1+CH2 `'1,2'`、僅 CH2 `'2'`。設定語法也不帶括號：`OUTP:COUP:CHAN 1,2`；`(@1,2)` 會回 `-108`；取消耦合送不帶參數的 `OUTP:COUP:CHAN`。`_check_coupling` 解析兩種格式皆可，實機耦合 1,2 + 計畫 CH2 → 正確拒絕。
 - 已確認 `INIT:CONT:TRAN? (@2)` 回 `0`／`1`；`INIT:CONT:TRAN ON,(@2)` 後執行 → `_check_idle` 拒絕，輸出保持 OFF。
