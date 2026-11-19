@@ -41,6 +41,7 @@ STRINGS = {
     "off_done": ("所有輸出已關閉（已讀回確認）。", "All outputs are off (confirmed by readback)."),
     "sequence_hold_done": ("時序完成，輸出維持在高點（未關閉）。", "Sequence complete; outputs remain on at the high level."),
     "blank_limit_warning": ("電流限制留空（{names}）：不會寫入限流，儀器沿用目前設定，不是不限流。", "Current limit blank ({names}): no limit is written; the instrument keeps its present setting (not unlimited)."),
+    "column_sense": ("感測線", "Sense"),
     "sense_mode": ("感測線", "Sense"),
     "sense_keep": ("維持儀器設定", "Keep instrument setting"),
     "sense_2wire": ("2 線（內部感測）", "2-wire (internal)"),

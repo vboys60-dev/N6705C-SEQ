@@ -13,7 +13,7 @@ from itertools import combinations
 from pathlib import Path
 
 from n6705c.core.arb import ArbSpec, RampArb, TrapezoidArb
-from n6705c.core.function import ChannelFunction
+from n6705c.core.function import SENSE_MODES, ChannelFunction
 from n6705c.core.group import CHANNELS_PER_FRAME, GlobalChannel
 
 __all__ = [
@@ -45,6 +45,7 @@ class SeqRow:
     hold: float
     fall: float
     current_limit: float | None = None
+    sense: str = ""  # "" keep, "2wire", "4wire"
 
     @property
     def label(self) -> str:
@@ -91,6 +92,9 @@ def load_csv(path: str | Path) -> list[SeqRow]:
             limit = (raw.get("current_limit_a") or "").strip()
             if limit and _number(raw, "current_limit_a", line) == 0:
                 raise ValueError(f"line {line}, column current_limit_a: 0 A is not a limit; leave it blank for none")
+            sense = (raw.get("sense") or "").strip().lower()
+            if sense not in SENSE_MODES:
+                raise ValueError(f"line {line}, column sense: {sense!r} is not blank, 2wire or 4wire")
             rows.append(
                 SeqRow(
                     channel=number,
@@ -103,6 +107,7 @@ def load_csv(path: str | Path) -> list[SeqRow]:
                     hold=_number(raw, "hold_ms", line) / 1000,
                     fall=_number(raw, "fall_ms", line) / 1000,
                     current_limit=_number(raw, "current_limit_a", line) if limit else None,
+                    sense=sense,
                 )
             )
     if not rows:
@@ -121,6 +126,7 @@ def to_functions(rows: list[SeqRow], hold_dc: bool = False) -> list[ChannelFunct
             channel=r.channel,
             voltage=r.low_v,
             current=r.current_limit or 0.0,
+            sense=r.sense,
             output_on=True,
             arb_enabled=True,
             delay=0.0,
@@ -249,7 +255,7 @@ def write_csv(rows: list[SeqRow], path: str | Path) -> None:
 
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow([*REQUIRED[:1], "name", *REQUIRED[1:], "current_limit_a"])
+        writer.writerow([*REQUIRED[:1], "name", *REQUIRED[1:], "current_limit_a", "sense"])
         for r in rows:
             writer.writerow(
                 [
@@ -262,5 +268,6 @@ def write_csv(rows: list[SeqRow], path: str | Path) -> None:
                     ms(r.hold),
                     ms(r.fall),
                     "" if r.current_limit is None else f"{r.current_limit:g}",
+                    r.sense,
                 ]
             )

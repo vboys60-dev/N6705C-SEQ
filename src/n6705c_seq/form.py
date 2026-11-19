@@ -8,6 +8,8 @@ from pathlib import Path
 
 from n6705c.core.group import TRIGGER_SKEW_SECONDS
 
+from n6705c.core.function import SENSE_MODES
+
 from .i18n import tr
 from .plan import SeqRow, order_warnings
 
@@ -24,11 +26,11 @@ DEFAULTS = [
 COLUMNS = [
     ("name", "column_name"), ("delay", "column_delay"), ("low", "column_low"),
     ("high", "column_high"), ("rise", "column_rise"), ("hold", "column_hold"),
-    ("fall", "column_fall"), ("limit", "column_limit"),
+    ("fall", "column_fall"), ("limit", "column_limit"), ("sense", "column_sense"),
 ]  # fmt: skip
 TITLES = dict(COLUMNS)
 NUMERIC = {"delay": "ms", "low": "V", "high": "V", "rise": "ms", "hold": "ms", "fall": "ms"}
-RAW_KEYS = ("enabled", "name", "delay", "low", "high", "rise", "hold", "fall", "limit")
+RAW_KEYS = ("enabled", "name", "delay", "low", "high", "rise", "hold", "fall", "limit", "sense")
 
 
 def waveform(row: SeqRow, t_end: float, hold_dc: bool = False) -> list[tuple[float, float]]:
@@ -72,7 +74,7 @@ def default_raw(count: int) -> list[dict]:
     for i in range(count):
         d = DEFAULTS[i] if i < len(DEFAULTS) else (f"CH{i + 1}", 0, 0, 1, 1, 10, 1)
         rows.append({"enabled": i < len(DEFAULTS), "name": d[0],
-                     **{key: f"{value:g}" for key, value in zip(NUMERIC, d[1:])}, "limit": ""})
+                     **{key: f"{value:g}" for key, value in zip(NUMERIC, d[1:])}, "limit": "", "sense": ""})
     return rows
 
 
@@ -108,8 +110,10 @@ def parse_rows(raw: list[dict]) -> list[SeqRow]:
             if on:
                 raise ValueError(tr("invalid_limit", label=label)) from None
             current = None
+        if f["sense"] not in SENSE_MODES:
+            raise TypeError("sense must be '', 2wire or 4wire")
         rows.append(
-            SeqRow(i, on, label, vals["delay"], vals["low"], vals["high"], vals["rise"], vals["hold"], vals["fall"], current)
+            SeqRow(i, on, label, vals["delay"], vals["low"], vals["high"], vals["rise"], vals["hold"], vals["fall"], current, f["sense"])
         )
     return rows
 
@@ -125,6 +129,7 @@ def rows_to_raw(rows: list[SeqRow], current: list[dict]) -> list[dict]:
                            ("rise", r.rise * 1000), ("hold", r.hold * 1000), ("fall", r.fall * 1000)):  # fmt: skip
             f[key] = f"{value:.10g}"
         f["limit"] = "" if r.current_limit is None else f"{r.current_limit:g}"
+        f["sense"] = r.sense
     for f in raw[len(rows):]:
         f["enabled"] = False
     return raw

@@ -146,6 +146,14 @@
         color.value = meta.palette[i % meta.palette.length];
         color.addEventListener("input", draw);
         for (const [key] of meta.columns) {
+          if (key === "sense") {
+            const sel = fields[key] = el("select", el("td", row), null, "field");
+            for (const [value, text] of [["", "sense_keep"], ["2wire", "sense_2wire"], ["4wire", "sense_4wire"]]) {
+              const o = el("option", sel, text); o.value = value;
+            }
+            sel.value = raw[key];
+            continue;
+          }
           const field = fields[key] = el("input", el("td", row), null, "field");
           field.type = "text";
           field.value = raw[key];

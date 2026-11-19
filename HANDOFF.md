@@ -481,6 +481,7 @@ List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，�
 - 已確認：CH2 正常執行＋擷取、電子負載 CH1 被擋（無寫入）、停止鈕後端（1.5 s 停止、OUTP OFF、錯誤佇列乾淨）。
 - 注意：查不存在的通道（CH3／CH4）會等到逾時並留下 `-222`；前檢只查計畫內通道，不受影響。
 - List 感測線（feat/list-sense）：每通道 `sense` = `""`（維持）／`2wire`（`VOLT:SENS:SOUR INT`）／`4wire`（`EXT`），在 `_apply_levels` 於 CURR／VOLT／OUTP ON 前寫入。實機 CH2 驗證：INT／EXT 切換生效、錯誤佇列乾淨；本機 CH2 原本就是 EXT（4 線）。
+- SEQ 也有感測線欄（CSV 欄位 `sense`、表格下拉；E36441A 列填了會被擋）。HIGH 電壓頻寬必須 4 線：`_check_sense_bandwidth` 在 2wire 且 `VOLT:BWID?` 為 HIGH* 時拒絕（實機 CH2 驗證：HIGH1＋2wire 被拒、4wire 正常跑、測完還原 LOW／EXT）。
 - 尚未驗：GUI 停止鈕實際點擊、E36441A 停止、ABOR 後 `STAT:OPER:COND?` 回 idle 的細節、耦合通道被一起開啟的真實行為（僅模擬器）。
 
 ### 14.5 操作備忘

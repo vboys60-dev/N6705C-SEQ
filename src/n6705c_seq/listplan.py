@@ -7,7 +7,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-SENSE_MODES = ("", "2wire", "4wire")
+from n6705c.core.function import SENSE_MODES  # noqa: E402
 SHAPES = ("step", "ramp", "trapezoid", "sine", "triangle", "staircase", "exponential")
 
 FIELDS: dict[str, tuple[str, ...]] = {

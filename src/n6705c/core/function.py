@@ -29,7 +29,9 @@ from .channel_delay import ChannelDelay, DelayMechanism, resolve_delay
 from .delay import DEFAULT_MAX_DELAY, OutputDelay, shutdown_seconds
 from .scpi import format_channel_list
 
-__all__ = ["ChannelFunction", "ChannelTrace", "FunctionPlan"]
+SENSE_MODES = ("", "2wire", "4wire")
+
+__all__ = ["SENSE_MODES", "ChannelFunction", "ChannelTrace", "FunctionPlan"]
 
 log = logging.getLogger(__name__)
 

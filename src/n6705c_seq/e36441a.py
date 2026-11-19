@@ -104,6 +104,8 @@ def check(row: SeqRow, hold_dc: bool = False) -> tuple[list[str], list[str]]:
     """Return errors and timing warnings for the edges and dwells in use."""
     errors: list[str] = []
     warnings: list[str] = []
+    if row.sense:
+        errors.append("sense mode is not supported on E36441A; leave it blank")
     for name in ("delay", "rise", "hold", "fall"):
         if getattr(row, name) < 0:
             errors.append(f"{name} must be nonnegative")

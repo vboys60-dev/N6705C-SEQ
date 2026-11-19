@@ -853,3 +853,32 @@ def test_sense_mode_written_before_output_on(sense, want):
     assert sens == ([f"VOLT:SENS:SOUR {want},(@1)"] if want else [])
     if want:
         assert cmds.index(sens[0]) < cmds.index("OUTP ON,(@1)")
+
+
+def test_high_bandwidth_rejects_2wire_but_allows_4wire():
+    from dataclasses import replace
+    from n6705c_seq import execute
+    from n6705c_seq.plan import to_functions
+
+    group = InstrumentGroup.demo(frames=1, slots=("N6791A", "N6781A"))
+    inst = group.instruments[0]
+    inst.session.write("VOLT:SENS:SOUR EXT,(@2)")
+    inst.session.write("VOLT:BWID HIGH1,(@2)")
+    before = len(sent(inst))
+    with pytest.raises(execute.PlanRejected, match="4-wire"):
+        run_plan(group, [replace(row(2), sense="2wire")])
+    assert _cmds(inst, before) == []
+    run_plan(group, [replace(row(2), sense="4wire")])
+    assert any(c == "VOLT:SENS:SOUR EXT,(@2)" for c in sent(inst))
+
+
+def test_seq_csv_sense_roundtrip_and_validation(tmp_path):
+    from dataclasses import replace
+    from n6705c_seq.plan import load_csv, write_csv
+
+    path = tmp_path / "t.csv"
+    write_csv([replace(row(1), sense="4wire"), row(2)], path)
+    assert [r.sense for r in load_csv(path)] == ["4wire", ""]
+    path.write_text(path.read_text().replace("4wire", "5wire"))
+    with pytest.raises(ValueError, match="sense"):
+        load_csv(path)

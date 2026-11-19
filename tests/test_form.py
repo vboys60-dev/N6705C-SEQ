@@ -24,9 +24,9 @@ def test_defaults_and_parse_units():
     raw = form.default_raw(9)
     assert all(set(row) == set(form.RAW_KEYS) for row in raw)
     assert raw[0] == dict(enabled=True, name="CH1", delay="0", low="0", high="12",
-                          rise="3", hold="60", fall="3", limit="")
+                          rise="3", hold="60", fall="3", limit="", sense="")
     assert raw[8] == dict(enabled=False, name="CH9", delay="0", low="0", high="1",
-                          rise="1", hold="10", fall="1", limit="")
+                          rise="1", hold="10", fall="1", limit="", sense="")
     raw[0].update(name="", delay="12.5", low="0.25", limit=" 0.125 ")
     before = copy.deepcopy(raw)
     rows = form.parse_rows(raw)
@@ -105,7 +105,7 @@ def test_rows_to_raw_precision_capacity_and_copy():
     raw = form.rows_to_raw([row, replace(row, current_limit=None)], current)
     assert raw[0] == dict(enabled=True, name="rail", delay="123.456789", low="0.123456789",
                           high="12.3456789", rise="0.123456789", hold="1234.56789",
-                          fall="12.3456789", limit="0.123457")
+                          fall="12.3456789", limit="0.123457", sense="")
     assert raw[1]["limit"] == ""
     assert raw[2] == {**current[2], "enabled": False}
     assert current == before
