@@ -40,6 +40,7 @@ class _Core:
         self._config_path = form.CONFIG if config_path is None else Path(config_path)
         self._config = form.load_config(self._config_path)
         self._measured = {"seq": {}, "list": {}}
+        self._stop = threading.Event()
         self._selftest = False
         self._selftest_done = threading.Event()
         self._selftest_ok = False

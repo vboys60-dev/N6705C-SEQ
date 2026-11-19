@@ -206,6 +206,7 @@ def test_snapshot_frozen_before_confirmation(api, threads, monkeypatch):
     assert calls[0][0][0].high_v == 12
     assert callable(calls[0][1].pop("on_cleanup"))
     assert callable(calls[0][1].pop("on_warning"))
+    assert calls[0][1].pop("stop") is api._stop
     assert calls[0][1] == {"hold_dc": True, "capture": {}}
     assert closed == [True] and not (api._gate.state()[0] == "power")
     assert _legacy_events(api)[-1] == ["busy", False]
@@ -244,7 +245,7 @@ def test_connection_failure_and_startup_failure_release(api, threads, monkeypatc
 def test_capture_overlay_and_capture_error(api, threads, monkeypatch):
     _group(api, monkeypatch)
 
-    def run(group, rows, *, capture, hold_dc, on_cleanup, on_warning):
+    def run(group, rows, *, capture, hold_dc, on_cleanup, on_warning, stop):
         assert callable(on_cleanup)
         assert callable(on_warning)
         capture.update({1: (0.001, [0, 1, 2]), "error": "partial"})
@@ -276,7 +277,7 @@ def test_seq_worker_emits_slew_warning_before_success(api, threads, monkeypatch)
 def test_e36441a_uses_own_runner_and_refuses_capture(api, threads, monkeypatch):
     calls = []
     monkeypatch.setattr(web_seq, "detect_model", lambda resource: "E36441A")
-    monkeypatch.setattr(web_seq, "run_resources", lambda resources, rows, hold_dc, on_cleanup: calls.append((resources, hold_dc)))
+    monkeypatch.setattr(web_seq, "run_resources", lambda resources, rows, hold_dc, on_cleanup, stop: calls.append((resources, hold_dc)))
     monkeypatch.setattr(web_seq, "connect_group", lambda *args: pytest.fail("N6705C path used"))
     for capture in (False, True):
         api.seq_run(_raw(), ["x"], False, True, capture)
@@ -524,7 +525,7 @@ def test_connection_errors_and_demo(api, threads, monkeypatch):
 
 def test_public_surface():
     assert {key for key in dir(SeqApi) if not key.startswith("_")} == {
-        "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "test_connection", "all_off", "scan_instruments",
+        "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "seq_stop", "test_connection", "all_off", "scan_instruments",
     }
 
 
@@ -881,3 +882,10 @@ def test_scan_busy_denied(api, threads, state):
 ])
 def test_scan_label(idn, label):
     assert web_seq._scan_label("USB1", idn) == label
+
+
+def test_preview_warns_about_blank_current_limit(api):
+    raw = _raw()
+    raw[0]["limit"] = ""
+    message = api.seq_preview(1, raw, False)["message"]
+    assert i18n.tr("blank_limit_warning", names=raw[0]["name"]) in message

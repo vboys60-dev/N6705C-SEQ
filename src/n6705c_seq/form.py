@@ -134,8 +134,11 @@ def seq_view(rows: list[SeqRow], hold_dc: bool, measured: dict) -> dict:
     view = {"message": "", "t_end": 1.0, "ticks": [], "time_axis": tr("time_axis"),
             "measured_label": tr("measured"), "lanes": []}
     warnings = order_warnings(rows, TRIGGER_SKEW_SECONDS)
+    blank = [r.name for r in rows if r.enabled and r.current_limit is None]
     view["message"] = "\n".join(f"⚠ {w}" for w in warnings[:3]) + (
         tr("more_warnings", count=len(warnings) - 3) if len(warnings) > 3 else "")
+    if blank:
+        view["message"] += ("\n" if view["message"] else "") + "⚠ " + tr("blank_limit_warning", names=", ".join(blank))
     live = [r for r in rows if r.enabled]
     if not live:
         return view

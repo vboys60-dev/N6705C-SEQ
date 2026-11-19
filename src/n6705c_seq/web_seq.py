@@ -162,6 +162,7 @@ class SeqApi:
             if resources is not None:
                 self._save_config(resources, demo)
             if target == self._work:
+                self._stop.clear()
                 self._measured["seq"] = {}
                 self._emit(["measured", "seq"])
             threading.Thread(target=target, args=(*args, token), daemon=True).start()
@@ -248,11 +249,11 @@ class SeqApi:
                         if not self._untimed(token):
                             return
                         try:
-                            run_resources(resources, rows, hold_dc=hold_dc,
+                            run_resources(resources, rows, hold_dc=hold_dc, stop=self._stop,
                                           on_cleanup=lambda: self._finishing(token))
                         finally:
                             self._finishing(token)
-                        self._seq_result("info", tr("sequence_hold_done") if hold_dc else tr("sequence_done"))
+                        self._seq_result("info", self._done_text(hold_dc))
                         return
                 except Exception as exc:
                     self._seq_result("error", str(exc))
@@ -267,12 +268,12 @@ class SeqApi:
                 if not self._untimed(token):
                     return
                 try:
-                    run_plan(group, rows, hold_dc=hold_dc, capture=cap,
+                    run_plan(group, rows, hold_dc=hold_dc, capture=cap, stop=self._stop,
                              on_cleanup=lambda: self._finishing(token),
                              on_warning=lambda text: self._seq_result("warning", text))
                 finally:
                     self._finishing(token)
-                text = tr("sequence_hold_done") if hold_dc else tr("sequence_done")
+                text = self._done_text(hold_dc)
                 if cap and "error" in cap:
                     text += tr("capture_error", error=cap.pop("error"))
                 if cap:
@@ -288,6 +289,14 @@ class SeqApi:
                 self._seq_close(group)
         finally:
             self._release(token)
+
+    def _done_text(self, hold_dc):
+        return tr("sequence_stopped") if self._stop.is_set() else tr("sequence_hold_done") if hold_dc else tr("sequence_done")
+
+    def seq_stop(self) -> dict:
+        """End a running sequence early; the worker then switches every output off."""
+        self._stop.set()
+        return {}
 
     def _seq_close(self, group):
         for inst in group.instruments:

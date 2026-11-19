@@ -462,6 +462,8 @@ List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，�
 
 **已決定（2026-11-19）：舊 ARB／連續觸發 ON → 拒絕執行，不自動 ABOR（PR-B：`_check_idle`）。**
 
+**已完成（feat/stop-and-blank-limit）**：GUI「■ 停止」鈕（`seq_stop` 設 Event；`_wait` 提前結束、取消擷取等待、一律關輸出，含 hold-dc；N6705C 與 E36441A 皆適用）；預覽加「限流留空」警告。
+
 ### 14.2.1 待使用者決定（#1 電子負載已決定「擋」；其餘尚未回答）
 1. 電子負載：直接拒絕（Opus 建議；實機選 CH1 的表會被擋，須改用 CH2），或保留負載模式只警告？
 2. #1 遇執行中 ARB／CONT ON：自動關 CONT＋ABOR（與 E36441A 一致，建議），或像耦合檢查直接拒絕？

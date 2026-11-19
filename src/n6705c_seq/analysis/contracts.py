@@ -32,7 +32,7 @@ SELFTEST_STEP_TIMEOUT_MS = 10_000
 # Read-only: no instrument I/O, no native dialog, no state beyond the gate / selftest result / in-memory queue.
 SELFTEST_JS_API_ALLOWED_READONLY = (
     "config", "strings", "poll", "selftest_report", "analysis_enter", "analysis_leave",
-    "seq_meta", "seq_preview", "list_meta", "list_draft", "list_compile",
+    "seq_meta", "seq_preview", "seq_stop", "list_meta", "list_draft", "list_compile",
     "record_meta", "record_status", "record_snapshot",
 )
 # Instrument work, native dialogs, or state outside the gate (config file, loaded plan/measured data).

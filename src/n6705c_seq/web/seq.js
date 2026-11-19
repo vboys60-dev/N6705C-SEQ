@@ -162,6 +162,8 @@
       capture = checkbox(bar, "capture");
       const run = el("button", bar, "run_sequence", "btn btn-accent seq-run");
       run.dataset.action = "run";
+      const stop = el("button", bar, "stop_sequence", "btn");
+      stop.addEventListener("click", () => App.api.seq_stop());
       run.disabled = !App.powerAllowed;
       hold.addEventListener("change", preview);
       open.addEventListener("click", async () => {
