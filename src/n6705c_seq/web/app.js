@@ -1,7 +1,7 @@
 "use strict";
 
 (() => {
-  const LIST_VERIFIED = false; // List mode awaits hardware verification; flip to true to enable the tab
+  const LIST_VERIFIED = true; // List mode verified on N6781A (2026-11-19); false locks the tab
   const listeners = new Map();
   const tabs = [];
   const BUSY_STATES = ["power", "draining", "closing", "fault"];

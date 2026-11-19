@@ -8,7 +8,7 @@
 |---|---|
 | CSV 上電時序 | 單台（4× N6752A）單通道實機跑通（§4.8）；多通道、帶載、跨台同步未量 |
 | GUI 版面 | 整頁不捲動：`html/body` 固定視窗高、`overflow:hidden`；內容超高時分頁以 CSS `zoom` 等比縮小（§4.13，`b77a6e6`） |
-| ARB List 模式 | **分頁目前反灰鎖定**（`app.js` `LIST_VERIFIED=false`，未實機驗證）；P0、C、A、D、H 前半、I 前半、D-EN、GUI 美化＋中英切換已 commit；等實機跑 H（§9） |
+| ARB List 模式 | **分頁已解鎖**（2026-11-19，`app.js` `LIST_VERIFIED=true`；N6781A CH2 實機驗證 7 種波形＋多段＋重複＋hold_last＋感測線，E36441A 仍反灰）；P0、C、A、D、H 前半、I 前半、D-EN、GUI 美化＋中英切換已 commit；等實機跑 H（§9） |
 | E36441A | 指令產生＋驗證＋實機驗證腳本已 commit（`1cfbe76`、`dca33f1`），未接 CLI／GUI，核心假設未實機驗證（§10） |
 | Codex 審查 | 第 2 輪已核准（§8） |
 | 報告分析升級版 | T0–T8 完成，PR #1 已合併，分頁已啟用；Windows 11 實機未驗（§11） |
@@ -124,7 +124,7 @@ n6705c-seq-gui                                              # GUI（或雙擊 N6
 
 ## 9. ARB List 模式（2026-10-13 起）
 
-**GUI 分頁目前鎖定反灰**：H 實機驗證前不開放。啟用：`web/app.js` 的 `LIST_VERIFIED` 改 `true`，並把 `tests/test_web_seq.py` 末段對 `tab-list` 的斷言改回 `!…disabled`。
+**GUI 分頁已解鎖**（2026-11-19）。要重新鎖：`web/app.js` 的 `LIST_VERIFIED` 改 `false`，並把 `tests/test_web_seq.py` 末段對 `tab-list` 的斷言改回 `.disabled`。
 
 每通道一串波形段落，電腦端合成一條 CDW（65,535 點）下載。CSV 時序表不動，GUI 另開分頁。文件：`docs/arb_list_mode.md`（設計理由）、`docs/arb_list_mode_plan.md`（合約 §2、規則 R1–R7 §3、Track §5、必測 §6）。
 
