@@ -476,7 +476,7 @@ def test_trigger_sources_levels_output_load_and_init_keep_hardware_order(monkeyp
         for inst in group.instruments:
             commands = sent(inst)
             assert "OUTP ON,(@1)" in commands
-            assert not any(c.startswith(("ARB:", "INIT:")) for c in commands)
+            assert not any(c.startswith(("ARB:", "INIT:TRAN")) for c in commands)
         loaded.append(runner)
         load(runner)
 
@@ -526,7 +526,7 @@ def test_rejected_arb_source_aborts_before_output_on_and_forces_all_off(monkeypa
         run_plan(group, [row(1), row(5)])
     for index, inst in enumerate(group.instruments):
         commands = sent(inst)[before[index]:]
-        assert not any(c.startswith(("VOLT ", "CURR ", "OUTP ON", "ARB:", "INIT:")) for c in commands)
+        assert not any(c.startswith(("VOLT ", "CURR ", "OUTP ON", "ARB:", "INIT:TRAN")) for c in commands)
         assert any(c.startswith("OUTP OFF") for c in commands)
         assert not any(inst.output_state(inst.populated_channels).values())
 
@@ -785,3 +785,42 @@ def test_arb_source_other_errors_still_raise():
             raise ScpiError(-221, "Settings conflict", command)
     with pytest.raises(ScpiError):
         _set_arb_source_imm(SimpleNamespace(session=Bad()), [1])
+
+
+def _cmds(inst, start):
+    return [c for c in sent(inst)[start:] if c.startswith(("VOLT ", "CURR", "OUTP ON", "OUTP OFF", "ABOR", "INIT:TRAN"))]
+
+
+@pytest.mark.parametrize("setup", ["cont", "running"])
+def test_active_transient_or_continuous_rejected_without_writes(monkeypatch, setup):
+    from n6705c.core.status import OperationStatus
+    from n6705c_seq import execute
+
+    group = demo(1)
+    inst = group.instruments[0]
+    if setup == "cont":
+        inst.session.write("INIT:CONT:TRAN ON,(@1)")
+    else:
+        monkeypatch.setattr(inst, "operation_status", lambda ch: {c: OperationStatus.TRAN_ACTIVE for c in ch})
+    before = len(sent(inst))
+    with pytest.raises(execute.PlanRejected, match="CH1"):
+        run_plan(group, [row(1)])
+    assert _cmds(inst, before) == []
+
+
+@pytest.mark.parametrize("reply", ["", "x", "0,0", TimeoutError("t")])
+def test_unreadable_transient_state_rejected(monkeypatch, reply):
+    from n6705c_seq import execute
+
+    group = demo(1)
+    inst = group.instruments[0]
+    query = inst.session.query
+    def answer(command):
+        if command.startswith("INIT:CONT:TRAN?"):
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+        return query(command)
+    monkeypatch.setattr(inst.session, "query", answer)
+    with pytest.raises(execute.PlanRejected, match="frame 1"):
+        run_plan(group, [row(1)])

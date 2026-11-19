@@ -100,6 +100,7 @@ class FakeChannel:
     current_mode: str = "FIX"
     tran_trigger_source: str = "BUS"
     tran_initiated: bool = False
+    tran_continuous: bool = False
     tran_running: bool = False
     #: When the transient was released, for deciding it has finished.
     tran_t0: float = 0.0
@@ -1553,6 +1554,17 @@ class FakeN6705C:
                     continue
                 channel.tran_running = True
                 channel.tran_t0 = time.monotonic()
+            return None
+
+        @on("INITiate:CONTinuous:TRANsient?")
+        def _cont_tran_q(args: str) -> str:
+            return self._join([str(int(c.tran_continuous)) for c in self._channels_from(args)])
+
+        @on("INITiate:CONTinuous:TRANsient")
+        def _cont_tran(args: str) -> None:
+            state, _, rest = args.partition(",")
+            for channel in self._channels_from(rest):
+                channel.tran_continuous = state.strip().upper() in ("1", "ON")
             return None
 
         @on("ABORt:TRANsient")

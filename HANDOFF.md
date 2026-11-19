@@ -460,6 +460,8 @@ List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，�
 - #4 刪 `_list_on` 的 `rm.close()`；#6a 清理路徑 `read_errors()` 不再蓋原錯誤（dlog、arb runner）；#6b `cli` `close_all` 失敗回傳 1。
 - 剩餘：#1（PR-B，需上機）、#5（打開 RECORD 前）、#6c、GUI 停止鈕。
 
+**已決定（2026-11-19）：舊 ARB／連續觸發 ON → 拒絕執行，不自動 ABOR（PR-B：`_check_idle`）。**
+
 ### 14.2.1 待使用者決定（#1 電子負載已決定「擋」；其餘尚未回答）
 1. 電子負載：直接拒絕（Opus 建議；實機選 CH1 的表會被擋，須改用 CH2），或保留負載模式只警告？
 2. #1 遇執行中 ARB／CONT ON：自動關 CONT＋ABOR（與 E36441A 一致，建議），或像耦合檢查直接拒絕？
