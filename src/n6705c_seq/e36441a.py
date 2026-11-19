@@ -12,6 +12,7 @@ The caller sends *TRG once per instrument.
 from __future__ import annotations
 
 import math
+import threading
 import time
 from typing import Callable
 
@@ -175,7 +176,8 @@ def check_settings(query, channels: list[int]) -> None:
 
 
 def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = False,
-             on_cleanup: Callable[[], None] | None = None) -> None:
+             on_cleanup: Callable[[], None] | None = None,
+             stop: threading.Event | None = None) -> None:
     """Run the table on E36441A frames (4 channels each, in frame order).
 
     Outputs are restored (off) at the end unless ``hold_dc``; any failure restores
@@ -226,7 +228,8 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
         fire_together([(lambda s=s: s.write("*TRG")) for s, _ in frames.values()])
         # last edge ends at delay + rise + hold (+ fall); hold_dc stops after the rise
         end = max(r.delay + r.rise + (0 if hold_dc else r.hold + r.fall) for r in active)
-        time.sleep(end + 0.5)
+        stop = stop or threading.Event()
+        stop.wait(end + 0.5)
         for session, _ in frames.values():
             session.check_errors("E36441A run")
     except BaseException as exc:
@@ -236,7 +239,7 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
         except OutputsNotConfirmedOff as off:
             raise OutputsNotConfirmedOff(f"{exc}; also {off}") from exc
         raise
-    if not hold_dc:
+    if not hold_dc or stop.is_set():
         failed = run_callback(on_cleanup)
         try:
             _restore(touched, sessions)
@@ -292,13 +295,14 @@ def _sessions(resources: list[str], backend: str, timeout_ms: int):
 
 def run_resources(resources: list[str], rows: list[SeqRow], *, hold_dc: bool = False,
                   backend: str = "auto", timeout_ms: int = 10_000,
-                  on_cleanup: Callable[[], None] | None = None) -> None:
+                  on_cleanup: Callable[[], None] | None = None,
+                  stop: threading.Event | None = None) -> None:
     """Open each resource as an E36441A frame, run the table, close."""
     check_unique_resources(resources)
     transports = _sessions(resources, backend, timeout_ms)
     try:
         run_rows([Session(t) for t in transports], rows, hold_dc=hold_dc,
-                 on_cleanup=on_cleanup)
+                 on_cleanup=on_cleanup, stop=stop)
     except BaseException as exc:
         run_callback(on_cleanup, exc)
         close_all(transports, exc)

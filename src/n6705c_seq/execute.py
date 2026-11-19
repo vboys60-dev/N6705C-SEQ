@@ -367,16 +367,18 @@ def _running(runner: GroupArbRunner) -> list[int]:
     ]
 
 
-def _wait(runner: GroupArbRunner) -> None:
-    time.sleep(runner.total_duration)
+def _wait(runner: GroupArbRunner, stop: threading.Event) -> None:
+    if stop.wait(runner.total_duration):
+        return
     deadline = time.monotonic() + GRACE_SECONDS
     while running := _running(runner):
+        if stop.wait(0.05):
+            return
         if time.monotonic() > deadline:
             raise RuntimeError(
                 f"channels {running} still running {GRACE_SECONDS:g} s "
                 "after the sequence should have ended"
             )
-        time.sleep(0.05)
 
 
 def _arm_capture(group: InstrumentGroup, functions, window: float) -> float:
@@ -425,6 +427,7 @@ def run_plan(
     capture: dict | None = None,
     on_cleanup: Callable[[], None] | None = None,
     on_warning: Callable[[str], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> GroupArbRunner:
     """Run the table. With ``wait`` the outputs are switched off again at the end,
     unless ``hold_dc``: then each rail stops at its high level and stays on.
@@ -441,7 +444,7 @@ def run_plan(
     if any("E36441A" in m for m in models):
         raise PlanRejected(f"N6705C runner cannot drive E36441A (or a mix): {models}")
     return run_functions(group, functions, wait=wait, keep_on=hold_dc, capture=capture,
-                         on_cleanup=on_cleanup, on_warning=on_warning)
+                         on_cleanup=on_cleanup, on_warning=on_warning, stop=stop)
 
 
 def run_functions(
@@ -453,8 +456,9 @@ def run_functions(
     capture: dict | None = None,
     on_cleanup: Callable[[], None] | None = None,
     on_warning: Callable[[str], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> GroupArbRunner:
-    """Run the functions. With ``wait`` the outputs are switched off at the end,
+    """Run the functions. Setting ``stop`` ends the wait early and always switches off. With ``wait`` the outputs are switched off at the end,
     unless ``keep_on``: then each rail stays on at its waveform's final level.
 
     Pass a dict as ``capture`` to record every channel with the digitizer; it is
@@ -503,11 +507,12 @@ def run_functions(
             frame.mark_triggered()
         runner.state = ArbState.RUNNING
         if wait:
-            _wait(runner)
-            if capture is not None:
+            stop = stop or threading.Event()
+            _wait(runner, stop)
+            if capture is not None and not stop.is_set():
                 time.sleep(max(0.0, tint * CAPTURE_POINTS - (time.monotonic() - started)) + 0.05)
                 _fetch(group, functions, tint, capture)
-            if not keep_on:
+            if not keep_on or stop.is_set():  # a stop always switches off
                 if on_cleanup is not None:
                     on_cleanup()
                 outputs_off(group)

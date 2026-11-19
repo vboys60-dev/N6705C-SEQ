@@ -153,7 +153,7 @@ def test_view_measured_downsampling_and_clipping(size):
 
 
 def test_view_warnings_empty_and_zero_duration():
-    rows = [replace(r, delay=0) for r in form.parse_rows(form.default_raw(8))]
+    rows = [replace(r, delay=0, current_limit=0.5) for r in form.parse_rows(form.default_raw(8))]
     warnings = order_warnings(rows, TRIGGER_SKEW_SECONDS)
     assert len(warnings) > 3
     assert form.seq_view(rows, False, {})["message"] == (

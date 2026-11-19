@@ -421,7 +421,7 @@ def test_run_plan_switches_off_even_if_cleanup_callback_fails(monkeypatch):
 
     offs = []
     monkeypatch.setattr(execute, "outputs_off", lambda group: offs.append(group))
-    monkeypatch.setattr(execute, "_wait", lambda runner: (_ for _ in ()).throw(RuntimeError("wait failed")))
+    monkeypatch.setattr(execute, "_wait", lambda *a: (_ for _ in ()).throw(RuntimeError("wait failed")))
     def bad_callback():
         raise OSError("callback broke")
     group = demo(1)
@@ -824,3 +824,17 @@ def test_unreadable_transient_state_rejected(monkeypatch, reply):
     monkeypatch.setattr(inst.session, "query", answer)
     with pytest.raises(execute.PlanRejected, match="frame 1"):
         run_plan(group, [row(1)])
+
+
+def test_stop_switches_off_even_with_hold_dc():
+    import threading
+    from n6705c_seq.execute import run_plan
+
+    group = demo(1)
+    stop = threading.Event()
+    stop.set()
+    run_plan(group, [row(1)], hold_dc=True, stop=stop)
+    assert any(c.startswith("OUTP OFF") for c in sent(group.instruments[0]))
+    group2 = demo(1)
+    run_plan(group2, [row(1)], hold_dc=True)
+    assert not any(c.startswith("OUTP OFF") for c in sent(group2.instruments[0]))
