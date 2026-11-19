@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from n6705c.core.function import SENSE_MODES  # noqa: E402
+from .plan import atomic_text
 SHAPES = ("step", "ramp", "trapezoid", "sine", "triangle", "staircase", "exponential")
 
 FIELDS: dict[str, tuple[str, ...]] = {
@@ -171,6 +172,7 @@ def write_json(plan: ListPlan, path: str | Path) -> None:
     """Write a versioned UTF-8 plan."""
     try:
         text = json.dumps({"version": 1, **asdict(plan)}, ensure_ascii=False, indent=2, allow_nan=False)
-        Path(path).write_text(text + "\n", encoding="utf-8")
+        with atomic_text(path) as handle:
+            handle.write(text + "\n")
     except (OSError, TypeError, ValueError) as exc:
         raise ValueError(f"plan: cannot write JSON: {exc}") from exc

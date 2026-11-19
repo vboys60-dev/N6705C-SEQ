@@ -826,18 +826,44 @@ def test_unreadable_transient_state_rejected(monkeypatch, reply):
         run_plan(group, [row(1)])
 
 
-def test_stop_switches_off_even_with_hold_dc():
+def test_stop_switches_off_even_with_hold_dc(monkeypatch):
     import threading
+    from n6705c_seq import execute
     from n6705c_seq.execute import run_plan
 
     group = demo(1)
     stop = threading.Event()
-    stop.set()
+    monkeypatch.setattr(execute, "_wait", lambda runner, ev: ev.set())  # stop pressed while running
     run_plan(group, [row(1)], hold_dc=True, stop=stop)
     assert any(c.startswith("OUTP OFF") for c in sent(group.instruments[0]))
+    monkeypatch.undo()
     group2 = demo(1)
     run_plan(group2, [row(1)], hold_dc=True)
     assert not any(c.startswith("OUTP OFF") for c in sent(group2.instruments[0]))
+
+
+def test_stop_before_start_sends_no_output_on():
+    import threading
+    from n6705c_seq.execute import PlanRejected, run_plan
+
+    group = demo(1)
+    stop = threading.Event()
+    stop.set()
+    with pytest.raises(PlanRejected):
+        run_plan(group, [row(1)], hold_dc=True, stop=stop)
+    cmds = sent(group.instruments[0])
+    assert not any(c.startswith(("OUTP ON", "INIT:TRAN", "INIT:ACQ", "INIT (@")) for c in cmds)
+    assert any(c.startswith("OUTP OFF") for c in cmds)
+
+
+def test_write_csv_failure_keeps_old_file(tmp_path):
+    from n6705c_seq.plan import write_csv
+
+    path = tmp_path / "p.csv"
+    path.write_text("old")
+    with pytest.raises(Exception):
+        write_csv([object()], path)
+    assert path.read_text() == "old" and not (tmp_path / "p.csv.tmp").exists()
 
 
 @pytest.mark.parametrize("sense,want", [("2wire", "INT"), ("4wire", "EXT"), ("", None)])

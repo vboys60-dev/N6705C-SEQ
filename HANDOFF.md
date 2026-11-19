@@ -469,3 +469,24 @@ List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，�
 - 派 Codex 平行實作：每任務 `git worktree add ../N6705C-SEQ-wt-Tn -b fix/Tn main`；worktree 內 pytest 一律 `PYTHONPATH=src`（否則 import 到主 repo 的 editable 安裝）。
 - BSD sed 不支援 GNU 語法，批次替換用 Python。
 - 合併後記得刪 worktree 與 `fix/*` 分支。
+
+### 14.6 第四輪審查：停止涵蓋整個執行週期（2026-11-19；PR #41 `fix/stop-lifecycle`）
+流程：Codex astra（唯讀）審查整個專案 → Opus 逐項讀碼複核 → 依建議開工。Codex 8 項（3 CRITICAL）經 Opus 降級：#1–3 為高優先 WARNING（面板 Output 鍵可手動關、#36 前本來無停止鈕），其餘 SUGGESTION。
+
+**已修（PR #41，pytest 1709 過／7 跳過；JS 70 過）**
+- List 可停止：`_list_work` 前 `self._stop.clear()`，`run_functions(stop=self._stop)`；List 分頁加「■ 停止」鈕（`seq_stop`）。注意共用 Event：List 啟動必須自己 clear，否則先前 SEQ 的停止會讓它一啟動就停。
+- 已按停止就不再送 `OUTP ON`／`INIT`／`*TRG`：`execute._check_stop`（`_apply_levels` 前、`start_together` 前）與 `e36441a.run_rows` 同位置檢查；觸發時丟 `PlanRejected("stopped before start")`，走既有 except → 關斷（GUI 顯示為拒絕訊息）。
+- 擷取尾段 `time.sleep` → `stop.wait`，停止後略過 `_fetch`。
+- `fire_together` 遇例外／Ctrl-C 先 join 已啟動執行緒再重拋。
+- `plan.atomic_text`：CSV／JSON 存檔先寫 `.tmp` 再 `os.replace`。
+- DLOG 尾端不完整改 log 警告（捨棄 N bytes），**不拋錯**（拋錯會讓截斷長檔打不開）。
+- 測試：`test_stop_before_start_sends_no_output_on`、`test_write_csv_failure_keeps_old_file`；`test_stop_switches_off_even_with_hold_dc` 改為 `_wait` 期間觸發 stop。
+
+**刻意不修（已知限制）**
+- ELOG `session.stop()` 重試仍失敗時 `web_record` 仍 `_release`（ELOG 只量測不驅動輸出；main 的 `RECORD_ENABLED=False`）。若要處理，至少在錯誤訊息寫「ELOG 可能仍在執行，請重連或手動 ABOR」。
+- `listplan.load_json` 與 `synth` 的 List 驗證重複（分層防禦，有實際改動需求再合併）。
+
+**待辦**
+- 實機未驗：List 停止鈕、擷取等待中按停止、E36441A 停止。
+- UX：連線階段（`connect_group`／`detect_model`）卡 VISA 逾時時按停止沒有「停止中」回饋。
+- 分支提醒：本機 `test/record-enabled`（`RECORD_ENABLED=True`）不得合併；新工作一律從 main 開。

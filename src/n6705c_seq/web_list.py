@@ -130,6 +130,7 @@ class ListApi:
             self._save_config(saved_resources, demo)
             self._measured["list"] = {}
             self._emit(["measured", "list"])
+            self._stop.clear()
             threading.Thread(target=self._list_work, args=(plan, compiled, frames, resources, demo, capture, token), daemon=True).start()
         except Exception as exc:
             self._release(token)
@@ -159,7 +160,7 @@ class ListApi:
             if not self._untimed(token):
                 return
             try:
-                execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap,
+                execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap, stop=self._stop,
                                       on_cleanup=lambda: self._finishing(token),
                                       on_warning=lambda text: self._emit(
                                           ["result", "warning", tr("run_result"), text]))

@@ -180,10 +180,16 @@ def fire_together(actions: list) -> None:
             errors.append(exc)
 
     threads = [threading.Thread(target=fire, args=(a,)) for a in actions]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    except BaseException:
+        for thread in threads:  # let started actions finish so the caller's OFF is the last command
+            if thread.is_alive():
+                thread.join()
+        raise
     if errors:
         raise errors[0]
 
@@ -391,6 +397,11 @@ def _running(runner: GroupArbRunner) -> list[int]:
     ]
 
 
+def _check_stop(stop: threading.Event) -> None:
+    if stop.is_set():
+        raise PlanRejected("stopped before start")
+
+
 def _wait(runner: GroupArbRunner, stop: threading.Event) -> None:
     if stop.wait(runner.total_duration):
         return
@@ -519,7 +530,9 @@ def run_functions(
                 on_warning(warning)
             else:
                 log.warning("%s", warning)
+        stop = stop or threading.Event()
         _set_trigger_sources(group, functions)
+        _check_stop(stop)
         _apply_levels(group, functions)
         runner.load()
         window = tint = 0.0
@@ -527,15 +540,16 @@ def run_functions(
             window = runner.total_duration * 1.2 + 0.01
             tint = _arm_capture(group, functions, window)
         started = time.monotonic()
+        _check_stop(stop)
         start_together(group, functions, capture is not None)
         for frame in runner.runners:
             frame.mark_triggered()
         runner.state = ArbState.RUNNING
         if wait:
-            stop = stop or threading.Event()
             _wait(runner, stop)
             if capture is not None and not stop.is_set():
-                time.sleep(max(0.0, tint * CAPTURE_POINTS - (time.monotonic() - started)) + 0.05)
+                stop.wait(max(0.0, tint * CAPTURE_POINTS - (time.monotonic() - started)) + 0.05)
+            if capture is not None and not stop.is_set():
                 _fetch(group, functions, tint, capture)
             if not keep_on or stop.is_set():  # a stop always switches off
                 if on_cleanup is not None:

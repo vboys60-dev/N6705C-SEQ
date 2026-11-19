@@ -213,8 +213,11 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
         check_settings(session.query, chans)
 
     touched: list[tuple[Session, int]] = []
+    stop = stop or threading.Event()
     try:
         for r in active:
+            if stop.is_set():
+                raise PlanRejected("stopped before start")
             session, ch = where(r)
             touched.append((session, ch))
             for cmd in prepare_commands(r, ch):
@@ -227,10 +230,11 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
         for session, chans in frames.values():
             for cmd in arm_commands(chans):
                 session.write_checked(cmd)
+        if stop.is_set():
+            raise PlanRejected("stopped before start")
         fire_together([(lambda s=s: s.write("*TRG")) for s, _ in frames.values()])
         # last edge ends at delay + rise + hold (+ fall); hold_dc stops after the rise
         end = max(r.delay + r.rise + (0 if hold_dc else r.hold + r.fall) for r in active)
-        stop = stop or threading.Event()
         stop.wait(end + 0.5)
         for session, _ in frames.values():
             session.check_errors("E36441A run")
