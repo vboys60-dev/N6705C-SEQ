@@ -171,16 +171,16 @@
     background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
     padding:14px 16px; display:flex; flex-direction:column; gap:10px;
   }
-  .trace-group{ display:flex; align-items:flex-start; gap:14px; flex-wrap:wrap; }
-  .group-label{ font-size:12px; color:var(--text-dim); font-weight:600; padding-top:8px; width:34px; flex:none; }
+  .trace-group{ display:grid; grid-template-columns:96px minmax(0,1fr); align-items:start; gap:14px; }
+  .group-label{ font-size:12px; color:var(--text-dim); font-weight:600; padding-top:8px; width:96px; flex:none; }
   /* 右軸種類切換（電流／功率）：取代原本固定的「電流」文字標籤 */
   .right-axis-select{
     background:var(--panel-2); border:1px solid var(--border); color:var(--text);
     padding:5px 8px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;
-    font-family:var(--sans); flex:none; align-self:flex-start; margin-top:2px;
+    font-family:var(--sans); flex:none; align-self:flex-start; margin-top:2px; width:96px; box-sizing:border-box;
   }
   .right-axis-select:focus{ outline:none; border-color:var(--ch3); }
-  .trace-chips{ display:flex; gap:8px; flex-wrap:wrap; flex:1; }
+  .trace-chips{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
   .chip{
     --chip-color:#888;
     display:flex; align-items:center; gap:6px;
@@ -191,7 +191,7 @@
   .chip input[type=color]{ width:20px; height:20px; padding:0; border:none; border-radius:5px; background:none; cursor:pointer; }
   .chip input[type=color]::-webkit-color-swatch-wrapper{ padding:0; }
   .chip input[type=color]::-webkit-color-swatch{ border:1px solid var(--border); border-radius:5px; }
-  .chip input[type=text]{ background:transparent; border:none; color:var(--text); font-size:12px; width:80px; font-family:var(--sans); }
+  .chip input[type=text]{ background:transparent; border:none; color:var(--text); font-size:12px; flex:1; min-width:0; width:0; font-family:var(--sans); }
   .chip input[type=text]:focus{ outline:none; color:var(--text); }
   .chip input[type=number].chip-offset{
     background:var(--panel-2); border:1px solid var(--border); color:var(--text);
