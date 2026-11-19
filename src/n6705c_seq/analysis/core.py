@@ -6,6 +6,7 @@ analysis.storage; no instrument or GUI modules are imported here.
 """
 import hashlib
 import json
+import logging
 import math
 import os
 import secrets
@@ -112,6 +113,9 @@ def parse_dlog(buf, *, _destination=None, cancel=None, progress=None) -> dict:
     remain_after_main = len(buf) - (records_start + main_bytes)
     trailer_records = remain_after_main // bytes_per_record
     total_records = trailer_records + n_records
+    dropped = (len(buf) - records_start - n_records * bytes_per_record) % bytes_per_record
+    if dropped:
+        logging.getLogger(__name__).warning("DLOG tail incomplete: dropped %d trailing bytes", dropped)
 
     if total_records == 0:
         raise DlogFormatError("No records")

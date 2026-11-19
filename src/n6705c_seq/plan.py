@@ -6,7 +6,9 @@ matches the table the sequence is designed in, disabled rows included.
 
 from __future__ import annotations
 
+import contextlib
 import csv
+import os
 import math
 from dataclasses import dataclass, replace
 from itertools import combinations
@@ -249,11 +251,25 @@ def suggest_assignment(
     return [replace(r, channel=n) for n, r in enumerate(placed, start=1)], moves
 
 
+@contextlib.contextmanager
+def atomic_text(path: str | Path, **kwargs):
+    """Write to a temp file beside ``path``, then replace it: a failed save keeps the old file."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", **kwargs) as handle:
+            yield handle
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def write_csv(rows: list[SeqRow], path: str | Path) -> None:
     def ms(seconds: float) -> str:
         return f"{seconds * 1000:.10g}"
 
-    with open(path, "w", newline="", encoding="utf-8") as handle:
+    with atomic_text(path, newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow([*REQUIRED[:1], "name", *REQUIRED[1:], "current_limit_a", "sense"])
         for r in rows:

@@ -218,7 +218,7 @@ def test_worker_functions_capture_errors_and_release(api, monkeypatch, failure):
             raise ValueError("conversion failed")
         return functions
 
-    def run(got_group, got_functions, *, keep_on, capture, on_cleanup, on_warning):
+    def run(got_group, got_functions, *, keep_on, capture, on_cleanup, on_warning, stop):
         assert callable(on_cleanup)
         assert callable(on_warning)
         assert got_group is group and got_functions is functions

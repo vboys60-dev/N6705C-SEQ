@@ -333,6 +333,7 @@
     result(await App.api.list_run(plan, settings(), resources, document.getElementById("chk-demo").checked, fields.capture.checked), "run_result");
   });
   run.dataset.action = "run"; run.classList.add("btn-accent"); run.disabled = true;
+  button(bar, "stop_sequence", () => App.api.seq_stop());
   input(bar, "capture", "capture", false, "checkbox");
   for (const node of [...channelBar.querySelectorAll("input"), ...settingsBar.querySelectorAll("input")]) {
     node.addEventListener("input", () => { if (meta) compile(); });
