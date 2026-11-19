@@ -791,7 +791,7 @@ async function timer(ms) {
   assert(capture.disabled && !capture.checked && ids["tab-list"].disabled);
   assert.equal(ids["tab-seq"].attributes["aria-selected"], "true");
   events.push(["kind", "N6705C"]); await timer(100);
-  assert(!capture.disabled && ids["tab-list"].disabled); // List tab locked until verified
+  assert(!capture.disabled && !ids["tab-list"].disabled); // List tab enabled for N6705C
 })().catch(error => { console.error(error); process.exitCode = 1; });
 '''
     web = Path(web_seq.__file__).parent / "web"
