@@ -85,7 +85,7 @@ test('record: fixed defaults and a copied, exact bridge configuration', async ()
   let received;
   const h = harness({record_start: async (...args) => { received = args; return {cancelled: true}; }});
   await h.show();
-  assert.deepEqual(h.inputs.map(n => n.type === 'checkbox' ? n.checked : n.value), [true, false, false, false, true, true, '0.001', '3600']);
+  assert.deepEqual(h.inputs.map(n => n.type === 'checkbox' ? n.checked : n.value), [true, false, false, false, true, true, '0.001', '01:00:00']);
   await h.nodes('record_start')[0].click();
   assert.deepEqual(JSON.parse(JSON.stringify(received)), [{machine_index: 0, channels: [1], sense_volt: true, sense_curr: true,
     period_s: 0.001, duration_s: 3600}, ['USB-0', 'USB-1'], true]);
@@ -218,8 +218,9 @@ test('record: invalid selections and period/duration bounds prevent start withou
   for (const value of ['0', '0.0001', '61', 'NaN']) {
     period.value = value; period.change(); assert.equal(start.disabled, true); assert.equal(period.value, value);
   }
-  period.value = '0.001'; duration.value = '0.5'; duration.change(); assert.equal(start.disabled, true);
-  duration.value = '3600'; duration.change(); assert.equal(start.disabled, false);
+  period.value = '0.001'; duration.value = '00:00:00.5'; duration.change(); assert.equal(start.disabled, true);
+  duration.value = '3600'; duration.change(); assert.equal(start.disabled, true);
+  duration.value = '01:00:00'; duration.change(); assert.equal(start.disabled, false);
 });
 
 test('record: pending native start dialog blocks duplicate starts and cancellation restores controls', async () => {

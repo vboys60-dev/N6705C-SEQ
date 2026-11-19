@@ -77,12 +77,16 @@
     const next = await App.api.record_status();
     if (visible && requestEpoch === epoch && version === statusVersion) updateStatus(next, true);
   }
+  function parseHms(v) { // HH:MM:SS(.f) -> seconds; NaN if malformed
+    const m = /^\s*(\d+):([0-5]?\d):([0-5]?\d(?:\.\d+)?)\s*$/.exec(v);
+    return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : NaN;
+  }
   function configuration() {
     return {
       machine_index: Number(controls.machine.value),
       channels: controls.channels.flatMap((field, i) => field.checked ? [i + 1] : []),
       sense_volt: controls.volt.checked, sense_curr: controls.curr.checked,
-      period_s: Number(controls.period.value), duration_s: Number(controls.duration.value),
+      period_s: Number(controls.period.value), duration_s: parseHms(controls.duration.value),
     };
   }
   async function command(start) {
@@ -146,11 +150,9 @@
     controls.period.value = "0.001";
     controls.period.max = String(meta.period_max_s);
     controls.duration = field("record_duration");
-    controls.duration.type = "number";
-    controls.duration.step = "any";
-    controls.duration.min = String(meta.duration_min_s);
-    controls.duration.max = String(meta.duration_max_s);
-    controls.duration.value = "3600";
+    controls.duration.type = "text";
+    controls.duration.placeholder = "HH:MM:SS";
+    controls.duration.value = "01:00:00";
     controls.fields.forEach(input => input.addEventListener("change", render));
     const actions = el("div", panel, null, "row record-actions");
     controls.start = el("button", actions, "record_start", "btn");

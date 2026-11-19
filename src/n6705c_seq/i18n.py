@@ -165,7 +165,7 @@ STRINGS = {
     'record_voltage': ('電壓 (V)', 'Voltage (V)'),
     'record_current': ('電流 (A)', 'Current (A)'),
     'record_period': ('取樣週期 (s)', 'Sample Period (s)'),
-    'record_duration': ('最長錄製時間 (s)', 'Maximum Duration (s)'),
+    'record_duration': ('最長錄製時間 (HH:MM:SS)', 'Maximum Duration (HH:MM:SS)'),
     'record_start': ('開始錄製', 'Start Recording'),
     'record_stop': ('停止錄製', 'Stop Recording'),
     'record_save_title': ('儲存錄製檔', 'Save Recording'),
