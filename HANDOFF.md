@@ -2,7 +2,7 @@
 
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。只做時序，不做量測。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-11-18　狀態：模擬器全過（pytest 1655 過／7 跳過；JS 70）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
+最後更新：2026-11-19　狀態：模擬器全過（pytest 1707 過／7 跳過；JS 70）；GUI 已換成 pywebview。細節看 git log；本檔只留接手需要的事實。
 
 | 區塊 | 狀態 |
 |---|---|
@@ -13,7 +13,7 @@
 | Codex 審查 | 第 2 輪已核准（§8） |
 | 報告分析升級版 | T0–T8 完成，PR #1 已合併，分頁已啟用；Windows 11 實機未驗（§11） |
 | 搜尋儀器（下拉選單） | PR #8 已合併 `c7461c6`；離線與 CI 通過，**未接實機、未在 Windows 實際操作**（§12） |
-| 全專案審查修復（PR #31 `e10f462`、PR-A #33 `86e5d1e`） | 三輪審查已修；第三輪 PR-A 已合併，**PR-B（INIT:CONT:TRAN）與其餘待處理，見 §14.2** |
+| 全專案審查修復＋後續功能（PR #31–#38，main `663fdab` 之後） | 三輪審查全部處理完；停止鈕、限流留空警告、List／SEQ 感測線、ELOG 修正已合併；**N6781A（CH2）實機驗證通過，見 §14.4**。仍待：GUI 實機點擊、ELOG H0 長測（§14.2） |
 | 即時資料紀錄＋ARB 修補 | **規劃與任務表完成，尚未開工**（§13、`docs/live-logging-task-plan.md`） |
 
 ## 0. 先讀這幾件事
@@ -438,44 +438,20 @@ List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，�
 - `all_outputs_off` 加 `ABOR:ACQ`；transport 建構失敗回滾；**不再 `rm.close()`**（pyvisa 同一 VISA library 共用一個 ResourceManager，關它會關掉其他台）。
 - 存檔補副檔名後再確認覆寫；`hw_e36441a_check.py` `touched` 旗標；DLOG 上限 359_996_400 s（`dlog.py` 與 `record/contracts.py` 各留常值，由測試保證相等）；CI／README 改 `(cd tests/js && node --test)`。
 
-### 14.2 第三輪審查（PR #31 後）處理建議（Codex sol high 判 REVISE、Opus 判 APPROVED；Opus 已用 fake＋`run_plan` 重現）
-| # | 項目 | 判定 | 嚴重度 | 建議 |
-|---|---|---|---|---|
-| 2 | `execute.py` 前檢接受 N6791A／N6792A 電子負載當供電通道（fake slots 重現送出 `CURR`、`VOLT 0`、`OUTP ON`、`INIT:TRAN`）。§13.9 實機 CH1 就是 N6791A | 成立 | 高（有條件） | `capability.py` 加 `LOAD_MODELS`／`is_load`；`run_functions` 任何寫入前，計畫含負載通道 → `PlanRejected`（訊息寫清原因）；fake slots 測試。無需實機 |
-| 1 | `execute.py` 開輸出前沒有 `ABOR:TRAN`、沒處理 `INIT:CONT:TRAN`（E36441A 路徑有）。工具自己不會留下執行中 ARB，僅外部狀態（前面板、CONT ON）觸發；hold_dc＋CONT ON 會一直重跑 | 部分成立 | 中 | 在 `_check_coupling` 後、`_set_trigger_sources` 前，對計畫通道依序 `write_checked` `INIT:CONT:TRAN OFF,(@…)` → `ABOR:TRAN (@…)`（順序不能反）；fake 補 `INIT:CONT:TRAN`；E.02.09 若回 -108 退不帶通道。**需實機確認語法** |
-| 3 | `web_seq._off_work` 先 `detect_model`，再 `connect_group` probe；IDN 逾時或 `_safe_query` 的 `read_errors` 遇亂碼 → 整台零關閉動作 | 成立 | 低-中 | except 分支加盲關：裸 `VisaTransport` 逐通道 `OUTP OFF,(@n)`（n=1..4，各自吞錯；不用 `(@1:4)` 以免空槽整條被拒），結果標「已盲送、未確認」。只吞 `ErrorQueueError` 不夠 |
-| 4 | `transport._list_on()` 仍 `rm.close()` | 成立（潛在，只有 scan 子程序呼叫） | 低 | 刪該行 |
-| 5 | `elog.stop()`：ABOR 失敗仍在 `finally` 設 STOPPED、清 `init_attempted`；STOPPED 時 `stop()` 直接 return | 成立 | 低（`RECORD_ENABLED=False`） | 打開 RECORD 前與 `_pending` 上限一起修：成功後才改狀態；`if state in (IDLE, STOPPED) and not self.init_attempted: return` |
-| 6 | (a) `dlog.retrieve`、`arb/runner.py` 在 except 內 `read_errors()` 可能蓋掉原錯誤；(b) `cli.py` `close_all` 失敗仍回傳 0；(c) 限流留空沿用舊值 | (a)(b) 成立；(c) 是設計選擇（README 已寫明） | 低 | (a) 包 `try/except Exception: log`；(b) 記旗標最後回傳 1；(c) 是否在預覽加警告由使用者決定 |
+### 14.2 處理結果與待辦（2026-11-19）
+| PR | 內容 |
+|---|---|
+| #31 | 第一～二輪修復（§14.1） |
+| #33 PR-A | 電子負載（N6791A／N6792A）擋下（`capability.LOAD_MODELS`／`is_load`，`run_functions` 寫入前以全域通道檢查；實機 CH1 是 N6791A，須改用 CH2）；全部關閉盲關退路（`web_seq._blind_off`，結果標 `blind OFF sent, not confirmed`）；`_list_on` 不再 `rm.close()`；清理路徑 `read_errors()` 不蓋原錯誤；`cli` `close_all` 失敗回傳 1 |
+| #35 PR-B | `execute._check_idle`：計畫通道 `STAT:OPER:COND?` 有 WTG-tran／TRAN-active 或 `INIT:CONT:TRAN?` 為 1 → 拒絕（決定：**拒絕、不自動 ABOR**）；查不到也拒絕；fake 補 `INIT:CONT:TRAN` |
+| #36 | GUI「■ 停止」鈕（`seq_stop` 設 Event，`_wait` 提前結束、略過擷取等待、一律關輸出含 hold-dc；N6705C 與 E36441A 皆通；分析模式允許）；預覽加「限流留空」警告（留空＝不寫入限流，儀器沿用目前設定，不是不限流；預設表就會顯示） |
+| #37 | 每通道感測線（List `sense`、SEQ 表格欄／CSV 欄 `sense`）：`""` 維持／`2wire`（`VOLT:SENS:SOUR INT`）／`4wire`（`EXT`），於 CURR／VOLT／OUTP ON 前寫入；HIGH 電壓頻寬＋2wire → `_check_sense_bandwidth` 拒絕；E36441A 列填感測線被擋 |
+| #38 | `ElogSession.stop()` 只在 ABOR 確認成功才 STOPPED／清 `init_attempted`（失敗可重試）；`ElogAlignmentError`＋`MAX_PENDING_RECORDS=200000`（通道間待對齊筆數差超限即致命停止）。僅模擬器驗證 |
 
-分批建議：
-- **PR-A（不用上機）**：#2、#3、#4、#6a／b，每項補測試。
-- **PR-B（上機確認語法後再合）**：#1＋fake `INIT:CONT:TRAN`。
-- **打開 RECORD 前**：#5＋§14.3 `_pending` 上限。
-- **等使用者決定**：GUI 停止鈕、#6c。
-
-### 14.2.0 PR-A 已完成（PR #33 合併 `86e5d1e`，CI 全綠；Python 1690 過／7 跳過、JS 70）
-- #2 已擋 N6791A／N6792A 電子負載（`capability.LOAD_MODELS`／`is_load`；`run_functions` 在耦合檢查與任何寫入前以全域通道編號檢查，SEQ／List 共用；訊息為英文；使用者決定「直接擋」）。實機 CH1 是 N6791A，須改用 CH2。
-- #3 全部關閉盲關退路（`web_seq._blind_off`：逐通道 `OUTP OFF,(@n)`，結果標 `blind OFF sent, not confirmed`；採 Opus 建議語意）。
-- #4 刪 `_list_on` 的 `rm.close()`；#6a 清理路徑 `read_errors()` 不再蓋原錯誤（dlog、arb runner）；#6b `cli` `close_all` 失敗回傳 1。
-- 剩餘：#1（PR-B，需上機）、#5（打開 RECORD 前）、#6c、GUI 停止鈕。
-
-**已決定（2026-11-19）：舊 ARB／連續觸發 ON → 拒絕執行，不自動 ABOR（PR-B：`_check_idle`）。**
-
-**已完成（feat/stop-and-blank-limit）**：GUI「■ 停止」鈕（`seq_stop` 設 Event；`_wait` 提前結束、取消擷取等待、一律關輸出，含 hold-dc；N6705C 與 E36441A 皆適用）；預覽加「限流留空」警告。
-
-### 14.2.1 待使用者決定（#1 電子負載已決定「擋」；其餘尚未回答）
-1. 電子負載：直接拒絕（Opus 建議；實機選 CH1 的表會被擋，須改用 CH2），或保留負載模式只警告？
-2. #1 遇執行中 ARB／CONT ON：自動關 CONT＋ABOR（與 E36441A 一致，建議），或像耦合檢查直接拒絕？
-3. #3 可否接受「已盲送、未確認」的回報語意？
-4. GUI 停止鈕做不做（要能中斷執行緒並與 `outputs_off` 安全競爭，改動較大；目前替代是前面板 Output Off）；#6c 要不要預覽警告？
-
-### 14.3 仍延後
-- #5 ELOG `_pending` 對齊緩衝無上限（打開 `RECORD_ENABLED` 前做）。
-- GUI 執行中沒有停止手段（`web/app.js:86` `#btn-off` 停用）。
-- 回歸測試缺口大多已補（耦合、全部關閉、重複機台、錯誤佇列亂碼、`ABOR:ACQ`、腳本取消）。
-
-**ELOG（fix/elog-stop-pending）**：`ElogSession.stop()` 只在 ABOR 確認成功後才設 STOPPED／清 `init_attempted`，失敗保持可重試（STOPPED 但 `init_attempted` 仍會再送 ABOR）；新增 `ElogAlignmentError`＋`MAX_PENDING_RECORDS=200000`（通道間待對齊筆數差超限即致命停止，recorder 視為 fatal）。以模擬器驗證，未上機。
+**待辦**
+- **錄製**：`main` 上 `RECORD_ENABLED=False`（`record/contracts.py`）。本機分支 `test/record-enabled`（未推送、不合併）把它改成 True 供手動測試；開啟前建議做 ELOG H0 長測（≥4 h、USB＋LAN）與 ABOR 逾時重試的實機確認。
+- **實機未驗**：GUI 停止鈕與感測線下拉的實際點擊、E36441A 停止、ABOR 後 `STAT:OPER:COND?` 回 idle 細節、耦合通道被一起開啟的真實行為（僅模擬器）、List 在更高電壓／電流／多通道／接真實 DUT。
+- **延後**：macOS CI runner 偶發卡 15 分鐘（0 步驟）— 屬 runner 問題，重跑即可。
 
 ### 14.4 實機確認（2026-11-19，N6705C E.02.09.3271；CH1=N6791A、CH2=N6781A，僅兩通道）
 - 已確認 `OUTP:COUP:CHAN?` 回覆為**不帶括號的逗號清單**：無耦合 `''`、耦合 CH1+CH2 `'1,2'`、僅 CH2 `'2'`。設定語法也不帶括號：`OUTP:COUP:CHAN 1,2`；`(@1,2)` 會回 `-108`；取消耦合送不帶參數的 `OUTP:COUP:CHAN`。`_check_coupling` 解析兩種格式皆可，實機耦合 1,2 + 計畫 CH2 → 正確拒絕。
@@ -487,7 +463,9 @@ List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，�
 - 尚未驗：GUI 停止鈕實際點擊、E36441A 停止、ABOR 後 `STAT:OPER:COND?` 回 idle 的細節、耦合通道被一起開啟的真實行為（僅模擬器）。
 
 ### 14.5 操作備忘
-- PR #32（本文件）CI：macOS 3.13 連 3 次剛好 15 分鐘失敗、job 無任何步驟記錄（疑似 macOS arm64 runner 沒接到工作；其他 5 項過、main 與 PR #31 同碼皆過）。待重跑變綠，或經使用者同意在僅文件變更下合併。
+- macOS CI job 偶爾 15 分鐘無任何步驟（runner 問題）；重跑，或在僅文件變更且使用者同意時 `--admin` 合併。
+- 偵測 CI 結果時先確認 `gh run list` 的 headSha 就是最新 commit（剛推送時 `gh pr checks` 可能還是舊結果）。
+- 實機腳本若要用 `scan_resources`（子行程）必須是檔案並加 `if __name__ == "__main__":`，不能用 stdin。
 - 派 Codex 平行實作：每任務 `git worktree add ../N6705C-SEQ-wt-Tn -b fix/Tn main`；worktree 內 pytest 一律 `PYTHONPATH=src`（否則 import 到主 repo 的 editable 安裝）。
 - BSD sed 不支援 GNU 語法，批次替換用 Python。
 - 合併後記得刪 worktree 與 `fix/*` 分支。
