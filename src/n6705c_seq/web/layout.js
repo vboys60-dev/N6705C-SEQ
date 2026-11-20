@@ -29,4 +29,9 @@ function fitZoom(panel) {
   panel.style.zoom = z;
 }
 
-if (typeof module !== "undefined") module.exports = { placeTimeLabels, fitZoom };
+function cssVar(name, fallback) {
+  return getComputedStyle(document.documentElement).getPropertyValue?.(name)?.trim() || fallback;
+}
+
+if (typeof window !== "undefined") window.App.cssVar = cssVar;
+if (typeof module !== "undefined") module.exports = { placeTimeLabels, fitZoom, cssVar };
