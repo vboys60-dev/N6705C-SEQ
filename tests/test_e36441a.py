@@ -234,6 +234,27 @@ def test_run_rows_sequence_and_restore(monkeypatch):
     assert s.sent[-1] == "VOLT:MODE FIX,(@2)" and "OUTP OFF,(@2)" in s.sent
 
 
+@pytest.mark.parametrize("trigger", ["CURR 2", "OUTP ON", "LIST:VOLT", "INIT (@"])
+def test_stop_mid_setup_sends_nothing_further_and_restores(monkeypatch, trigger):
+    import threading
+    monkeypatch.setattr(e36441a.time, "sleep", lambda s: None)
+    s = _FakeSession()
+    stop = threading.Event()
+    write = s.write
+
+    def spy(cmd):
+        write(cmd)
+        if cmd.startswith(trigger):
+            stop.set()
+    s.write = s.write_checked = spy
+    with pytest.raises(e36441a.PlanRejected, match="stopped"):
+        e36441a.run_rows([s], [replace(ROW, channel=1)], stop=stop)
+    rest = s.sent[next(i for i, c in enumerate(s.sent) if c.startswith(trigger)) + 1:]
+    restore = rest.index("ABOR (@1)")  # everything after the stop until restore must be nothing
+    assert rest[:restore] == []
+    assert "OUTP OFF,(@1)" in rest[restore:]
+
+
 def test_run_rows_hold_dc_leaves_on(monkeypatch):
     monkeypatch.setattr(e36441a.time, "sleep", lambda s: None)
     s = _FakeSession()

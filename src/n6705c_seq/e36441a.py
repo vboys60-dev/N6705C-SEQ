@@ -21,7 +21,7 @@ from n6705c.core.scpi import format_channel_list
 from n6705c.core.session import Session
 from n6705c.core.transport import VisaTransport
 
-from .execute import (OutputsNotConfirmedOff, PlanRejected, check_unique_identities,
+from .execute import (OutputsNotConfirmedOff, PlanRejected, _check_stop, check_unique_identities,
                       check_unique_resources, close_all, fire_together, run_callback)
 from .plan import SeqRow
 
@@ -215,24 +215,25 @@ def run_rows(sessions: list[Session], rows: list[SeqRow], *, hold_dc: bool = Fal
     touched: list[tuple[Session, int]] = []
     stop = stop or threading.Event()
     try:
+        # stop is checked before every write, so a stop mid-setup never reaches OUTP ON / INIT / *TRG
         for r in active:
-            if stop.is_set():
-                raise PlanRejected("stopped before start")
             session, ch = where(r)
             touched.append((session, ch))
             for cmd in prepare_commands(r, ch):
+                _check_stop(stop)
                 session.write_checked(cmd)
         time.sleep(SETTLE_SECONDS)
         for r in active:
             session, ch = where(r)
             for cmd in configure_commands(r, ch, hold_dc):
+                _check_stop(stop)
                 session.write_checked(cmd)
         for session, chans in frames.values():
             for cmd in arm_commands(chans):
+                _check_stop(stop)
                 session.write_checked(cmd)
-        if stop.is_set():
-            raise PlanRejected("stopped before start")
-        fire_together([(lambda s=s: s.write("*TRG")) for s, _ in frames.values()])
+        _check_stop(stop)
+        fire_together([(lambda s=s: (_check_stop(stop), s.write("*TRG"))) for s, _ in frames.values()])
         # last edge ends at delay + rise + hold (+ fall); hold_dc stops after the rise
         end = max(r.delay + r.rise + (0 if hold_dc else r.hold + r.fall) for r in active)
         stop.wait(end + 0.5)
