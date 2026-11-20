@@ -144,6 +144,8 @@
       await App.api.set_theme(next);
       App.config.theme = next;
       applyTheme(next);
+    } catch (error) {
+      showError(error);  // the theme stays as it was; tell the user why
     } finally {
       changingTheme = false;
     }
