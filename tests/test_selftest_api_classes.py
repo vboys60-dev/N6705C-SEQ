@@ -10,3 +10,8 @@ def test_every_public_js_api_method_is_classified():
     assert not allowed & denied
     assert public - allowed - denied == set(), "classify new js_api methods in contracts.py (default: DENIED)"
     assert (allowed | denied) - public == set(), "stale names in the selftest classification"
+
+
+def test_set_theme_is_denied_in_selftest():
+    assert "set_theme" in contracts.SELFTEST_JS_API_DENIED
+    assert "set_theme" not in contracts.SELFTEST_JS_API_ALLOWED_READONLY

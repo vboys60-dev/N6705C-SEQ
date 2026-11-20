@@ -230,7 +230,8 @@
     if (d.type === "ready") {
       readyGen = currentGen;
       wake();
-      return post({type: "lang", lang: App.lang});
+      post({type: "lang", lang: App.lang});
+      return post({type: "theme", theme: App.theme});
     }
     if (typeof d.id !== "string" || !REQ_ID.test(d.id)) return;
     if (d.type === "open_request" && OPEN_PURPOSES.includes(d.purpose)) {
@@ -256,6 +257,8 @@
     Promise.resolve().then(() => { buttons(); wake(); });
   });
   App.on("lang", () => { if (currentGen !== null) post({type: "lang", lang: App.lang}); });
+
+  App.on("theme", theme => { if (currentGen !== null) post({type: "theme", theme}); });
 
   // --selftest round trip: enter, Viewer ready, leave, same-generation idle.
   async function selftest() {

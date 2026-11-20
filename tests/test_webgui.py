@@ -141,13 +141,13 @@ def test_save_path_without_confirmation(core, tmp_path, monkeypatch, filename, e
 
 
 def test_config_and_language(core):
-    assert core.config() == {"resources": [], "demo": True, "lang": "zh",
+    assert core.config() == {"resources": [], "demo": True, "lang": "zh", "theme": None,
                              "analysis_enabled": True, "selftest_mode": False}
     assert set(core.config()) == set(contracts.CONFIG_KEYS)
     core._save_config(["address"], False)
     core.set_lang("en")
     assert core._window.title == i18n.tr("title")
-    assert json.loads(core._config_path.read_text()) == {"resources": ["address"], "demo": False, "lang": "en"}
+    assert json.loads(core._config_path.read_text()) == {"resources": ["address"], "demo": False, "lang": "en", "theme": None}
     assert webgui.Api(core._config_path).config() == core.config()
     config = core.config()
     config["resources"].append("other")
@@ -155,7 +155,7 @@ def test_config_and_language(core):
     core._selftest = True
     assert core.config()[contracts.CONFIG_KEY_SELFTEST] is True
     core._save_config(["address"], False)
-    assert json.loads(core._config_path.read_text()) == {"resources": ["address"], "demo": False, "lang": "en"}
+    assert json.loads(core._config_path.read_text()) == {"resources": ["address"], "demo": False, "lang": "en", "theme": None}
     with pytest.raises(TypeError):
         core.set_lang(None)
 
@@ -164,7 +164,7 @@ def test_strings_and_public_surface(core):
     translated = core.strings()
     assert translated == {"lang": i18n.lang, "strings": {key: list(pair) for key, pair in i18n.STRINGS.items()}}
     assert {name for name in dir(core) if not name.startswith("_")} == {
-        "config", "strings", "set_lang", "poll", "selftest_report",
+        "config", "strings", "set_lang", "set_theme", "poll", "selftest_report",
         "analysis_enter", "analysis_leave", "analysis_open_path", "analysis_save_path",
         "seq_meta", "seq_preview", "seq_open_csv", "seq_save_csv", "seq_run", "seq_stop", "test_connection", "all_off", "scan_instruments",
         "list_meta", "list_draft", "list_compile", "list_open_json", "list_save_json", "list_run",
@@ -333,3 +333,49 @@ def test_config_writes_are_serialized_without_blocking_reserve(core, monkeypatch
     assert maximum == 1
     assert json.loads(core._config_path.read_text()) == {
         k: v for k, v in core.config().items() if k not in ("analysis_enabled", "selftest_mode")}
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_theme_survives_language_and_resource_writes(core, theme):
+    core._save_config(["address"], False)
+    core.set_theme(theme)
+    assert core.config()["theme"] == theme
+    core.set_lang("en")
+    assert json.loads(core._config_path.read_text()) == dict(
+        resources=["address"], demo=False, lang="en", theme=theme)
+    core._save_config(["new address"], True)
+    assert json.loads(core._config_path.read_text()) == dict(
+        resources=["new address"], demo=True, lang="en", theme=theme)
+    assert webgui.Api(core._config_path).config() == core.config()
+
+
+@pytest.mark.parametrize("theme", [None, True, 1, [], {}, "", "soft-dark", "DARK"])
+def test_set_theme_rejects_invalid_values_without_writing(core, theme):
+    core.set_theme("dark")
+    before = core._config_path.read_text()
+    with pytest.raises(ValueError if isinstance(theme, str) else TypeError):
+        core.set_theme(theme)
+    assert core.config()["theme"] == "dark"
+    assert core._config_path.read_text() == before
+
+
+@pytest.mark.parametrize("theme", [None, "light", "dark"])
+def test_analysis_url_receives_saved_theme(core, monkeypatch, theme):
+    from urllib.parse import parse_qs, urlsplit
+    from n6705c_seq.analysis.server import Handle
+
+    if theme is not None:
+        core.set_theme(theme)
+    server = Mock()
+    server.url.side_effect = Handle(Mock(token="test-token"), None, 12345).url
+    core._server = server
+    monkeypatch.setattr(core, "_ensure_analysis_server", lambda: None)
+    monkeypatch.setattr(contracts, "ANALYSIS_ENABLED", True)
+    reply = core.analysis_enter()
+    assert reply["ok"] is True
+    fragment = parse_qs(urlsplit(reply["url"]).fragment)
+    assert fragment.get("theme") == (None if theme is None else [theme])
+    if theme is None:
+        server.url.assert_called_once_with(reply["gen"], i18n.lang)
+    else:
+        server.url.assert_called_once_with(reply["gen"], i18n.lang, theme)
