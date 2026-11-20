@@ -490,3 +490,23 @@ List 編譯輸出為 ConstantDwellArb，points() 的電壓跳變皆為 Δt=0，�
 - 實機未驗：List 停止鈕、擷取等待中按停止、E36441A 停止。
 - UX：連線階段（`connect_group`／`detect_model`）卡 VISA 逾時時按停止沒有「停止中」回饋。
 - 分支提醒：本機 `test/record-enabled`（`RECORD_ENABLED=True`）不得合併；新工作一律從 main 開。
+
+## 15. UI 主題與版面改版（2026-11-20；分支 `feat/ui-theme`，PR 到 main）
+計畫與拆解：`docs/ui-theme-plan.md`、`docs/ui-theme-parallel.md`。流程：Opus 規劃 → Codex sol（medium）在獨立 worktree 實作 → Opus 審 A0／B／D → Claude 整合（PR #44 合 A0；B、C、D、E1、E2 以 `--no-ff` 合進 `feat/ui-theme`）。
+
+**已完成（pytest 1751 過／7 跳過；JS 89 過）**
+- 淺色／深色主題，殼層與 Viewer 同步：`style.css` 最前面的 `theme-tokens` 區塊是單一來源（含 `--ch1..8`、`--plot-*`），`viewer.html` 內聯同值（`tests/analysis/test_viewer_tokens.py` 比對）。
+- 設定檔 `~/.n6705c_seq_gui.json` 多 `theme`（`light`／`dark`／`null`）；`null` 時首次啟動依 `prefers-color-scheme` 決定一次，不寫回。`_save_config` 在鎖內沿用現有 theme，所以改語言或位址不會清掉主題。`set_theme` 在 `SELFTEST_JS_API_DENIED`。
+- 殼層 → Viewer：iframe 訊息 `{type:"theme"}` 與 URL `&theme=`；`server.url` 對非法 theme 丟 `ValueError`。Viewer 只剩 dark／light（刪 soft-dark 與下拉）；server `_THEMES` 與 `/prefs` 不變，舊 prefs 的 `soft-dark` 仍合法。
+- 版面：Viewer 滿版 grid；連線區單列 `.connbar`；分頁膠囊；四支 CSS 無寫死顏色（`tests/test_css_tokens.py`）。
+- 通道色：SEQ／List／Record 取 `--chN`，`form.PALETTE` 只當後備（`tests/test_theme_contract.py` 凍結全部 token 色值）；SEQ 使用者改過的列（`dataset.custom`）切主題不被覆蓋。CSV 沒有顏色欄位，不需遷移。
+
+**實機未驗**
+- macOS／Windows 實際視覺：淺／深主題、最小視窗 connbar 換行與 `fitZoom`、Viewer 1920 寬滿版與 LOD 速度、白底列印 PNG 黃色通道。
+- Windows WebView2：`prefers-color-scheme`、`<input type=color>`、`zoom`。
+
+**已知限制／後續**
+- Viewer 圈選框仍寫死舊藍色 `rgba(74,158,234,…)`；比對檔黃 `#ffe45f` 在白底列印看不清；HTML 報告色點未經白底映射。
+- `webgui.set_theme` 在鎖外讀 resources／demo（`set_lang` 同樣），與位址存檔同時發生可能寫回舊位址。
+- `set_theme` 被拒時 UI 不變但無錯誤提示（`btn-lang` 同樣）。
+- 教訓：給 Codex 的「註解不可含中日韓文字」只適用外部 CSS／`seq.css`／`record.css`／`list.js`，D 曾因指示過寬刪掉 ~306 行 `viewer.html` 中文註解（已還原）。下次寫清楚適用檔案。

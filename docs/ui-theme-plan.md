@@ -1,6 +1,6 @@
 # UI 主題與版面改版：開工計畫
 
-2026-11-20 規劃，**尚未開工**。照 HANDOFF §9.3：使用者對每個階段說「開工」才動程式碼；實作交 Codex，審查交 Opus，Claude 驗收；使用者說 commit 才 commit；新工作一律從 main 開分支。視覺參考：`../示波器截圖_html/scope_tool/web/static/css/app.css:4-24`。
+2026-11-20 規劃並完成實作（Wave 0–1 已合併 `feat/ui-theme`；狀態見 HANDOFF §15）。照 HANDOFF §9.3：使用者對每個階段說「開工」才動程式碼；實作交 Codex，審查交 Opus，Claude 驗收；使用者說 commit 才 commit；新工作一律從 main 開分支。視覺參考：`../示波器截圖_html/scope_tool/web/static/css/app.css:4-24`。
 
 ## 1. 目標與非目標
 
