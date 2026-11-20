@@ -92,7 +92,7 @@ A0 合併之後，下表的內容在 Wave 1 期間**不准修改**。需要改�
 
 ### B 主題機制（Wave 1）
 - **目標**：計畫 §3.1–3.4。設定檔讀寫 theme；第一次啟動用 `matchMedia` 決定一次；`btn-theme` 切換主題；設定 `data-theme`；`emit("theme")`；`analysis.js` 把 theme 訊息送進 iframe；Viewer 的 URL 帶上 theme。
-- **寫入範圍**：`form.py`（`load_config` 和 `save_config`，不碰 `PALETTE`）、`webgui.py`、`web/app.js`、`web/analysis.js`、`analysis/contracts.py`（僅 `CONFIG_KEYS` 加 `"theme"`）、`tests/test_webgui.py` 的 config 斷言。
+- **寫入範圍**：`form.py`（`load_config` 和 `save_config`，不碰 `PALETTE`）、`webgui.py`、`web/app.js`、`web/analysis.js`、`analysis/contracts.py`（僅 `CONFIG_KEYS` 加 `"theme"` 與 `SELFTEST_JS_API_DENIED` 加 `"set_theme"`）、`tests/test_webgui.py` 的 config 斷言。
 - **測試**：
   - `tests/test_form.py`：theme 讀寫，包含舊設定檔沒有 theme、theme 為非法值兩種情況。
   - `tests/test_webgui.py`：config 和設定檔的 JSON 斷言都要多一個 `"theme"`。必須新增一個測試：**先設定 theme，再切換語言，確認 theme 沒有被清掉**（計畫 §6 P0 的風險）。
