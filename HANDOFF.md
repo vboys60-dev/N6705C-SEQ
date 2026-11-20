@@ -2,7 +2,7 @@
 
 多台 N6705C 的**上電時序**工具。讀 CSV 表（每通道：延遲、低/高電壓、上升/維持/下降時間），在多台主機上依表上電。設計兩台（8 通道），程式不限台數。
 
-最後更新：2026-11-20　`main` b43635e（PR #52 之後）。pytest 1768 過／7 跳過；`node --test tests/js/*.test.js` 90 過；GUI 是 pywebview。細節看 git log；本檔只留接手需要的事實。
+最後更新：2026-11-20　`main` 3bcaff4（PR #55 之後）。pytest 1774 過／7 跳過；`node --test tests/js/*.test.js` 90 過；GUI 是 pywebview。細節看 git log；本檔只留接手需要的事實。
 
 | 區塊 | 狀態 |
 |---|---|
@@ -186,7 +186,7 @@ diff -u ../N6705C-APP/src/n6705c/core/<file> src/n6705c/core/<file>
 
 自 `d6b9d2a` 起動到 core 的重點：`dlog.py`（`start()` 的 ARMED／BUS／IMM 處理、`retrieve()` 逐檔追蹤只刪已成功下載者、`wait()` 只在 RUNNING 輪詢）、`elog.py`（`ElogSinkError`／`ElogFetchError`、嚴格 `SYST:ERR?` 解析、`_request_autorange` 容忍 +310、`fetch(max_records)`／`fetch_tail`、`ElogRecorder.run()` 阻塞式與 tail／on_event／on_cleanup、`stop()` 只在 ABOR 成功才 STOPPED、`ElogAlignmentError`）、`fake.py`（slew／ARB source／真格式 `.dlog`）、`arb/multi.py`（`arm()` 回滾含當前通道、文件修正）、`arb/runner.py`（`ARB:SEQ:LENG?`）、`session.py`（`read_errors` 嚴格化）、`instrument.py`／`group.py`（連線建構失敗關閉 transport，PR #47）、`transport.py`（`scan_resources`、原生 VISA 探測）。
 
-## 14. 全專案審查與修復（PR #31–#52）
+## 14. 全專案審查與修復（PR #31–#55）
 
 流程：Codex（sol／astra）審查 → Opus 複核降級 → 任務拆分 → Codex 各開 worktree 並行 → Opus 驗收（突變驗證）→ 合併。
 
@@ -196,9 +196,11 @@ diff -u ../N6705C-APP/src/n6705c/core/<file> src/n6705c/core/<file>
 - `Session.read_errors` 嚴格化（csv strict、兩欄、整數 code、最多 50 筆，否則 `ErrorQueueError`）；ELOG `init_attempted`、`stop()` 重試語意。
 - 存檔：補副檔名後再確認覆寫；`atomic_text` 用唯一 `.<名>.<uuid>.tmp` 以 `"x"` 排他建立（PR #47，重疊儲存不互踩、不碰既有 `.tmp`）；DLOG 上限 359_996_400 s（`dlog.py` 與 `record/contracts.py` 各留常值，測試保證相等）；DLOG 尾端不完整改 log 警告、不拋錯。
 - **停止涵蓋整個執行週期**：SEQ／List 都有「■ 停止」鈕（`seq_stop` 設共用 Event；List 啟動必須自己 `clear()`）；`_check_stop` 在每筆設定寫入前、`OUTP ON` 前、ARB 下載前、觸發來源設定後每台執行緒的 `INIT:TRAN`／`*TRG` 前，E36441A 在 prepare／configure／arm 每筆寫入前與 `*TRG` 前（PR #41、#48）；停止丟 `PlanStopped`（`PlanRejected` 子類，PR #49），worker 先接住並顯示「已停止」資訊訊息（不再顯示拒絕）；`run_functions` 以 `runner.stopped` 回報「因停止而關輸出」，List／SEQ 完成訊息優先判斷停止（PR #43、#46；E36441A 路徑用 `self._stop.is_set()`）。擷取等待 `stop.wait`；`fire_together` 例外時先 join 已啟動執行緒再重拋。
+- **Opus high 全專案審查（PR #54、#55）**：E36441A 設定中停止改顯示「已停止」；`_save_config` 寫入失敗（`OSError`）只警告、不擋 Run／List run（`_Core._save_quietly`）；`form.save_config` 走 `atomic_text`；`fire_together` 優先回報非 `BrokenBarrierError` 的錯誤；E36441A Ctrl-C 印訊息回 130；錄製存檔對話框忙碌回 `sink` 錯誤（不再靜默取消）；`_failure_code` 的 SCPI 比對只認帶正負號的 `+323,`／`-310,`（後端把 SCPI 錯誤包成 `RuntimeError` 文字，regex 不能拿掉）。
 - 感測線欄（PR #37）、預覽「限流留空」警告（PR #36）。
 
 **已知限制（刻意不修）**
+- List 的 `ConstantDwellArb` 電壓跳變是瞬間跳階，`slew_warnings` 刻意不計（審查曾建議改為 ΔV／dwell，已駁回；既有測試斷言不警告）。
 - ELOG `session.stop()` 重試仍失敗時 `web_record` 仍 `_release`（ELOG 只量測不驅動輸出）。
 - 停止檢查與實際寫入間仍有微秒級空隙；多台同時啟動時可能 A 台已送 `INIT`、B 台才檢查到停止（結果仍是例外＋全部關輸出）。
 - 停止後 settle 期間（1 s）要等 sleep 結束才中止，之後不再送 LIST／INIT／`*TRG`。
