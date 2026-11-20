@@ -90,7 +90,9 @@ class _Core:
             gen, denied = self._gate.enter(self._ensure_analysis_server)
             if denied:
                 return self._analysis_error(denied)
-            return {"ok": True, "gen": gen, "url": self._server.url(gen, i18n.lang)}
+            theme = self._config["theme"]
+            url = self._server.url(gen, i18n.lang) if theme is None else self._server.url(gen, i18n.lang, theme)
+            return {"ok": True, "gen": gen, "url": url}
         except Exception as exc:
             return self._analysis_error("server", error=str(exc))
 
@@ -161,10 +163,11 @@ class _Core:
                 return None
         return path
 
-    def _save_config(self, resources: list[str], demo: bool) -> None:
+    def _save_config(self, resources: list[str], demo: bool, *, theme: str | None = None) -> None:
         with self._config_lock:
-            self._config = {"resources": list(resources), "demo": demo, "lang": i18n.lang}
-            form.save_config(self._config_path, self._config["resources"], demo, self._config["lang"])
+            self._config = {"resources": list(resources), "demo": demo, "lang": i18n.lang,
+                            "theme": self._config["theme"] if theme is None else theme}
+            form.save_config(self._config_path, self._config["resources"], demo, self._config["lang"], self._config["theme"])
 
     def _on_closing(self) -> bool:
         result = self._gate.on_closing()
@@ -256,6 +259,13 @@ class _Core:
         self._save_config(self._config["resources"], self._config["demo"])
         if self._window is not None:
             self._window.set_title(tr("title"))
+
+    def set_theme(self, theme: str) -> None:
+        if not isinstance(theme, str):
+            raise TypeError("theme must be a string")
+        if theme not in contracts.THEMES:
+            raise ValueError("theme must be light or dark")
+        self._save_config(self._config["resources"], self._config["demo"], theme=theme)
 
     def poll(self) -> list[list]:
         events = []

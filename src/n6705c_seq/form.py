@@ -60,13 +60,14 @@ def load_config(path: Path) -> dict:
                 and isinstance(demo, bool)):
             raise TypeError("bad schema")
         return {"resources": resources, "demo": demo,
-                "lang": saved.get("lang") if saved.get("lang") in ("zh", "en") else "zh"}
+                "lang": saved.get("lang") if saved.get("lang") in ("zh", "en") else "zh",
+                "theme": saved.get("theme") if saved.get("theme") in ("light", "dark") else None}
     except (OSError, ValueError, KeyError, TypeError):
-        return {"resources": [], "demo": True, "lang": "zh"}
+        return {"resources": [], "demo": True, "lang": "zh", "theme": None}
 
 
-def save_config(path: Path, resources: list[str], demo: bool, lang: str) -> None:
-    path.write_text(json.dumps({"resources": resources, "demo": demo, "lang": lang}))
+def save_config(path: Path, resources: list[str], demo: bool, lang: str, theme: str | None) -> None:
+    path.write_text(json.dumps({"resources": resources, "demo": demo, "lang": lang, "theme": theme}))
 
 
 def default_raw(count: int) -> list[dict]:

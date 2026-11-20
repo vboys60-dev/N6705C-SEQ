@@ -15,7 +15,7 @@
   };
   const App = window.App = {
     api: null,
-    lang: "zh", busy: false, kind: null, config: {},
+    lang: "zh", theme: null, busy: false, kind: null, config: {},
     state: "idle", gen: 0, stateSeq: -1, powerAllowed: true,
     t(key) { return strings[key]?.[this.lang === "en" ? 1 : 0] ?? key; },
     on(type, fn) {
@@ -127,6 +127,27 @@
     for (const tab of tabs) tab.relabel();
     emit("lang");
   });
+  function applyTheme(theme) {
+    App.theme = theme;
+    (document.documentElement.dataset ||= {}).theme = theme;
+    const button = document.getElementById("btn-theme");
+    if (button) button.dataset.i18n = theme === "dark" ? "theme_light" : "theme_dark";
+    App.relabel();
+    emit("theme", theme);
+  }
+  let changingTheme = false;
+  document.getElementById("btn-theme")?.addEventListener("click", async () => {
+    if (!ready || changingTheme) return;
+    changingTheme = true;
+    try {
+      const next = App.theme === "dark" ? "light" : "dark";
+      await App.api.set_theme(next);
+      App.config.theme = next;
+      applyTheme(next);
+    } finally {
+      changingTheme = false;
+    }
+  });
   window.addEventListener("pywebviewready", async () => {
     App.api = window.pywebview.api;
     poll();
@@ -139,7 +160,8 @@
       document.title = App.t("title");
       for (let i = 0; i < 2; i++) document.getElementById(`res-${i}`).value = config.resources[i] ?? "";
       document.getElementById("chk-demo").checked = config.demo;
-      App.relabel();
+      applyTheme(config.theme === "light" || config.theme === "dark" ? config.theme
+        : window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light");
       ready = true;
       for (const tab of tabs) await tab.init();
       emit("ready");
