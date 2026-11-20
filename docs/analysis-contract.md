@@ -304,7 +304,9 @@ def start_server(gate: GateForServer, *, cache_root: Path | None = None,
 
 外殼：`iframe.src = r.url + "&parent=" + encodeURIComponent(location.origin)`；`analysisOrigin = new URL(r.url).origin`；`currentGen = r.gen`。
 
-Viewer：讀 fragment 的 `t`、`gen`、`lang`、`parent`，讀完 `history.replaceState` 清掉 fragment。`parent` 不符 `PARENT_ORIGIN_PATTERN` → 顯示錯誤、停用開檔與存檔。所有 API 請求帶 `X-Analysis-Token`、`X-Analysis-Gen`。
+Viewer URL：`viewer.html#t=…&gen=…&lang=…&theme=…`，由 `url(gen, lang, theme=None)` 產生；`theme` 為 `None` 時省略 `&theme=`。
+
+Viewer：讀 fragment 的 `t`、`gen`、`lang`、`theme`、`parent`，讀完 `history.replaceState` 清掉 fragment。`parent` 不符 `PARENT_ORIGIN_PATTERN` → 顯示錯誤、停用開檔與存檔。所有 API 請求帶 `X-Analysis-Token`、`X-Analysis-Gen`。
 
 ### 4.2 訊息
 
@@ -324,17 +326,19 @@ Viewer：讀 fragment 的 `t`、`gen`、`lang`、`parent`，讀完 `history.repl
 | `save_request` | 外殼 | `id` 同上；`purpose ∈ SavePurpose`；`suggested` 為字串（長度與字元由 `analysis_save_path` 再驗） |
 | `open_result`／`save_result` | iframe | `id` 在自己待回覆清單中，**且**該 id 當初送出的是對應的 `open_request`／`save_request`；`ok` 為布林；處理後自清單移除（同 id 第二次回覆丟棄） |
 | `lang` | iframe | `lang ∈ LANGS`（`"zh"`、`"en"`）；**不驗 `id`** |
+| `theme` | iframe | `theme ∈ THEMES`（`"light"`、`"dark"`）；**不驗 `id`** |
 | `open_push` | iframe | `grant` 非空字串；`name` 為非空 basename 字串（不得含 `/`、`\\`）；通過 source/origin/v/gen 檢查，不驗 `id`、不依賴 pending request。長工作中忽略並顯示 Viewer toast |
 
-只有 `*_result` 以 `id` 配對；`ready`、`lang`、`open_push` 沒有 `id`。
+只有 `*_result` 以 `id` 配對；`ready`、`lang`、`theme`、`open_push` 沒有 `id`。
 
 | type | 方向 | 欄位 | 處理 |
 |---|---|---|---|
-| `ready` | iframe→外殼 | — | 外殼可在此後送 `lang` |
+| `ready` | iframe→外殼 | — | 外殼可在此後送 `lang` 和 `theme` |
 | `open_request` | iframe→外殼 | `id, purpose`(OpenPurpose) | 外殼呼叫 `analysis_open_path(gen, purpose)`，以 `open_result` 回覆 |
 | `save_request` | iframe→外殼 | `id, purpose`(SavePurpose), `suggested` | 外殼呼叫 `analysis_save_path(gen, purpose, suggested)`，以 `save_result` 回覆 |
 | `open_result` / `save_result` | 外殼→iframe | `id, ok, error?, code?, cancelled?, grant?, name?` | 欄位即 `PathResult`；iframe 依 `id` 對回 Promise |
 | `lang` | 外殼→iframe | `lang`("zh"/"en") | Viewer 即時切語言；Viewer 自己的語言切換 UI 隱藏 |
+| `theme` | 外殼→iframe | `theme`("light"/"dark") | 信封為 `{v:1, type:"theme", gen, theme}`；ready 時送一次，之後每次 `App.on("theme")` 再送一次 |
 | `open_push` | 外殼→iframe | `grant, name` | K 的 `App.openRecorded()`：等停止完成且 idle → `analysis_enter` → 等同世代 Viewer `ready` → `record_load(gen)` 取最後完成檔授權 → 送推送。V 共用主檔載入流程，以 grant 呼叫 `/open`，沒有原生對話框；JS 不傳檔案路徑，server 不改 |
 
 - `id`：iframe 每次載入內唯一（例 `"r"+遞增數`），≤64 字元。不設逾時（對話框可能開很久）；iframe 重載即全部作廢。

@@ -203,7 +203,11 @@ def test_health_selfcheck_and_static(env):
     st, r, b = env.req("GET", "/viewer.html", token=False, gen=None)
     assert st == 200 and "frame-ancestors" in r.getheader("Content-Security-Policy")
     assert r.getheader("Cache-Control") == "no-store"
-    assert env.srv.url(3, "zh").endswith("/viewer.html#t=%s&gen=3&lang=zh" % env.srv.token)
+    base_url = "%s/viewer.html#t=%s&gen=3&lang=zh" % (env.srv.origin, env.srv.token)
+    assert env.srv.url(3, "zh") == base_url
+    assert env.srv.url(3, "zh", theme=None) == base_url
+    for theme in c.THEMES:
+        assert env.srv.url(3, "zh", theme) == base_url + "&theme=" + theme
 
 
 def test_no_token_and_bad_token(live):

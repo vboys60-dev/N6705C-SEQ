@@ -157,6 +157,7 @@ class EnterResult(TypedDict):
     code: NotRequired[str]   # DenyCode value
     gen: NotRequired[int]
     url: NotRequired[str]    # "http://127.0.0.1:<port>/viewer.html#t=<token>&gen=<gen>&lang=<zh|en>"
+                             # Append &theme=<light|dark> unless theme is None.
 
 
 class LeaveResult(TypedDict):
@@ -395,6 +396,7 @@ class Msg(str, Enum):
     OPEN_PUSH = "open_push"        # shell -> iframe, unsolicited primary recording load
     SAVE_RESULT = "save_result"    # shell -> iframe
     LANG = "lang"                  # shell -> iframe
+    THEME = "theme"                # shell -> iframe
 
 
 # Required fields per message type, besides v/type/gen. Receiver rejects unknown types, types
@@ -407,10 +409,12 @@ MSG_FIELDS: dict[Msg, frozenset[str]] = {
     Msg.OPEN_PUSH: frozenset({"grant", "name"}),
     Msg.SAVE_RESULT: frozenset({"id", "ok"}),
     Msg.LANG: frozenset({"lang"}),
+    Msg.THEME: frozenset({"theme"}),
 }
 MSG_TO_SHELL = frozenset({Msg.READY, Msg.OPEN_REQUEST, Msg.SAVE_REQUEST})
-MSG_TO_IFRAME = frozenset({Msg.OPEN_RESULT, Msg.OPEN_PUSH, Msg.SAVE_RESULT, Msg.LANG})
+MSG_TO_IFRAME = frozenset({Msg.OPEN_RESULT, Msg.OPEN_PUSH, Msg.SAVE_RESULT, Msg.LANG, Msg.THEME})
 LANGS = ("zh", "en")
+THEMES = ("light", "dark")
 
 
 class MsgBase(TypedDict):
@@ -524,7 +528,9 @@ class ServerHandle(Protocol):
     origin: str  # "http://127.0.0.1:<port>"
     token: str   # secrets.token_urlsafe(32), per process start
 
-    def url(self, gen: int, lang: str) -> str: ...
+    def url(self, gen: int, lang: str, theme: str | None = None) -> str:
+        """Viewer URL with optional theme fragment; None omits &theme=."""
+        ...
 
     def release_resources(self) -> bool:
         """Close memmaps/_open_cache/NpzFile. False if something is still referenced (do not force)."""

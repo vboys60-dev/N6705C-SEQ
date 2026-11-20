@@ -2,6 +2,8 @@
 
 STRINGS = {
     "other_language": ("English", "中文"),
+    "theme_light": ("淺色主題", "Light Theme"),
+    "theme_dark": ("深色主題", "Dark Theme"),
     "title": ("N6705C 上電時序工具-品勛科技股份有限公司 免費提供 ", "N6705C Power Sequence Tool — provided free by PINSYUN Technology"),
     "webview2_missing": ("找不到 Microsoft WebView2 Runtime。請從 https://developer.microsoft.com/microsoft-edge/webview2/ 下載並安裝；離線環境請使用 Standalone Installer。", "Microsoft WebView2 Runtime is missing. Download and install it from https://developer.microsoft.com/microsoft-edge/webview2/ ; use the Standalone Installer for offline environments."),
     "sequence_tab": ("上電時序", "Power Sequence"),

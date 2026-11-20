@@ -15,7 +15,7 @@ from .plan import SeqRow, order_warnings
 
 FRAMES = 2
 CONFIG: Path = Path.home() / ".n6705c_seq_gui.json"
-PALETTE = ["#e05252", "#4a7fe8", "#55b685", "#e8833a", "#a855f0", "#52b2d0", "#e0b43c", "#dc5090"]
+PALETTE = ["#f0e442", "#56b4e9", "#e58fc4", "#3dd6a3", "#e69f00", "#b79cff", "#f4845f", "#a6d854"]
 
 # name, delay, low, high, rise, hold, fall, current limit  (ms / V / A)
 DEFAULTS = [

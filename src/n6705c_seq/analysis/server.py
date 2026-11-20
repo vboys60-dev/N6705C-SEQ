@@ -628,8 +628,9 @@ class Handle:
         self.origin = "http://%s:%d" % (c.HOST, port)
         self.token = app.token
 
-    def url(self, gen, lang):
-        return "%s/viewer.html#t=%s&gen=%d&lang=%s" % (self.origin, self.token, gen, lang)
+    def url(self, gen, lang, theme=None):
+        url = "%s/viewer.html#t=%s&gen=%d&lang=%s" % (self.origin, self.token, gen, lang)
+        return url if theme is None else url + "&theme=" + theme
 
     def release_resources(self):
         return self._app.release_all()
