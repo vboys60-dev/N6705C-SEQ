@@ -379,3 +379,24 @@ def test_analysis_url_receives_saved_theme(core, monkeypatch, theme):
         server.url.assert_called_once_with(reply["gen"], i18n.lang)
     else:
         server.url.assert_called_once_with(reply["gen"], i18n.lang, theme)
+
+
+def test_theme_and_language_saves_never_revert_concurrent_resource_saves(core):
+    import threading
+
+    start = threading.Barrier(2)
+
+    def toggle():
+        start.wait()
+        for i in range(200):
+            core.set_theme("dark" if i % 2 else "light")
+            core.set_lang("en" if i % 2 else "zh")
+
+    worker = threading.Thread(target=toggle)
+    worker.start()
+    start.wait()
+    core._save_config(["new address"], False)
+    worker.join()
+    saved = json.loads(core._config_path.read_text())
+    assert saved["resources"] == ["new address"] and saved["demo"] is False
+    assert core.config()["resources"] == ["new address"]
