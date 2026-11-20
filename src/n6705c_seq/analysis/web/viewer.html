@@ -5,52 +5,65 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>N6705C DLOG Viewer - MEM3 Performance Preview</title>
 <style>
+/* theme-tokens:begin */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-hi: #eef0f4;
+  --border: #c9ced8;
+  --text: #1b1f29;
+  --text-dim: #4a5263;
+  --accent: #0a5fc2;
+  --accent-text: #ffffff;
+  --danger: #b42318;
+  --ok: #1e7f4f;
+  --warn: #8a5a00;
+  --plot-bg: #ffffff;
+  --plot-grid: #d9d9d9;
+  --plot-axis: #5c5c5c;
+  --plot-text: #333333;
+  --ch1: #7a6a00;
+  --ch2: #0068a8;
+  --ch3: #b4367f;
+  --ch4: #00785a;
+  --ch5: #9a5b00;
+  --ch6: #6a4bc4;
+  --ch7: #b8401a;
+  --ch8: #4a7a12;
+}
+:root[data-theme="dark"] {
+  --bg: #1b1f29;
+  --surface: #262b38;
+  --surface-hi: #303645;
+  --border: rgba(255,255,255,.16);
+  --text: #f2f4f8;
+  --text-dim: #cdd3de;
+  --accent: #8cc4ff;
+  --accent-text: #0b1220;
+  --danger: #ff8f87;
+  --ok: #62dd98;
+  --warn: #f7cd5f;
+  --plot-bg: #000000;
+  --plot-grid: #3a3a3a;
+  --plot-axis: #8a8a8a;
+  --plot-text: #d4d4d4;
+  --ch1: #f0e442;
+  --ch2: #56b4e9;
+  --ch3: #e58fc4;
+  --ch4: #3dd6a3;
+  --ch5: #e69f00;
+  --ch6: #b79cff;
+  --ch7: #f4845f;
+  --ch8: #a6d854;
+}
+/* theme-tokens:end */
   :root{
-    --bg:#141417;
-    --panel:#1a1a1f;
-    --panel-2:#202026;
-    --border:#302f37;
-    --text:#e9e9ec;
-    --text-dim:#98979f;
-    --text-faint:#68666f;
-    --ch1:#f0a83c;
-    --ch2:#66cf5c;
-    --ch3:#4a9eea;
-    --ch4:#e662b0;
-    --danger:#e2574c;
+    --panel:var(--surface);
+    --panel-2:var(--surface-hi);
+    --text-faint:var(--text-dim);
     --radius:10px;
     --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, 'Courier New', monospace;
     --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
-  }
-  /* 柔和深色：偏暖炭灰底、降低對比與飽和度，長時間觀看較不刺眼 */
-  html[data-theme="soft-dark"]{
-    --bg:#211f1c;
-    --panel:#282523;
-    --panel-2:#302c29;
-    --border:#413b35;
-    --text:#ece6db;
-    --text-dim:#a89f92;
-    --text-faint:#7d7468;
-    --ch1:#e0a868;
-    --ch2:#8fbb7a;
-    --ch3:#7ba7c9;
-    --ch4:#c98bab;
-    --danger:#d97a6c;
-  }
-  /* 淺色紙感：明亮環境使用，曲線色加深以維持對比與辨識度 */
-  html[data-theme="light"]{
-    --bg:#f4f1ea;
-    --panel:#ffffff;
-    --panel-2:#f1ede4;
-    --border:#ddd6c8;
-    --text:#2b2820;
-    --text-dim:#6b6357;
-    --text-faint:#948c7d;
-    --ch1:#a8600f;
-    --ch2:#3f8f3a;
-    --ch3:#2f6fb0;
-    --ch4:#b23f82;
-    --danger:#c0392b;
   }
   *{ box-sizing:border-box; }
   html,body{ height:100%; }
@@ -62,17 +75,21 @@
     font-size:14px;
     line-height:1.5;
   }
-  ::selection{ background:#4a9eea55; }
+  ::selection{ background:var(--accent); color:var(--accent-text); }
   :focus-visible{ outline:2px solid var(--ch3); outline-offset:2px; }
 
   .app{
-    max-width:1180px;
-    margin:0 auto;
-    padding:20px 20px 60px;
-    display:flex;
-    flex-direction:column;
+    width:100%;
+    min-height:100%;
+    padding:16px;
+    display:grid;
+    grid-template-rows:auto auto minmax(0,1fr) auto;
+    align-content:start;
+    min-width:0;
     gap:16px;
   }
+
+  .viewer-controls{ display:grid; gap:16px; min-width:0; }
 
   /* ---------- Topbar ---------- */
   .topbar{
@@ -89,7 +106,7 @@
     width:38px; height:38px; border-radius:8px;
     background:linear-gradient(135deg,var(--ch1),var(--ch2) 33%,var(--ch3) 66%,var(--ch4));
     display:flex; align-items:center; justify-content:center;
-    font-family:var(--mono); font-weight:700; color:#111; font-size:13px;
+    font-family:var(--mono); font-weight:700; color:var(--plot-bg); font-size:13px;
     flex:none;
   }
   .brand h1{ margin:0; font-size:16px; letter-spacing:0.06em; font-weight:700; }
@@ -133,16 +150,11 @@
     background:var(--panel-2); border:none; color:var(--text-dim);
     padding:6px 12px; font-size:12px; cursor:pointer; font-family:var(--sans);
   }
-  .lang-switch button.active{ background:var(--ch3); color:#0d0d10; font-weight:700; }
+  .lang-switch button.active{ background:var(--accent); color:var(--accent-text); font-weight:700; }
   .lang-switch button:not(.active):hover{ color:var(--text); }
 
   .file-controls{ display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
   .control-row{ display:flex; gap:8px; align-items:center; }
-  .theme-select{
-    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
-    padding:6px 10px; border-radius:8px; font-size:12px; cursor:pointer; font-family:var(--sans);
-  }
-  .theme-select:focus{ outline:none; border-color:var(--ch3); }
   .file-btn{
     display:inline-flex; align-items:center; gap:6px;
     background:var(--panel-2); border:1px solid var(--border);
@@ -173,7 +185,7 @@
   }
   .trace-group{ display:grid; grid-template-columns:96px minmax(0,1fr); align-items:start; gap:14px; }
   .group-label{ font-size:12px; color:var(--text-dim); font-weight:600; padding-top:8px; width:96px; flex:none; }
-  /* 右軸種類切換（電流／功率）：取代原本固定的「電流」文字標籤 */
+  /* Right-axis type selector (current/power): replaces the fixed Current label. */
   .right-axis-select{
     background:var(--panel-2); border:1px solid var(--border); color:var(--text);
     padding:5px 8px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;
@@ -182,7 +194,7 @@
   .right-axis-select:focus{ outline:none; border-color:var(--ch3); }
   .trace-chips{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
   .chip{
-    --chip-color:#888;
+    --chip-color:var(--plot-axis);
     display:flex; align-items:center; gap:6px;
     background:var(--panel-2); border:1px solid var(--border); border-left:3px solid var(--chip-color);
     border-radius:8px; padding:6px 8px;
@@ -202,7 +214,7 @@
   /* ---------- Chart ---------- */
   .chart-section{
     background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
-    padding:14px 16px 16px; display:flex; flex-direction:column; gap:12px;
+    padding:14px 16px 16px; min-width:0; display:flex; flex-direction:column; gap:12px;
   }
   .chart-toolbar{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; font-size:12.5px; }
   .chart-toolbar button{
@@ -234,7 +246,7 @@
   }
   .axis-ctrl input[type=number]:disabled{ opacity:.5; }
 
-  .chart-wrap{ position:relative; width:100%; height:clamp(360px, calc(100vh - 300px), 860px); }
+  .chart-wrap{ position:relative; width:100%; flex:1; min-height:360px; background:var(--plot-bg); }
   canvas#chart{ width:100%; height:100%; display:block; cursor:crosshair; }
   .empty-state{
     position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -253,10 +265,10 @@
     position:absolute; top:1px; bottom:1px; left:0; width:40px; min-width:18px;
     background:var(--ch3); border-radius:6px; cursor:grab;
   }
-  .ts-thumb:hover{ background:#5aa8ee; }
-  .ts-thumb.dragging{ cursor:grabbing; background:#5aa8ee; }
+  .ts-thumb:hover{ background:var(--accent); }
+  .ts-thumb.dragging{ cursor:grabbing; background:var(--accent); }
 
-  /* ---------- 折疊面板：用完就收，減少常駐佔位（原生 <details>，無需 JS 控制開合） ---------- */
+  /* ---------- Collapsible panels: collapse after use to save space (native <details>, no JS toggling needed) ---------- */
   .panel-fold{ margin-top:2px; }
   .panel-fold > summary{
     list-style:none; cursor:pointer; display:flex; align-items:center; gap:6px;
@@ -271,15 +283,15 @@
   .panel-fold[open] > summary::before{ transform:rotate(90deg); }
   .panel-fold > summary:hover{ color:var(--text); }
   .panel-fold > summary:hover::before{ color:var(--text-dim); }
-  /* mini 變體：用於行內說明文字這種比整個區塊小一級的折疊（例如負值校正的三行提示），
-     字級與顏色比照 .mt-hint，避免看起來像另一個獨立區塊標題 */
+  /* Mini variant for inline hints smaller than a full panel (e.g. the three-line negative-value correction hint).
+     Match .mt-hint font size and color so it does not look like a separate panel heading. */
   .panel-fold.mini > summary{
     font-size:11.5px; font-weight:400; color:var(--text-faint); padding:2px 0;
   }
   .panel-fold.mini > summary:hover{ color:var(--text-dim); }
   .panel-fold.mini .mt-hint{ margin-top:3px; }
 
-  /* ---------- 匯出工具列共用樣式（CSV / 圖片／報告 共用） ---------- */
+  /* ---------- Shared export toolbar styles (CSV / images / reports) ---------- */
   .export-bar{
     display:flex; align-items:center; gap:10px; flex-wrap:wrap;
     padding-top:10px; margin-top:2px; border-top:1px dashed var(--border);
@@ -348,7 +360,7 @@
 
   .toast{
     position:fixed; bottom:22px; left:50%; transform:translate(-50%,20px);
-    background:#26262e; border:1px solid #3a3a44; color:#f0f0ee;
+    background:var(--surface-hi); border:1px solid var(--border); color:var(--text);
     padding:9px 16px; border-radius:8px; font-size:12.5px;
     opacity:0; pointer-events:none; transition:opacity .18s ease, transform .18s ease;
     z-index:50;
@@ -396,11 +408,6 @@
           <button type="button" class="lang-opt active" data-lang="zh">中文</button>
           <button type="button" class="lang-opt" data-lang="en">EN</button>
         </div>
-        <select id="themeSelect" class="theme-select">
-          <option value="dark" data-i18n="themeDarkOpt">深色經典</option>
-          <option value="soft-dark" data-i18n="themeSoftDarkOpt">柔和深色</option>
-          <option value="light" data-i18n="themeLightOpt">淺色紙感</option>
-        </select>
       </div>
       <label class="file-btn" id="openMainBtn" role="button" tabindex="0">
         <span data-i18n="chooseFileBtn">選擇 .dlog 檔案</span>
@@ -414,6 +421,7 @@
     </div>
   </header>
 
+  <div class="viewer-controls">
   <div class="file-info-bar">
     <div class="file-info" id="fileInfo">尚未載入檔案</div>
     <div class="file-info" id="compareFileInfo" style="margin-top:4px;"><span class="dim" id="compareFileName">尚未載入比對檔案</span></div>
@@ -437,6 +445,8 @@
       <div class="trace-chips" id="currChips"></div>
     </div>
   </section>
+
+  </div>
 
   <section class="chart-section">
     <div class="chart-toolbar">
@@ -542,20 +552,35 @@
   // 外殼傳入的連線資訊（fragment：t、gen、lang、parent）；讀完立刻清掉 fragment。
   const shellCtx = (function(){
     const p = new URLSearchParams(location.hash.replace(/^#/, ''));
-    const c = { token:p.get('t')||'', gen:parseInt(p.get('gen'),10), lang:p.get('lang'), parent:p.get('parent')||'' };
+    const c = { token:p.get('t')||'', gen:parseInt(p.get('gen'),10), lang:p.get('lang'), theme:p.get('theme'), parent:p.get('parent')||'' };
     try{ history.replaceState(null, '', location.pathname + location.search); }catch(_){ /* ignore */ }
     c.ok = /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}$/.test(c.parent) && c.token.length>0 && Number.isInteger(c.gen);
     return c;
   })();
 
-  // 頁面外觀主題：同時涵蓋 CSS 介面色（見 <style> 內 html[data-theme=...]）
-  // 與 canvas 圖表繪製色（grid/軸文字/Marker線/曲線預設色），兩邊用同一組
-  // 色票確保視覺一致。曲線色特別挑選「柔和但彼此可辨識」的色調。
+  // Fallback palettes; theme changes overwrite the active palette with CSS tokens.
   const CHART_THEMES = {
-    dark:      { bg:'#1a1a1f', grid:'rgba(255,255,255,0.06)', axisText:'#98979f', markerLine:'rgba(255,255,255,0.5)',  markerLabel:'#e9e9ec', badgeFill:'#0d0d10', badgeText:'#ffffff', chColors:['#f0a83c','#66cf5c','#4a9eea','#e662b0'] },
-    'soft-dark':{ bg:'#282523', grid:'rgba(255,247,235,0.07)', axisText:'#a89f92', markerLine:'rgba(255,247,235,0.45)', markerLabel:'#ece6db', badgeFill:'#171412', badgeText:'#f2ede4', chColors:['#e0a868','#8fbb7a','#7ba7c9','#c98bab'] },
-    light:     { bg:'#ffffff', grid:'rgba(0,0,0,0.10)',       axisText:'#6b6357', markerLine:'rgba(0,0,0,0.40)',       markerLabel:'#2b2820', badgeFill:'#2b2820', badgeText:'#ffffff', chColors:['#a8600f','#3f8f3a','#2f6fb0','#b23f82'] },
+    light: { bg:'#ffffff', grid:'#d9d9d9', axisText:'#5c5c5c', markerLine:'#5c5c5c', markerLabel:'#333333', badgeFill:'#333333', badgeText:'#ffffff', chColors:['#7a6a00','#0068a8','#b4367f','#00785a'] },
+    dark: { bg:'#000000', grid:'#3a3a3a', axisText:'#8a8a8a', markerLine:'#8a8a8a', markerLabel:'#d4d4d4', badgeFill:'#d4d4d4', badgeText:'#000000', chColors:['#f0e442','#56b4e9','#e58fc4','#3dd6a3'] }
   };
+  function initialTheme(){
+    if(shellCtx.theme==='light' || shellCtx.theme==='dark') return shellCtx.theme;
+    if(!shellCtx.ok && window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark';
+    return 'light';
+  }
+  function refreshChartTheme(themeName){
+    const palette = CHART_THEMES[themeName];
+    const style = getComputedStyle(document.documentElement);
+    const read = (name, fallback) => style.getPropertyValue?.(name)?.trim() || fallback;
+    palette.bg = read('--plot-bg', palette.bg);
+    palette.grid = read('--plot-grid', palette.grid);
+    palette.axisText = read('--plot-axis', palette.axisText);
+    palette.markerLine = read('--plot-axis', palette.markerLine);
+    palette.markerLabel = read('--plot-text', palette.markerLabel);
+    palette.badgeFill = read('--plot-text', palette.badgeFill);
+    palette.badgeText = read('--plot-bg', palette.badgeText);
+    palette.chColors = palette.chColors.map((c,i)=>read('--ch'+(i+1), c).toLowerCase());
+  }
 
   const state = {
     fileName:null, tint:null, declaredTime:null, nRecords:null,
@@ -587,7 +612,7 @@
     iAxis:{ auto:true, ref:0, perDiv:1, _autoMin:null, _autoMax:null },
     lang:(shellCtx.lang==='en' ? 'en' : 'zh'),
     caseName:'',
-    theme:'dark',
+    theme:initialTheme(),
   };
 
   // ---------------------------------------------------------------
@@ -637,9 +662,6 @@
       btnApply: '套用',
       chartHintMain: '主圖拖曳：圈選放大｜下方捲動條：平移｜Ctrl(⌘)+滾輪：縮放時間',
       chipOffsetTitle: '曲線顯示位移（僅影響畫面位置，不影響數值／統計／匯出），雙擊重置為 0',
-      themeDarkOpt: '深色經典',
-      themeSoftDarkOpt: '柔和深色',
-      themeLightOpt: '淺色紙感',
       axisVTag: 'V 軸',
       axisITag: 'I 軸',
       axisPTag: 'P 軸',
@@ -761,9 +783,6 @@
       btnApply: 'Apply',
       chartHintMain: 'Drag on chart: box-zoom | Scrollbar below: pan | Ctrl(⌘)+wheel: zoom time',
       chipOffsetTitle: 'Trace display offset (visual position only — does not affect values, stats, or exports). Double-click to reset to 0.',
-      themeDarkOpt: 'Classic Dark',
-      themeSoftDarkOpt: 'Soft Dark',
-      themeLightOpt: 'Light Paper',
       axisVTag: 'V Axis',
       axisITag: 'I Axis',
       axisPTag: 'P Axis',
@@ -926,6 +945,10 @@
     if(!shellCtx.ok || ev.source!==window.parent || ev.origin!==shellCtx.parent) return;
     const d = ev.data;
     if(!d || typeof d!=='object' || d.v!==1 || d.gen!==shellCtx.gen) return;
+    if(d.type==='theme'){
+      if(d.theme==='light' || d.theme==='dark') applyTheme(d.theme);
+      return;
+    }
     if(d.type==='lang'){
       if(d.lang==='zh' || d.lang==='en') setLang(d.lang);
       return;
@@ -1489,18 +1512,23 @@
   }
 
   // 圖片／報告匯出的三種色彩模式：
-  //  normal   — 與畫面上顯示的深色主題一致
-  //  light    — 白底列印版：背景/格線/文字反轉為淺色系，曲線保持原本顏色（示波器軟體常見的「列印反轉」做法）
+  //  normal   — 與畫面上顯示的目前主題一致
+  //  light    — 白底列印版：背景/格線/文字反轉為淺色系，深色主題的預設曲線色轉為適合白底的對應色，自訂顏色維持不變
   //  negative — 完全負片：背景、格線、文字、曲線顏色全部做真正的像素反轉
-  // normal 用 getter 動態跟隨「目前頁面外觀主題」（深色經典／柔和深色／淺色紙感），
+  // normal 用 getter 動態跟隨「目前頁面外觀主題」（light／dark），
   // 這樣「原色（目前主題）」匯出選項才會真的等於畫面上看到的樣子；
   // light／negative 維持固定，各自是專用的白底列印版與真正的像素負片。
+  // Dark channel defaults need darker counterparts on white print backgrounds.
+  function printColor(color){
+    const i = CHART_THEMES.dark.chColors.indexOf(color.toLowerCase());
+    return i<0 ? color : CHART_THEMES.light.chColors[i];
+  }
   const EXPORT_THEMES = {
     get normal(){
       const live = CHART_THEMES[state.theme] || CHART_THEMES.dark;
       return { labelKey:'themeNormal', bg:live.bg, grid:live.grid, axisText:live.axisText, markerLine:live.markerLine, markerLabel:live.markerLabel, badgeFill:live.badgeFill, badgeText:live.badgeText, mapColor:c=>c };
     },
-    light:    { labelKey:'themeLight',    bg:'#ffffff', grid:'rgba(0,0,0,0.12)',   axisText:'#55545c', markerLine:'rgba(0,0,0,0.45)', markerLabel:'#1a1a1f', badgeFill:'#0d0d10', badgeText:'#ffffff', mapColor:c=>c, annotText:'#1a1a1f' },
+    light:    { labelKey:'themeLight',    bg:'#ffffff', grid:'rgba(0,0,0,0.12)',   axisText:'#55545c', markerLine:'rgba(0,0,0,0.45)', markerLabel:'#1a1a1f', badgeFill:'#0d0d10', badgeText:'#ffffff', mapColor:printColor, annotText:'#1a1a1f' },
     negative: { labelKey:'themeNegative', bg:'#e5e5e0', grid:'rgba(0,0,0,0.06)',   axisText:'#676860', markerLine:'rgba(0,0,0,0.5)',  markerLabel:'#161613', badgeFill:'#f2f2ef', badgeText:'#000000', mapColor:c=>invertHex(c) },
   };
 
@@ -3320,11 +3348,12 @@
   // 並同步更新畫布繪圖色（見 CHART_THEMES）與「尚未自訂過顏色」的預設曲線色。
   // 使用者手動改過的曲線顏色（colorIsDefault=false）不會被主題切換覆蓋。
   // ---------------------------------------------------------------
-  function applyTheme(themeName, persist){
-    state.theme = CHART_THEMES[themeName] ? themeName : 'dark';
+  // Preserve custom trace colors and the independent comparison palette.
+  function applyTheme(themeName){
+    if(themeName!=='light' && themeName!=='dark') return;
+    state.theme = themeName;
     document.documentElement.setAttribute('data-theme', state.theme);
-    const sel = document.getElementById('themeSelect');
-    if(sel) sel.value = state.theme;
+    refreshChartTheme(state.theme);
 
     if(state.traces && state.traces.length){
       const chColors = CHART_THEMES[state.theme].chColors;
@@ -3337,12 +3366,7 @@
       renderChips();
     }
     scheduleRedraw();
-    if(persist!==false){ prefs.theme = state.theme; savePrefs(); }
   }
-
-  document.getElementById('themeSelect').addEventListener('change', (e)=>{
-    applyTheme(e.target.value);
-  });
 
   // 案件名稱：即時存入 state，套用在報告內文與各項匯出檔名前綴
   document.getElementById('caseNameInput').addEventListener('input', (e)=>{
@@ -3374,7 +3398,7 @@
       try{
         const p = await apiFetch('/prefs', {}, false, true);
         if(p && typeof p==='object'){
-          if(CHART_THEMES[p.theme]){ prefs.theme = p.theme; applyTheme(p.theme, false); }
+          // Theme belongs to the shell; legacy prefs only restore folds.
           if(p.fold && typeof p.fold==='object') prefs.fold = Object.assign({}, p.fold);
         }
       }catch(err){ /* 讀不到就用預設 */ }
@@ -3388,9 +3412,7 @@
   // ---------------------------------------------------------------
   // Init
   // ---------------------------------------------------------------
-  document.documentElement.setAttribute('data-theme', state.theme);
-  const themeSelectEl = document.getElementById('themeSelect');
-  if(themeSelectEl) themeSelectEl.value = state.theme;
+  applyTheme(state.theme);
 
   state.traces = initTraces();
   const rightAxisSelectEl = document.getElementById('rightAxisKindSelect');

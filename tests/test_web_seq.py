@@ -647,7 +647,7 @@ def test_save_validation_title_and_write_error_default(api, monkeypatch):
     assert api.seq_save_csv(_raw()) == {"error": "write failed"}
 
 
-def test_javascript_language_kind_and_thin_lanes():
+def test_javascript_language_kind_thin_lanes_and_theme():
     import json
     import shutil
     import subprocess
@@ -659,7 +659,7 @@ def test_javascript_language_kind_and_thin_lanes():
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const painted = [], timers = [], listeners = {}, events = [];
+const painted = [], strokes = [], fills = [], timers = [], listeners = {}, events = [], observers = [];
 class Node {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.dataset = {}; this.style = {};
@@ -685,8 +685,10 @@ class Node {
   }
   getContext() {
     return {scale() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {},
-      stroke() {}, fillRect() {}, strokeRect() {},
-      measureText(text) { return {width: text.length * 7}; }, setLineDash() {}, fillText(text) { painted.push(text); }};
+      stroke() { strokes.push(this.strokeStyle); },
+      fillRect() { fills.push(this.fillStyle); }, strokeRect() {},
+      measureText(text) { return {width: text.length * 7}; }, setLineDash() {},
+      fillText(text) { painted.push(text); fills.push(this.fillStyle); }};
   }
 }
 const ids = Object.fromEntries(["seq-tab", "list-tab", "res-0", "res-1", "conn-0", "conn-1",
@@ -715,16 +717,19 @@ const api = {
   async list_compile(rev) { return {rev, ok: listOk, lanes: [], segments: []}; },
   async list_draft(rev) { return {rev, preview: null}; },
   async seq_preview(rev) {
-    return {rev, message: "", ticks: [], t_end: 100, time_axis: "axis", lanes:
+    return {rev, message: "", ticks: [0, 50], t_end: 100, time_axis: "axis", lanes:
       Array.from({length: lanes}, (_, i) => ({channel: i + 1, name: "rail", low: 0, high: 1,
-        points: [[0, 0], [100, 1]], measured: null, delay: 1, top0: 2, top1: 3,
+        points: [[0, 0], [100, 1]], measured: [[0, 0], [100, 1]], delay: 1, top0: 2, top1: 3,
         delay_text: "delay marker", hold_text: "hold marker", levels_text: "levels"}))};
   },
 };
 global.window = {App: null, pywebview: {api}, devicePixelRatio: 1,
   addEventListener(type, fn) { listeners[type] = fn; },
   setTimeout(fn, ms) { timers.push({fn, ms}); return timers.length; }, clearTimeout() {}};
-global.ResizeObserver = class { observe() {} };
+global.ResizeObserver = class {
+  constructor(fn) { this.fn = fn; }
+  observe(node) { observers.push({node, fn: this.fn}); }
+};
 global.getComputedStyle = () => ({fontFamily: "sans-serif"});
 for (const file of [APP, LAYOUT, SOURCE, LIST]) vm.runInThisContext(fs.readFileSync(file, "utf8"));
 const all = (root = ids["seq-tab"]) => [root, ...root.children.flatMap(child => all(child))];
@@ -736,6 +741,45 @@ async function timer(ms) {
 (async () => {
   await listeners.pywebviewready();
   await timer(30);
+  const colors = all().filter(n => n.type === "color");
+  assert.deepEqual(colors.map(n => n.value), meta.palette);
+  assert(fills.includes("#ffffff") && fills.includes("#5c5c5c") && fills.includes("#333333"));
+  assert(strokes.includes("#d9d9d9") && strokes.includes("#333333"));
+  for (const color of meta.palette) assert(strokes.includes(color));
+  const light = ["#7a6a00", "#0068a8", "#b4367f", "#00785a", "#9a5b00", "#6a4bc4", "#b8401a", "#4a7a12"];
+  const tokens = {"--plot-bg": "#000000", "--plot-grid": "#3a3a3a",
+    "--plot-axis": "#8a8a8a", "--plot-text": "#d4d4d4"};
+  meta.palette.forEach((color, i) => { tokens[`--ch${i + 1}`] = color.toUpperCase(); });
+  global.getComputedStyle = () => ({fontFamily: "sans-serif", getPropertyValue: key => ` ${tokens[key] ?? ""} `});
+  events.push(["theme", "dark"]); await timer(100);
+  assert.deepEqual(colors.map(n => n.value), meta.palette);
+  assert(fills.includes("#000000") && fills.includes("#8a8a8a") && fills.includes("#d4d4d4"));
+  assert(strokes.includes("#3a3a3a") && strokes.includes("#d4d4d4"));
+  colors[0].value = "#123456"; colors[0].events.input();
+  assert.equal(colors[0].parent.parent.dataset.custom, "1");
+  light.forEach((color, i) => { tokens[`--ch${i + 1}`] = color.toUpperCase(); });
+  Object.assign(tokens, {"--plot-bg": "#ffffff", "--plot-grid": "#d9d9d9",
+    "--plot-axis": "#5c5c5c", "--plot-text": "#333333"});
+  fills.length = 0; strokes.length = 0;
+  events.push(["theme", "light"]); await timer(100);
+  assert.equal(colors[0].value, "#123456");
+  assert.deepEqual(colors.slice(1).map(n => n.value), light.slice(1));
+  assert(fills.includes("#ffffff") && fills.includes("#5c5c5c") && fills.includes("#333333"));
+  assert(strokes.includes("#d9d9d9") && strokes.includes("#333333") && strokes.includes("#123456"));
+  for (const color of light.slice(1)) assert(strokes.includes(color));
+  await window.App.selectTab("list");
+  fills.length = 0; strokes.length = 0;
+  tokens["--plot-bg"] = "#000000";
+  tokens["--ch2"] = "#56B4E9";
+  events.push(["theme", "dark"]); await timer(100);
+  assert.equal(colors[0].value, "#123456");
+  assert.equal(colors[1].value, "#56b4e9");
+  // List canvas also redraws on theme; SEQ redraw on return is asserted below
+  await window.App.selectTab("seq");
+  const chart = all().find(n => n.tagName === "canvas");
+  observers.find(item => item.node === chart).fn();
+  assert(fills.includes("#000000") && strokes.includes("#56b4e9"));
+  global.getComputedStyle = () => ({fontFamily: "sans-serif"});
   const seqRun = all().find(n => n.dataset.action === "run");
   const listRun = all(ids["list-tab"]).find(n => n.dataset.action === "run");
   for (const ok of [false, true]) {

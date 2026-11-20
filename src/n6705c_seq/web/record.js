@@ -2,6 +2,9 @@
 
 (() => {
   const App = window.App;
+  const channelFallbacks = ["#f0e442", "#56b4e9", "#e58fc4", "#3dd6a3",
+    "#e69f00", "#b79cff", "#f4845f", "#a6d854"];
+  const channelColor = number => App.cssVar(`--ch${number}`, channelFallbacks[number - 1]);
   const ACTIVE_STATES = new Set(["starting", "running", "stopping"]);
   const STATE_KEYS = {
     idle: "record_state_idle", starting: "record_state_starting",
@@ -228,8 +231,10 @@
     canvas.height = Math.round(height * scale);
     ctx.scale(scale, scale);
     ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = App.cssVar("--plot-bg", "#ffffff");
+    ctx.fillRect(0, 0, width, height);
     ctx.font = "12px sans-serif";
-    ctx.fillStyle = "#475569";
+    ctx.fillStyle = App.cssVar("--plot-axis", "#5c5c5c");
     ctx.textAlign = "center";
     ctx.fillText(App.t("record_time_axis"), width / 2, height - 8);
     let end = 0;
@@ -241,12 +246,13 @@
       if (!values.length) return;
       const low = Math.min(...values), high = Math.max(...values), span = high - low || Math.max(Math.abs(high) * 0.1, 1);
       const top = lane * 90 + 12, y = v => top + 62 - (v - low) * 54 / span;
-      ctx.fillStyle = "#475569";
+      ctx.fillStyle = App.cssVar("--plot-text", "#333333");
       ctx.textAlign = "left";
       ctx.fillText(text("record_channel", {number: key.slice(1)}), 4, top + 12);
       ctx.fillText(App.t(key.startsWith("V") ? "record_voltage" : "record_current"), 4, top + 28);
       ctx.fillText(`${low.toPrecision(4)} / ${high.toPrecision(4)}`, 4, top + 44);
-      ctx.strokeStyle = key.startsWith("V") ? "#2563eb" : "#b45309";
+      ctx.strokeStyle = channelColor(Number(key.slice(1)));
+      ctx.setLineDash(key.startsWith("V") ? [] : [6, 4]);
       ctx.beginPath();
       for (let i = 0; i < s.min.length; i++) {
         const lo = s.min[i], hi = s.max[i];
@@ -258,8 +264,9 @@
         ctx.moveTo((x0 + x1) / 2, y(lo)); ctx.lineTo((x0 + x1) / 2, y(hi));
       }
       ctx.stroke();
+      ctx.setLineDash([]);
     });
-    ctx.fillStyle = "#475569";
+    ctx.fillStyle = App.cssVar("--plot-axis", "#5c5c5c");
     ctx.textAlign = "left";
     ctx.fillText("0", left, height - 24);
     ctx.textAlign = "right";
@@ -299,7 +306,7 @@
     running,
   };
   App.on("record", updateStatus);
-  for (const event of ["state", "busy", "kind"]) App.on(event, render);
+  for (const event of ["state", "busy", "kind", "theme"]) App.on(event, render);
   window.addEventListener("resize", () => { if (visible && controls) draw(); });
   App.register({init: initialize, relabel});
 })();

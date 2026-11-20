@@ -21,6 +21,7 @@
   <label><input type="checkbox" id="cancel" style="width:auto"> reply cancelled</label>
   <label><input type="checkbox" id="deny" style="width:auto"> reply denied</label>
   <button data-lang="zh">lang zh</button><button data-lang="en">lang en</button>
+  <button id="theme">toggle theme</button>
   <button id="badGen">send lang (wrong gen)</button>
   <button id="badType">send open_request to iframe</button>
   <button id="openPush">push main .dlog</button>
@@ -32,11 +33,12 @@
   const h = new URLSearchParams(location.hash.slice(1));
   const gen = parseInt(h.get('gen') || '1', 10);
   const lang = h.get('lang') === 'en' ? 'en' : 'zh';
+  let theme = h.get('theme') === 'dark' ? 'dark' : 'light';
   const f = document.getElementById('f');
   const log = document.getElementById('log');
   const say = (s) => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
   const src = 'viewer.html#t=' + encodeURIComponent(h.get('t') || '') + '&gen=' + gen + '&lang=' + lang +
-              '&parent=' + encodeURIComponent(location.origin);
+              '&theme=' + theme + '&parent=' + encodeURIComponent(location.origin);
   const analysisOrigin = new URL(src, location.href).origin;
   f.src = src;
   const TO_SHELL = ['ready', 'open_request', 'save_request'];
@@ -47,7 +49,7 @@
     if (ev.source !== f.contentWindow || ev.origin !== analysisOrigin) return;
     if (!d || typeof d !== 'object' || d.v !== 1 || d.gen !== gen || TO_SHELL.indexOf(d.type) < 0) { say('dropped ' + JSON.stringify(d)); return; }
     say('<- ' + JSON.stringify(d));
-    if (d.type === 'ready') { post({ type: 'lang', lang: lang }); return; }
+    if (d.type === 'ready') { post({ type: 'lang', lang: lang }); post({ type: 'theme', theme }); return; }
     if (typeof d.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(d.id)) { say('dropped (bad id)'); return; }
     const type = d.type === 'open_request' ? 'open_result' : 'save_result';
     let r;
@@ -58,6 +60,11 @@
     say('-> ' + type + ' ' + JSON.stringify(r));
   });
   document.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => post({ type: 'lang', lang: b.dataset.lang })));
+  document.getElementById('theme').addEventListener('click', () => {
+    theme = theme === 'light' ? 'dark' : 'light';
+    post({ type: 'theme', theme });
+    say('-> theme ' + theme);
+  });
   document.getElementById('badGen').addEventListener('click', () => f.contentWindow.postMessage({ v: 1, gen: gen + 1, type: 'lang', lang: 'en' }, analysisOrigin));
   document.getElementById('badType').addEventListener('click', () => post({ type: 'open_request', id: 'x', purpose: 'dlog' }));
   document.getElementById('openPush').addEventListener('click', () => {

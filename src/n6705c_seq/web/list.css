@@ -4,9 +4,9 @@
 #list-tab .list-field input[type="checkbox"] { margin: 0; }
 #list-tab .list-lanes { min-height: 150px; flex: 1; cursor: pointer; }
 #list-tab .list-strip-bar { flex-wrap: nowrap; }
-#list-tab .list-strip { display: flex; flex: 1; min-width: 0; overflow-x: auto; background: white; gap: 3px; padding: 2px; }
-#list-tab .list-strip .btn { flex: 0 0 106px; width: 106px; padding: 1px; border: 2px solid #cbd5e1; border-radius: 0; }
-#list-tab .list-strip .selected { border-color: #dc2626; }
+#list-tab .list-strip { display: flex; flex: 1; min-width: 0; overflow-x: auto; background: var(--surface); gap: 3px; padding: 2px; }
+#list-tab .list-strip .btn { flex: 0 0 106px; width: 106px; padding: 1px; border: 2px solid var(--border); border-radius: 0; }
+#list-tab .list-strip .selected { border-color: var(--accent); }
 #list-tab .list-strip span { display: block; font-size: 11px; white-space: nowrap; }
 #list-tab .list-statistics { white-space: pre-wrap; min-height: 32px; }
 #list-tab .list-editor { display: flex; align-items: flex-start; gap: 12px; }

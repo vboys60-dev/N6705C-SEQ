@@ -15,7 +15,7 @@ from .plan import SeqRow, order_warnings
 
 FRAMES = 2
 CONFIG: Path = Path.home() / ".n6705c_seq_gui.json"
-PALETTE = ["#e05252", "#4a7fe8", "#55b685", "#e8833a", "#a855f0", "#52b2d0", "#e0b43c", "#dc5090"]
+PALETTE = ["#f0e442", "#56b4e9", "#e58fc4", "#3dd6a3", "#e69f00", "#b79cff", "#f4845f", "#a6d854"]
 
 # name, delay, low, high, rise, hold, fall, current limit  (ms / V / A)
 DEFAULTS = [
@@ -60,13 +60,14 @@ def load_config(path: Path) -> dict:
                 and isinstance(demo, bool)):
             raise TypeError("bad schema")
         return {"resources": resources, "demo": demo,
-                "lang": saved.get("lang") if saved.get("lang") in ("zh", "en") else "zh"}
+                "lang": saved.get("lang") if saved.get("lang") in ("zh", "en") else "zh",
+                "theme": saved.get("theme") if saved.get("theme") in ("light", "dark") else None}
     except (OSError, ValueError, KeyError, TypeError):
-        return {"resources": [], "demo": True, "lang": "zh"}
+        return {"resources": [], "demo": True, "lang": "zh", "theme": None}
 
 
-def save_config(path: Path, resources: list[str], demo: bool, lang: str) -> None:
-    path.write_text(json.dumps({"resources": resources, "demo": demo, "lang": lang}))
+def save_config(path: Path, resources: list[str], demo: bool, lang: str, theme: str | None) -> None:
+    path.write_text(json.dumps({"resources": resources, "demo": demo, "lang": lang, "theme": theme}))
 
 
 def default_raw(count: int) -> list[dict]:

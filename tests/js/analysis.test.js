@@ -22,10 +22,10 @@ class El {
   click() { return Promise.all((this.listeners.click || []).map(fn => fn())); }
 }
 
-function setup({ enabled = true, recordEnabled = false, recordState = 'idle', selftest = false, api = {} } = {}) {
+function setup({ enabled = true, recordEnabled = false, recordState = 'idle', selftest = false, theme = null, systemDark = false, api = {} } = {}) {
   const els = {};
   const add = (id, props) => (els[id] = new El(id, props));
-  for (const id of ['result-title', 'result-text', 'btn-lang', 'btn-off', 'btn-test', 'btn-scan', 'pick-0', 'pick-1', 'res-0', 'res-1', 'chk-demo',
+  for (const id of ['result-title', 'result-text', 'btn-lang', 'btn-theme', 'btn-off', 'btn-test', 'btn-scan', 'pick-0', 'pick-1', 'res-0', 'res-1', 'chk-demo',
     'seq-tab', 'tab-seq', 'tab-list']) add(id);
   add('list-tab', { hidden: true });
   add('analysis-tab', { hidden: true });
@@ -44,13 +44,15 @@ function setup({ enabled = true, recordEnabled = false, recordState = 'idle', se
 
   const queue = [];
   const calls = [];
+  const mediaQueries = [];
   let gen = 0;
   const bridge = {
     poll: async () => queue.splice(0),
     strings: async () => ({ lang: 'en', strings: {} }),
-    config: async () => ({ resources: ['', ''], demo: false, lang: 'en', analysis_enabled: enabled, selftest_mode: selftest }),
+    config: async () => ({ resources: ['', ''], demo: false, lang: 'en', theme, analysis_enabled: enabled, selftest_mode: selftest }),
     selftest_report: async (ok, detail) => calls.push(['selftest', ok, detail]),
     set_lang: async () => {},
+    set_theme: async theme => { calls.push(['theme', theme]); },
     analysis_enter: async () => { calls.push(['enter']); gen += 1; return { ok: true, gen, url: `${VIEWER}/viewer.html#t=tok&gen=${gen}&lang=en` }; },
     analysis_leave: async g => { calls.push(['leave', g]); return { ok: true, gen: g }; },
     analysis_open_path: async (g, purpose) => { calls.push(['open', g, purpose]); return { ok: true, gen: g, grant: 'G', name: 'a.dlog' }; },
@@ -70,7 +72,7 @@ function setup({ enabled = true, recordEnabled = false, recordState = 'idle', se
     console, URL, Promise, setImmediate,
     location: { origin: SHELL },
     document: {
-      documentElement: {}, title: '',
+      documentElement: { dataset: {} }, title: '',
       getElementById: id => els[id],
       querySelectorAll: selector => selector.split(',').map(s => s.trim()).flatMap(s =>
         s.startsWith('#') ? [els[s.slice(1)]].filter(Boolean) : s === "[data-action='run']" ? [run] : []),
@@ -78,6 +80,7 @@ function setup({ enabled = true, recordEnabled = false, recordState = 'idle', se
     addEventListener: (type, fn) => (winListeners[type] ||= []).push(fn),
     setTimeout: (fn, ms) => { timers.push({ fn, ms, id: ++timerId }); return timerId; },
     clearTimeout: id => { const i = timers.findIndex(x => x.id === id); if (i >= 0) timers.splice(i, 1); },
+    matchMedia: query => { mediaQueries.push(query); return { matches: systemDark }; },
     pywebview: { api: proxy },
   };
   ctx.window = ctx;
@@ -92,7 +95,7 @@ function setup({ enabled = true, recordEnabled = false, recordState = 'idle', se
   const take = async ms => { const i = timers.findIndex(x => x.ms === ms); timers.splice(i, 1)[0].fn(); await flush(); };
   const fire = (type, event) => Promise.all((winListeners[type] || []).map(fn => fn(event)));
   return {
-    ctx, els, run, results, posts, calls, queue, viewerWindow, touched,
+    ctx, els, run, results, posts, calls, mediaQueries, queue, viewerWindow, touched,
     fire, timers,
     App: ctx.App,
     setRecordState(s) { recordState = s; },
@@ -163,7 +166,10 @@ test('bridge: ready gets lang, requests get exact-origin replies, bad messages a
   await t.start();
   await t.els['tab-analysis'].click();
   await t.message({ v: 1, gen: 1, type: 'ready' });
-  assert.deepEqual(t.posts, [[{ type: 'lang', lang: 'en', v: 1, gen: 1 }, VIEWER]]);
+  assert.deepEqual(t.posts, [
+    [{ type: 'lang', lang: 'en', v: 1, gen: 1 }, VIEWER],
+    [{ type: 'theme', theme: 'light', v: 1, gen: 1 }, VIEWER],
+  ]);
   t.posts.length = 0;
   await t.message({ v: 1, gen: 1, type: 'open_request', id: 'r1', purpose: 'dlog' });
   await t.message({ v: 1, gen: 1, type: 'save_request', id: 'r2', purpose: 'png', suggested: 'x.png' });
@@ -856,4 +862,63 @@ test('viewer: open_push authenticates the shell and validates grants and basenam
   assert.deepEqual(flashes, [['openPushBusy', 6000]]);
   assert.doesNotMatch(VIEWER_HTML.slice(VIEWER_HTML.indexOf("if(d.type==='open_push')"),
     VIEWER_HTML.indexOf("if(d.type==='open_result'")), /Number\.isInteger\(d\.gen\)/);
+});
+
+for (const [theme, systemDark, expected] of [
+  [null, false, 'light'], [null, true, 'dark'], ['light', true, 'light'], ['dark', false, 'dark'],
+]) {
+  test(`initial theme ${theme} with system dark ${systemDark} is applied before ready without saving`, async () => {
+    const t = setup({ theme, systemDark });
+    const events = [];
+    assert.equal(t.ctx.document.documentElement.dataset.theme, undefined);
+    t.App.on('theme', value => {
+      assert.equal(t.ctx.document.documentElement.dataset.theme, value);
+      events.push(['theme', value]);
+    });
+    t.App.on('ready', () => events.push(['ready', t.App.theme]));
+    await t.start();
+    assert.deepEqual(events, [['theme', expected], ['ready', expected]]);
+    assert.equal(t.els['btn-theme'].dataset.i18n, expected === 'dark' ? 'theme_light' : 'theme_dark');
+    assert.equal(t.mediaQueries.length, theme === null ? 1 : 0);
+    assert.ok(!t.calls.some(c => c[0] === 'theme'));
+    await t.els['btn-lang'].click();
+    assert.equal(t.App.theme, expected);
+    assert.equal(events.length, 2);
+  });
+}
+
+test('theme button persists and forwards each change to the exact-origin viewer', async () => {
+  const t = setup({ theme: 'light' });
+  await t.start();
+  await t.els['btn-theme'].click();
+  assert.equal(t.App.theme, 'dark');
+  assert.deepEqual(t.posts, []);
+  await t.els['tab-analysis'].click();
+  await t.message({ v: 1, gen: 1, type: 'ready' });
+  assert.deepEqual(t.posts.at(-1), [{ type: 'theme', theme: 'dark', v: 1, gen: 1 }, VIEWER]);
+  t.posts.length = 0;
+  await t.els['btn-theme'].click();
+  assert.equal(t.ctx.document.documentElement.dataset.theme, 'light');
+  assert.equal(t.App.config.theme, 'light');
+  assert.equal(t.els['btn-theme'].dataset.i18n, 'theme_dark');
+  assert.deepEqual(t.posts, [[{ type: 'theme', theme: 'light', v: 1, gen: 1 }, VIEWER]]);
+  assert.deepEqual(t.calls.filter(c => c[0] === 'theme'), [['theme', 'dark'], ['theme', 'light']]);
+  await t.els['btn-lang'].click();
+  assert.equal(t.ctx.document.documentElement.dataset.theme, 'light');
+  await t.els['tab-seq'].click();
+  t.posts.length = 0;
+  await t.els['btn-theme'].click();
+  assert.deepEqual(t.posts, []);
+});
+
+test('failed theme save leaves the applied theme and event stream unchanged', async () => {
+  const t = setup({ theme: 'light', api: { set_theme: async () => { throw new Error('save failed'); } } });
+  await t.start();
+  const events = [];
+  t.App.on('theme', theme => events.push(theme));
+  await assert.rejects(t.els['btn-theme'].click(), /save failed/);
+  assert.equal(t.App.theme, 'light');
+  assert.equal(t.App.config.theme, 'light');
+  assert.equal(t.ctx.document.documentElement.dataset.theme, 'light');
+  assert.deepEqual(events, []);
 });

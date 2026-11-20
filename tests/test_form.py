@@ -167,15 +167,15 @@ def test_view_warnings_empty_and_zero_duration():
 
 def test_config(tmp_path):
     path = tmp_path / "config.json"
-    default = dict(resources=[], demo=True, lang="zh")
+    default = dict(resources=[], demo=True, lang="zh", theme=None)
     assert form.load_config(path) == default
     for saved in ("bad", "[]", "null", '{"resources":"TCPIP::h","demo":false}',
                   '{"resources":[],"demo":"false"}', '{"resources":[],"demo":1}',
                   '{"resources":[1],"demo":true}'):
         path.write_text(saved)
         assert form.load_config(path) == default
-    form.save_config(path, ["A", "B"], False, "en")
-    assert json.loads(path.read_text()) == dict(resources=["A", "B"], demo=False, lang="en")
+    form.save_config(path, ["A", "B"], False, "en", "dark")
+    assert json.loads(path.read_text()) == dict(resources=["A", "B"], demo=False, lang="en", theme="dark")
 
 
 def test_form_sources_and_translation_keys():
@@ -199,7 +199,7 @@ def test_tick_step_covers_long_sequences(span, step):
 def test_config_language_keeps_other_fields(tmp_path, saved, expected):
     path = tmp_path / "config.json"
     path.write_text(json.dumps({"resources": ["A"], "demo": False, "lang": saved}))
-    assert form.load_config(path) == {"resources": ["A"], "demo": False, "lang": expected}
+    assert form.load_config(path) == {"resources": ["A"], "demo": False, "lang": expected, "theme": None}
 
 
 @pytest.mark.parametrize("hold_dc, volts, times", [
@@ -211,3 +211,17 @@ def test_waveform_corners(hold_dc, volts, times):
     points = form.waveform(row, 0.1, hold_dc)
     assert [v for _, v in points] == volts
     assert [t for t, _ in points] == pytest.approx(times)
+
+
+@pytest.mark.parametrize("theme", ["light", "dark", None])
+def test_config_theme_round_trip(tmp_path, theme):
+    path = tmp_path / "config.json"
+    form.save_config(path, ["A"], False, "en", theme)
+    assert form.load_config(path) == dict(resources=["A"], demo=False, lang="en", theme=theme)
+
+
+@pytest.mark.parametrize("theme", ["invalid", "soft-dark", "DARK", "", 1, True, [], {}])
+def test_config_invalid_theme_keeps_other_fields(tmp_path, theme):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(dict(resources=["A"], demo=False, lang="en", theme=theme)))
+    assert form.load_config(path) == dict(resources=["A"], demo=False, lang="en", theme=None)

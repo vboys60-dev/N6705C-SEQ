@@ -88,3 +88,38 @@ test('placement matches the tk loop for terminating inputs', () => {
     assert.deepEqual(placeTimeLabels(spans, 10, 100), tkPlaceTimeLabels(spans, 10, 100));
   }
 });
+
+function themeApp(style) {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const root = {};
+  const context = {
+    window: { App: {} },
+    document: { documentElement: root },
+    getComputedStyle(element) {
+      assert.equal(element, root);
+      return style;
+    },
+  };
+  vm.runInNewContext(fs.readFileSync(require.resolve('../../src/n6705c_seq/web/layout.js'), 'utf8'), context);
+  return context.window.App;
+}
+
+test('App.cssVar trims a value and preserves its case', () => {
+  const app = themeApp({ getPropertyValue(name) {
+    assert.equal(name, '--ch1');
+    return '  #AaBbCc \n';
+  } });
+  assert.equal(app.cssVar('--ch1', '#000000'), '#AaBbCc');
+});
+
+test('App.cssVar falls back for an empty value', () => {
+  const app = themeApp({ getPropertyValue: () => ' \n ' });
+  assert.equal(app.cssVar('--missing', '#123456'), '#123456');
+  assert.equal(app.cssVar('--missing'), undefined);
+});
+
+test('App.cssVar falls back when getPropertyValue is absent', () => {
+  const app = themeApp({ fontFamily: 'sans-serif' });
+  assert.equal(app.cssVar('--ch1', '#654321'), '#654321');
+});

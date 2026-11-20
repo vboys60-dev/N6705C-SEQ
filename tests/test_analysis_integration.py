@@ -74,6 +74,7 @@ class Viewer:
         fragment = {k: v[0] for k, v in parse_qs(parts.fragment).items()}
         self.port, self.token, self.gen = parts.port, fragment["t"], int(fragment["gen"])
         self.lang = fragment["lang"]
+        self.theme = fragment.get("theme")
         assert parts.hostname == contracts.HOST and parts.path == "/viewer.html" and not parts.query
 
     def req(self, method, path, body=None, headers=None, gen=None):
@@ -112,7 +113,9 @@ def grant(api, gen, path, purpose="dlog", save=False):
 
 
 def test_end_to_end_open_samples_save_csv_and_leave(api, tmp_path):
+    api.set_theme("dark")
     r, viewer = enter(api)
+    assert viewer.theme == "dark"
     assert viewer.lang == i18n.lang and viewer.gen == r["gen"] == 1
     assert viewer.req("GET", "/viewer.html")[0] == 200
     meta = viewer.open(grant(api, r["gen"], SAMPLE))

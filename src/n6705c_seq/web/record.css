@@ -5,11 +5,11 @@
 .record-field { display: flex; flex-direction: column; gap: 4px; }
 .record-field .field { width: 180px; max-width: 100%; }
 .record-choices { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 10px; }
-fieldset.record-choices { border: 1px solid #cbd5e1; border-radius: 5px; margin: 0; }
+fieldset.record-choices { border: 1px solid var(--border); border-radius: 5px; margin: 0; }
 .record-choices label { display: flex; align-items: center; gap: 4px; }
 .record-actions { margin: 14px 0; }
 .record-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; }
-.record-preview { padding: 2px 8px; border: 1px solid #b45309; border-radius: 4px; color: #92400e; }
+.record-preview { padding: 2px 8px; border: 1px solid var(--warn); border-radius: 4px; color: var(--warn); }
 .record-chart { display: block; width: 100%; min-height: 200px; margin-top: 12px; }
 #record-pane p:empty { display: none; }
 @media (max-width: 600px) {
