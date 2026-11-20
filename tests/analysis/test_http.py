@@ -208,6 +208,8 @@ def test_health_selfcheck_and_static(env):
     assert env.srv.url(3, "zh", theme=None) == base_url
     for theme in c.THEMES:
         assert env.srv.url(3, "zh", theme) == base_url + "&theme=" + theme
+    with pytest.raises(ValueError):
+        env.srv.url(3, "zh", "dark&parent=x")
 
 
 def test_no_token_and_bad_token(live):

@@ -629,6 +629,8 @@ class Handle:
         self.token = app.token
 
     def url(self, gen, lang, theme=None):
+        if theme is not None and theme not in c.THEMES:
+            raise ValueError("invalid theme: %r" % (theme,))
         url = "%s/viewer.html#t=%s&gen=%d&lang=%s" % (self.origin, self.token, gen, lang)
         return url if theme is None else url + "&theme=" + theme
 
