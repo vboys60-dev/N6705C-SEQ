@@ -130,3 +130,15 @@ def test_cli_prints_slew_warning_and_completes(monkeypatch, capsys):
     warning = i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, required=599.9999999999994)
     assert f"WARNING: {warning}" in out
     assert out.index(warning) < out.index("Sequence done")
+
+
+def test_e36441a_ctrl_c_reports_interrupt(monkeypatch, capsys):
+    from types import SimpleNamespace
+    from n6705c_seq import cli
+
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "run_resources", interrupt)
+    assert cli._run_e36441a(SimpleNamespace(resource=["x"], hold_dc=False, backend=None, timeout=1000), []) == 130
+    assert "interrupted" in capsys.readouterr().err

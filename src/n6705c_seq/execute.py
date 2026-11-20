@@ -195,8 +195,8 @@ def fire_together(actions: list) -> None:
             if thread.is_alive():
                 thread.join()
         raise
-    if errors:
-        raise errors[0]
+    if errors:  # a barrier timeout/break only echoes another thread's failure
+        raise next((e for e in errors if not isinstance(e, threading.BrokenBarrierError)), errors[0])
 
 
 def _frames(group: InstrumentGroup, functions) -> list[tuple[N6705C, list[int]]]:

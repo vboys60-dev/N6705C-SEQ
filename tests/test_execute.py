@@ -1009,3 +1009,18 @@ def test_seq_csv_sense_roundtrip_and_validation(tmp_path):
     path.write_text(path.read_text().replace("4wire", "5wire"))
     with pytest.raises(ValueError, match="sense"):
         load_csv(path)
+
+
+def test_fire_together_reports_root_cause_not_barrier_error():
+    import threading
+    from n6705c_seq.execute import fire_together
+
+    def bad():
+        raise ValueError("root cause")
+
+    def late():
+        raise threading.BrokenBarrierError()
+
+    for actions in ([late, bad], [bad, late]):
+        with pytest.raises(ValueError, match="root cause"):
+            fire_together(actions)
