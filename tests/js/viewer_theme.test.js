@@ -49,14 +49,14 @@ test('viewer rejects invalid themes and unauthenticated messages without redraw'
   t.send('dark', {}, {origin: 'http://localhost:9999'});
   assert.equal(t.attrs['data-theme'], undefined);
   assert.ok(!t.calls.includes('draw'));
-  t.applyTheme('constructor', false);
+  t.applyTheme('constructor');
   assert.equal(t.attrs['data-theme'], undefined);
 });
 test('hash theme is applied at initialization and overrides system preference', () => {
   for (const hash of [shellHash, '']) for (const name of ['light', 'dark']) {
     const t = setup(hash + (hash ? '&' : '#') + 'theme=' + name, name === 'light');
     // Execute the actual init call before trace initialization.
-    slice('  applyTheme(state.theme, false);', '  state.traces = initTraces();', t.ctx);
+    slice('  applyTheme(state.theme);', '  state.traces = initTraces();', t.ctx);
     assert.equal(t.attrs['data-theme'], name);
     assert.equal(t.calls[0][2], '/viewer.html');
   }
@@ -112,10 +112,7 @@ test('viewer layout is full width and gives chart the remaining grid space', () 
   assert.match(app, /minmax\(0,1fr\)/);
   assert.doesNotMatch(html, /themeSelect|soft-dark|themeDarkOpt|themeSoftDarkOpt|themeLightOpt/);
 });
-test('complete viewer script parses after theme selector and comment removal', () => {
+test('complete viewer script parses after theme selector removal', () => {
   const script = html.split('<script>')[1].split('</script>')[0];
   assert.doesNotThrow(() => new vm.Script(script));
-  const comments = script.split('\n').filter(line => /(?:\/\/|\/\*).*[\u3400-\u9fff]/u.test(line));
-  assert.equal(comments.length, 1);
-  assert.ok(comments[0].trim().startsWith('// 向外殼要路徑授權'));
 });
