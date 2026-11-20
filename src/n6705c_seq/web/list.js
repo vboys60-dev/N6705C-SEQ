@@ -2,6 +2,9 @@
 
 (() => {
   const App = window.App;
+  const channelFallbacks = ["#f0e442", "#56b4e9", "#e58fc4", "#3dd6a3",
+    "#e69f00", "#b79cff", "#f4845f", "#a6d854"];
+  const channelColor = number => App.cssVar(`--ch${number}`, channelFallbacks[number - 1]);
   const root = document.getElementById("list-tab");
   const fields = {}, params = {};
   let meta, channel = 1, selected = null, compileRev = 0, draftRev = 0, switchRev = 0;
@@ -171,17 +174,19 @@
     canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
     const ctx = canvas.getContext("2d");
     ctx.scale(ratio, ratio); ctx.font = "12px sans-serif";
-    ctx.fillStyle = "#202020"; ctx.strokeStyle = "#94a3b8";
+    ctx.fillStyle = App.cssVar("--plot-bg", "#ffffff"); ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = App.cssVar("--plot-text", "#333333");
+    ctx.strokeStyle = App.cssVar("--plot-axis", "#5c5c5c");
     return [ctx, width];
   }
-  function line(ctx, points, color = "#94a3b8", width = 1) {
+  function line(ctx, points, color = App.cssVar("--plot-axis", "#5c5c5c"), width = 1) {
     if (points.length < 2) return;
     ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath();
     points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
   }
   function curve(ctx, samples, left, top, width, height) {
     const lo = Math.min(...samples), hi = Math.max(...samples);
-    line(ctx, samples.map((v, i) => [left + width * i / 199, top + height - height * (v - lo) / (hi - lo || 1)]), "#2563eb", 2);
+    line(ctx, samples.map((v, i) => [left + width * i / 199, top + height - height * (v - lo) / (hi - lo || 1)]), channelColor(channel), 2);
   }
   function drawSegments(segments) {
     while (strip.children.length > segments.length) strip.lastChild.remove();
@@ -204,13 +209,13 @@
     const laneHeight = 118 / Math.max(1, view?.lanes?.length || 0);
     (view?.lanes || []).forEach((lane, i) => {
       const top = i * laneHeight;
-      ctx.strokeStyle = lane.selected ? "#dc2626" : "#e2e8f0"; ctx.lineWidth = 2;
+      ctx.strokeStyle = lane.selected ? App.cssVar("--accent", "#0a5fc2") : App.cssVar("--plot-grid", "#d9d9d9"); ctx.lineWidth = 2;
       ctx.strokeRect(1, top + 1, width - 3, laneHeight - 2);
       ctx.textAlign = "left"; ctx.fillText(lane.label, 6, top + laneHeight / 2);
       const x = k => 100 + (width - 110) * k / Math.max(1, view.n_points);
       const y = v => top + laneHeight - 7 - (laneHeight - 18) * (v - lane.lo) / (lane.hi - lane.lo || 1);
-      line(ctx, lane.steps.map(([k, v]) => [x(k), y(v)]), "#2563eb", 1.5);
-      if (lane.measured) line(ctx, lane.measured.map(([k, v]) => [x(k), y(v)]), "#111827");
+      line(ctx, lane.steps.map(([k, v]) => [x(k), y(v)]), channelColor(lane.channel), 1.5);
+      if (lane.measured) line(ctx, lane.measured.map(([k, v]) => [x(k), y(v)]), App.cssVar("--plot-text", "#333333"));
     });
     ctx.textAlign = "right"; ctx.fillText(view?.repeat_text || "", width - 10, 12);
     (view?.axis || []).forEach((label, i) => {
@@ -218,10 +223,10 @@
       ctx.fillText(label, 100 + (width - 110) * i / 4, 134);
     });
     const [bc, bw] = canvasContext(budget, 20), b = view?.budget;
-    bc.fillStyle = "#f1f5f9"; bc.fillRect(0, 0, bw, 20);
     if (b) {
       const scale = bw / Math.max(65535, b.n_points), end = Math.max(b.delay, b.n_points - b.pad);
-      for (const [a, z, color] of [[0, b.delay, "#94a3b8"], [b.delay, end, "#60a5fa"], [end, b.n_points, "#fb923c"]]) {
+      for (const [a, z, color] of [[0, b.delay, App.cssVar("--plot-axis", "#5c5c5c")],
+        [b.delay, end, channelColor(2)], [end, b.n_points, channelColor(5)]]) {
         bc.fillStyle = color; bc.fillRect(a * scale, 0, (z - a) * scale, 20);
       }
     }
@@ -263,7 +268,7 @@
       ctx.textAlign = "right"; ctx.fillText(a.text, dx - 6, (base + peak) / 2);
     }
     ctx.textAlign = "right"; ctx.fillText(p.extras, x1, 12);
-    line(ctx, p.samples.map((v, i) => [x(p.duration * i / 199), y(v)]), "#2563eb", 2);
+    line(ctx, p.samples.map((v, i) => [x(p.duration * i / 199), y(v)]), channelColor(channel), 2);
     fitZoom(root);
   }
   const lanes = element("canvas", root, null, "chart list-lanes");
@@ -342,6 +347,11 @@
   App.on("state", runState);
   App.on("busy", runState); // legacy busy-only event before the first state event
   App.on("measured", kind => { if (kind === "list") compile(); });
+  function redraw() {
+    drawCompiled(); drawDraft(); fitZoom(root);
+    if (compiled) drawSegments(compiled.segments || []);
+  }
+  App.on("theme", redraw);
   let observedWidth, redrawFrame = null;
   new ResizeObserver(entries => {
     const width = entries[0].contentRect.width;
@@ -350,8 +360,7 @@
     if (redrawFrame !== null) return;
     redrawFrame = window.requestAnimationFrame(() => {
       redrawFrame = null;
-      drawCompiled(); drawDraft(); fitZoom(root);
-      if (compiled) drawSegments(compiled.segments || []);
+      redraw();
     });
   }).observe(root);
   App.register({

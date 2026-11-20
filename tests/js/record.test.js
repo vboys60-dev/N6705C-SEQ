@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '../..');
 const source = fs.readFileSync(path.join(root, 'src/n6705c_seq/web/record.js'), 'utf8');
+const layout = fs.readFileSync(path.join(root, 'src/n6705c_seq/web/layout.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'src/n6705c_seq/web/record.css'), 'utf8');
 const i18n = fs.readFileSync(path.join(root, 'src/n6705c_seq/i18n.py'), 'utf8');
 const strings = new Map([...i18n.matchAll(/^    '([^']+)': \('([^']*)', '([^']*)'\),$/gm)]
@@ -33,8 +34,10 @@ class Element {
   change() { this.events.change?.(); }
   getContext() {
     const draws = this.draws;
-    return Object.fromEntries(['scale', 'clearRect', 'fillText', 'beginPath', 'moveTo', 'lineTo', 'stroke']
+    const ctx = Object.fromEntries(['scale', 'clearRect', 'fillRect', 'fillText', 'beginPath', 'moveTo', 'lineTo', 'stroke', 'setLineDash']
       .map(name => [name, (...args) => { if (name === 'clearRect') draws.length = 0; draws.push([name, ...args]); }]));
+    for (const name of ['fillStyle', 'strokeStyle']) Object.defineProperty(ctx, name, {set(value) { draws.push([name, value]); }});
+    return ctx;
   }
 }
 function descendants(element) { return [element, ...element.children.flatMap(descendants)]; }
@@ -64,9 +67,14 @@ function harness(overrides = {}, metaExtra = {}) {
   const window = {App, devicePixelRatio: 2, addEventListener: (name, fn) => windowEvents.set(name, fn),
     setInterval: (fn, ms) => { const id = ++timerId; intervals.set(id, {fn, ms}); return id; },
     clearInterval: id => intervals.delete(id)};
-  vm.runInNewContext(source, {window, document: {getElementById: id => ids.get(id), createElement: tag => new Element(tag)}});
+  const colors = {};
+  const context = vm.createContext({window,
+    getComputedStyle: () => ({getPropertyValue: name => colors[name] ?? ''}),
+    document: {documentElement: {}, getElementById: id => ids.get(id), createElement: tag => new Element(tag)}});
+  vm.runInContext(layout, context);
+  vm.runInContext(source, context);
   const emit = (name, value) => { for (const fn of listeners.get(name) ?? []) fn(value); };
-  return {App, api, meta, pane, calls, errors, intervals, ids, translated,
+  return {App, api, meta, pane, calls, errors, intervals, ids, translated, colors,
     init: () => module.init(), relabel: () => module.relabel(),
     setStatus: value => { current = value; },
     record: value => { current = value; emit('record', value); }, emit,
@@ -395,4 +403,37 @@ test('record: show catches metadata and status failures and can retry initializa
   await k.show();
   assert.equal(k.errors.length, 1);
   assert.equal(k.intervals.size, 0);
+});
+
+test('record: theme redraw uses plot tokens and channel colors with dashed current, including redisplay', async () => {
+  const series = {t0: 0, dt: 1, min: [1], max: [2]};
+  const h = harness({record_snapshot: async () => snapshot('a', 1, {keys: {V2: series, I2: series, V8: series}})});
+  h.emit('theme', 'light'); // The initial event may arrive before metadata.
+  h.setStatus(status()); await h.show();
+  assert.ok(h.canvas.draws.some(d => d[0] === 'fillStyle' && d[1] === '#ffffff'));
+  assert.deepEqual(h.canvas.draws.filter(d => d[0] === 'strokeStyle').map(d => d[1]), ['#56b4e9', '#56b4e9', '#a6d854']);
+  Object.assign(h.colors, {'--plot-bg': '#ffffff', '--plot-axis': '#5c5c5c',
+    '--plot-text': '#333333', '--ch2': '#0068a8', '--ch8': '#4a7a12'});
+  const requests = h.calls.length;
+  h.emit('theme', 'light');
+  assert.equal(h.calls.length, requests);
+  assert.ok(h.canvas.draws.some(d => d[0] === 'fillStyle' && d[1] === '#ffffff'));
+  assert.ok(h.canvas.draws.some(d => d[0] === 'fillStyle' && d[1] === '#5c5c5c'));
+  assert.ok(h.canvas.draws.some(d => d[0] === 'fillStyle' && d[1] === '#333333'));
+  assert.deepEqual(h.canvas.draws.filter(d => d[0] === 'strokeStyle').map(d => d[1]), ['#0068a8', '#0068a8', '#4a7a12']);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.canvas.draws.filter(d => d[0] === 'setLineDash').map(d => d[1]))),
+    [[], [], [6, 4], [], [], []]);
+  Object.assign(h.colors, {'--plot-bg': '#000000', '--plot-axis': '#8a8a8a',
+    '--plot-text': '#d4d4d4', '--ch2': '#56b4e9', '--ch8': '#a6d854'});
+  h.emit('theme', 'dark');
+  assert.ok(h.canvas.draws.some(d => d[0] === 'fillStyle' && d[1] === '#000000'));
+  assert.deepEqual(h.canvas.draws.filter(d => d[0] === 'strokeStyle').map(d => d[1]), ['#56b4e9', '#56b4e9', '#a6d854']);
+  h.hide();
+  const before = JSON.stringify(h.canvas.draws);
+  Object.assign(h.colors, {'--plot-bg': '#ffffff', '--ch2': '#0068a8', '--ch8': '#4a7a12'});
+  h.emit('theme', 'light');
+  assert.equal(JSON.stringify(h.canvas.draws), before);
+  await h.show();
+  assert.ok(h.canvas.draws.some(d => d[0] === 'fillStyle' && d[1] === '#ffffff'));
+  assert.deepEqual(h.canvas.draws.filter(d => d[0] === 'strokeStyle').map(d => d[1]), ['#0068a8', '#0068a8', '#4a7a12']);
 });
