@@ -10,7 +10,7 @@ from n6705c.core.transport import VisaTransport, scan_resources
 
 from . import form
 from .e36441a import detect_model, kind_of, off_resources, run_resources
-from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected, connect_group, outputs_off, run_plan
+from .execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected, PlanStopped, connect_group, outputs_off, run_plan
 from .i18n import tr
 from .plan import load_csv, write_csv
 
@@ -280,6 +280,8 @@ class SeqApi:
                     self._measured["seq"] = cap
                     self._emit(["measured", "seq"])
                 self._seq_result("info", text)
+            except PlanStopped:
+                self._seq_result("info", tr("sequence_stopped"))
             except Exception as exc:
                 note = ("" if isinstance(exc, OutputsNotConfirmedOff)
                         else tr("rejected") if isinstance(exc, PlanRejected) else tr("forced_off"))

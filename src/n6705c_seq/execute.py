@@ -117,6 +117,11 @@ class PlanRejected(ValueError):
     """The plan failed validation; nothing was switched on or off."""
 
 
+class PlanStopped(PlanRejected):
+    """A stop request arrived before the run finished starting; the cleanup has switched outputs off.
+    A subclass so existing ``except PlanRejected`` callers keep working."""
+
+
 def check_unique_resources(resources) -> None:
     """Reject repeated VISA addresses before opening any connection."""
     seen = set()
@@ -409,7 +414,7 @@ def _running(runner: GroupArbRunner) -> list[int]:
 
 def _check_stop(stop: threading.Event | None) -> None:
     if stop is not None and stop.is_set():
-        raise PlanRejected("stopped before start")
+        raise PlanStopped("stopped before start")
 
 
 def _wait(runner: GroupArbRunner, stop: threading.Event) -> None:
