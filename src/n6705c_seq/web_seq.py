@@ -253,7 +253,7 @@ class SeqApi:
                                           on_cleanup=lambda: self._finishing(token))
                         finally:
                             self._finishing(token)
-                        self._seq_result("info", self._done_text(hold_dc))
+                        self._seq_result("info", self._done_text(hold_dc, self._stop.is_set()))
                         return
                 except Exception as exc:
                     self._seq_result("error", str(exc))
@@ -268,12 +268,12 @@ class SeqApi:
                 if not self._untimed(token):
                     return
                 try:
-                    run_plan(group, rows, hold_dc=hold_dc, capture=cap, stop=self._stop,
+                    runner = run_plan(group, rows, hold_dc=hold_dc, capture=cap, stop=self._stop,
                              on_cleanup=lambda: self._finishing(token),
                              on_warning=lambda text: self._seq_result("warning", text))
                 finally:
                     self._finishing(token)
-                text = self._done_text(hold_dc)
+                text = self._done_text(hold_dc, runner.stopped)
                 if cap and "error" in cap:
                     text += tr("capture_error", error=cap.pop("error"))
                 if cap:
@@ -290,8 +290,8 @@ class SeqApi:
         finally:
             self._release(token)
 
-    def _done_text(self, hold_dc):
-        return tr("sequence_stopped") if self._stop.is_set() else tr("sequence_hold_done") if hold_dc else tr("sequence_done")
+    def _done_text(self, hold_dc, stopped):
+        return tr("sequence_stopped") if stopped else tr("sequence_hold_done") if hold_dc else tr("sequence_done")
 
     def seq_stop(self) -> dict:
         """End a running sequence early; the worker then switches every output off."""

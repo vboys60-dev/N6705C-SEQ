@@ -493,7 +493,7 @@ def run_functions(
     on_warning: Callable[[str], None] | None = None,
     stop: threading.Event | None = None,
 ) -> GroupArbRunner:
-    """Run the functions. Setting ``stop`` ends the wait early and always switches off. With ``wait`` the outputs are switched off at the end,
+    """Run the functions and return the runner; ``runner.stopped`` tells whether a stop request ended the run (outputs switched off). Setting ``stop`` ends the wait early and always switches off. With ``wait`` the outputs are switched off at the end,
     unless ``keep_on``: then each rail stays on at its waveform's final level.
 
     Pass a dict as ``capture`` to record every channel with the digitizer; it is
@@ -551,7 +551,8 @@ def run_functions(
                 stop.wait(max(0.0, tint * CAPTURE_POINTS - (time.monotonic() - started)) + 0.05)
             if capture is not None and not stop.is_set():
                 _fetch(group, functions, tint, capture)
-            if not keep_on or stop.is_set():  # a stop always switches off
+            runner.stopped = stop.is_set()  # decided once: a stop that arrives later leaves the outputs as they are
+            if not keep_on or runner.stopped:  # a stop always switches off
                 if on_cleanup is not None:
                     on_cleanup()
                 outputs_off(group)

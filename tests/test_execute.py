@@ -842,6 +842,23 @@ def test_stop_switches_off_even_with_hold_dc(monkeypatch):
     assert not any(c.startswith("OUTP OFF") for c in sent(group2.instruments[0]))
 
 
+def test_runner_stopped_flag_reports_how_the_run_ended(monkeypatch):
+    import threading
+    from n6705c_seq import execute
+    from n6705c_seq.execute import run_plan
+
+    assert run_plan(demo(1), [row(1)], hold_dc=True).stopped is False
+    stop = threading.Event()
+    monkeypatch.setattr(execute, "_wait", lambda runner, ev: ev.set())
+    assert run_plan(demo(1), [row(1)], hold_dc=True, stop=stop).stopped is True
+    # a stop that arrives after the run has finished must not rewrite the result
+    late = threading.Event()
+    monkeypatch.setattr(execute, "_wait", lambda runner, ev: None)
+    runner = run_plan(demo(1), [row(1)], hold_dc=True, stop=late)
+    late.set()
+    assert runner.stopped is False
+
+
 def test_stop_before_start_sends_no_output_on():
     import threading
     from n6705c_seq.execute import PlanRejected, run_plan

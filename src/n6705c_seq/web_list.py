@@ -160,13 +160,13 @@ class ListApi:
             if not self._untimed(token):
                 return
             try:
-                execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap, stop=self._stop,
+                runner = execute.run_functions(group, functions, keep_on=plan.hold_last, capture=cap, stop=self._stop,
                                       on_cleanup=lambda: self._finishing(token),
                                       on_warning=lambda text: self._emit(
                                           ["result", "warning", tr("run_result"), text]))
             finally:
                 self._finishing(token)
-            text = (tr("sequence_stopped") if self._stop.is_set()
+            text = (tr("sequence_stopped") if runner.stopped
                     else tr("list_hold_done") if plan.hold_last else tr("list_done"))
             if cap and "error" in cap:
                 text += tr("capture_error", error=cap.pop("error"))
