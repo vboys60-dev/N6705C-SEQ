@@ -301,7 +301,7 @@ def test_selftest_server_callsite(api, monkeypatch, check):
 @pytest.fixture
 def power_worker(api, monkeypatch):
     """Wire all three main calls to fakes while retaining actual worker cleanup."""
-    def setup(kind, main=lambda *a, **kw: None, *, demo=False):
+    def setup(kind, main=lambda *a, **kw: SimpleNamespace(stopped=False), *, demo=False):
         closed = []
         group = SimpleNamespace(instruments=[SimpleNamespace(close=lambda: closed.append(True))])
         model = "E36441A" if kind == "resources" else "N6705C"
@@ -388,6 +388,7 @@ def test_main_exit_rearms_before_blocked_result_or_except(api, monkeypatch, powe
     def main(*args, **kwargs):
         if raises:
             raise RuntimeError("main failed")
+        return SimpleNamespace(stopped=False)
     run, token, closed = power_worker(kind, main)
     entered, resume = threading.Event(), threading.Event()
     emit = api._emit

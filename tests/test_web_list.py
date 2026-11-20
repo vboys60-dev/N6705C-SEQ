@@ -228,6 +228,7 @@ def test_worker_functions_capture_errors_and_release(api, monkeypatch, failure):
         if failure == "unconfirmed":
             raise web_list.execute.OutputsNotConfirmedOff("not confirmed")
         capture.update({1: (0.01, [0, 1]), "error": "capture failed"})
+        return SimpleNamespace(stopped=False)
 
     monkeypatch.setattr(web_list.e36441a, "detect_model", detect)
     monkeypatch.setattr(web_list.execute, "connect_group", connect)
@@ -617,7 +618,7 @@ def test_list_worker_reports_stop_not_completion(api, monkeypatch, hold_last):
     monkeypatch.setattr(web_list.e36441a, "detect_model", lambda r: "N6705C")
     monkeypatch.setattr(web_list.execute, "connect_group", lambda r: group)
     monkeypatch.setattr(synth, "to_functions", lambda p, c: [object()])
-    monkeypatch.setattr(web_list.execute, "run_functions", lambda *a, stop, **k: stop.set())
+    monkeypatch.setattr(web_list.execute, "run_functions", lambda *a, stop, **k: SimpleNamespace(stopped=True))
     token = api._reserve("power")
     api._list_work(plan, object(), 1, ["test"], False, True, token)
     info = [e for e in _legacy_events(api) if e[0] == "result" and e[1] == "info"]

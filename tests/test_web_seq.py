@@ -196,7 +196,7 @@ def test_snapshot_frozen_before_confirmation(api, threads, monkeypatch):
         return True
 
     api._window.create_confirmation_dialog = confirm
-    monkeypatch.setattr(web_seq, "run_plan", lambda group, rows, **kw: calls.append((rows, kw)))
+    monkeypatch.setattr(web_seq, "run_plan", lambda group, rows, **kw: calls.append((rows, kw)) or SimpleNamespace(stopped=False))
     assert api.seq_run(raw, addresses, False, True, True) == {}
     assert (api._gate.state()[0] == "power")
     assert api.config()["resources"] == [" first ", "second"]
@@ -249,6 +249,7 @@ def test_capture_overlay_and_capture_error(api, threads, monkeypatch):
         assert callable(on_cleanup)
         assert callable(on_warning)
         capture.update({1: (0.001, [0, 1, 2]), "error": "partial"})
+        return SimpleNamespace(stopped=False)
 
     monkeypatch.setattr(web_seq, "run_plan", run)
     api._measured["seq"] = {2: (1, [4])}
@@ -611,7 +612,7 @@ def test_demo_run_uses_group_and_releases(api, threads, monkeypatch):
         return group
 
     monkeypatch.setattr(web_seq.InstrumentGroup, "demo", demo)
-    monkeypatch.setattr(web_seq, "run_plan", lambda group, rows, **kwargs: None)
+    monkeypatch.setattr(web_seq, "run_plan", lambda group, rows, **kwargs: SimpleNamespace(stopped=False))
     assert api.seq_run(_raw(8), [], True, False, False) == {}
     threads.pop().run()
     assert calls == [(2, DEMO_SLOTS)] and closed == [True]

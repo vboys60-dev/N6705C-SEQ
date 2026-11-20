@@ -228,6 +228,7 @@ class GroupArbRunner:
     group: InstrumentGroup
     runners: list[MultiArbRunner] = field(default_factory=list)
     state: ArbState = ArbState.IDLE
+    stopped: bool = False  # set by the executor: outputs were switched off because of a stop request
 
     @classmethod
     def from_plan(
