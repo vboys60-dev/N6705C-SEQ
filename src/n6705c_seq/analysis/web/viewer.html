@@ -1424,6 +1424,8 @@
   // 且不隨頁面主題切換而改變（主題切換只重置「主檔案」預設色，見 applyTheme()），
   // 讓使用者在疊圖時一眼就能分辨哪些線來自比對檔。
   const COMPARE_CH_COLORS = ['#ff5fd8','#5dffc7','#ffe45f','#8f9bff'];
+  // Darker counterparts of the neon compare colours, used on white print/report backgrounds (see printColor).
+  const COMPARE_PRINT_COLORS = ['#b8279a','#00855f','#a86f00','#4a56c8'];
   function initCompareTraces(){
     const traces = [];
     ['V','I','P'].forEach(kind=>{
@@ -1521,8 +1523,11 @@
   // light／negative 維持固定，各自是專用的白底列印版與真正的像素負片。
   // Dark channel defaults need darker counterparts on white print backgrounds.
   function printColor(color){
-    const i = CHART_THEMES.dark.chColors.indexOf(color.toLowerCase());
-    return i<0 ? color : CHART_THEMES.light.chColors[i];
+    const key = color.toLowerCase();
+    const i = CHART_THEMES.dark.chColors.indexOf(key);
+    if(i>=0) return CHART_THEMES.light.chColors[i];
+    const j = COMPARE_CH_COLORS.indexOf(key);
+    return j<0 ? color : COMPARE_PRINT_COLORS[j];
   }
   const EXPORT_THEMES = {
     get normal(){

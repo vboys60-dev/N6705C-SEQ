@@ -19,7 +19,7 @@ function setup(hash = '', dark = false) {
     document: {documentElement: {setAttribute: (key, value) => { attrs[key] = value; }}},
     getComputedStyle: () => ({getPropertyValue: () => ''}),
     renderChips: () => calls.push('chips'), scheduleRedraw: () => calls.push('draw'),
-    COMPARE_CH_COLORS: ['#aa00ff'],
+    COMPARE_CH_COLORS: ['#aa00ff'], COMPARE_PRINT_COLORS: ['#8800aa'],
   });
   slice('const shellCtx =', 'const state =', ctx);
   vm.runInContext('const state = {theme: initialTheme(), traces: []};', ctx);
@@ -104,6 +104,7 @@ test('white print export maps all default dark channels and preserves unrelated 
     assert.equal(v.EXPORT_THEMES.light.mapColor(color.toUpperCase()), t.CHART_THEMES.light.chColors[i]);
   });
   assert.equal(v.EXPORT_THEMES.light.mapColor('#123456'), '#123456');
+  assert.equal(v.EXPORT_THEMES.light.mapColor('#AA00FF'), '#8800aa');  // compare-file neon colour -> darker print colour
 });
 test('viewer layout is full width and gives chart the remaining grid space', () => {
   const app = html.match(/\.app\{([^}]+)\}/)[1];

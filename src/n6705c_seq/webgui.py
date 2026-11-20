@@ -163,11 +163,15 @@ class _Core:
                 return None
         return path
 
-    def _save_config(self, resources: list[str], demo: bool, *, theme: str | None = None) -> None:
+    def _save_config(self, resources: list[str] | None = None, demo: bool | None = None, *,
+                     theme: str | None = None) -> None:
+        """Save the config; an omitted field keeps its current value, read under the lock so
+        concurrent set_lang / set_theme / run saves cannot overwrite each other with stale data."""
         with self._config_lock:
-            self._config = {"resources": list(resources), "demo": demo, "lang": i18n.lang,
+            self._config = {"resources": list(self._config["resources"] if resources is None else resources),
+                            "demo": self._config["demo"] if demo is None else demo, "lang": i18n.lang,
                             "theme": self._config["theme"] if theme is None else theme}
-            form.save_config(self._config_path, self._config["resources"], demo, self._config["lang"], self._config["theme"])
+            form.save_config(self._config_path, self._config["resources"], self._config["demo"], self._config["lang"], self._config["theme"])
 
     def _on_closing(self) -> bool:
         result = self._gate.on_closing()
@@ -256,7 +260,7 @@ class _Core:
         if not isinstance(lang, str):
             raise TypeError("lang must be a string")
         i18n.set_lang(lang)
-        self._save_config(self._config["resources"], self._config["demo"])
+        self._save_config()
         if self._window is not None:
             self._window.set_title(tr("title"))
 
@@ -265,7 +269,7 @@ class _Core:
             raise TypeError("theme must be a string")
         if theme not in contracts.THEMES:
             raise ValueError("theme must be light or dark")
-        self._save_config(self._config["resources"], self._config["demo"], theme=theme)
+        self._save_config(theme=theme)
 
     def poll(self) -> list[list]:
         events = []
