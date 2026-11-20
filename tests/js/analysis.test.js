@@ -916,7 +916,8 @@ test('failed theme save leaves the applied theme and event stream unchanged', as
   await t.start();
   const events = [];
   t.App.on('theme', theme => events.push(theme));
-  await assert.rejects(t.els['btn-theme'].click(), /save failed/);
+  await t.els['btn-theme'].click();
+  assert.match(t.els['result-text'].textContent, /save failed/);
   assert.equal(t.App.theme, 'light');
   assert.equal(t.App.config.theme, 'light');
   assert.equal(t.ctx.document.documentElement.dataset.theme, 'light');

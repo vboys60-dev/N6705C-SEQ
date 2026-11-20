@@ -560,8 +560,8 @@
 
   // Fallback palettes; theme changes overwrite the active palette with CSS tokens.
   const CHART_THEMES = {
-    light: { bg:'#ffffff', grid:'#d9d9d9', axisText:'#5c5c5c', markerLine:'#5c5c5c', markerLabel:'#333333', badgeFill:'#333333', badgeText:'#ffffff', chColors:['#7a6a00','#0068a8','#b4367f','#00785a'] },
-    dark: { bg:'#000000', grid:'#3a3a3a', axisText:'#8a8a8a', markerLine:'#8a8a8a', markerLabel:'#d4d4d4', badgeFill:'#d4d4d4', badgeText:'#000000', chColors:['#f0e442','#56b4e9','#e58fc4','#3dd6a3'] }
+    light: { selection:'#0a5fc2', bg:'#ffffff', grid:'#d9d9d9', axisText:'#5c5c5c', markerLine:'#5c5c5c', markerLabel:'#333333', badgeFill:'#333333', badgeText:'#ffffff', chColors:['#7a6a00','#0068a8','#b4367f','#00785a'] },
+    dark: { selection:'#8cc4ff', bg:'#000000', grid:'#3a3a3a', axisText:'#8a8a8a', markerLine:'#8a8a8a', markerLabel:'#d4d4d4', badgeFill:'#d4d4d4', badgeText:'#000000', chColors:['#f0e442','#56b4e9','#e58fc4','#3dd6a3'] }
   };
   function initialTheme(){
     if(shellCtx.theme==='light' || shellCtx.theme==='dark') return shellCtx.theme;
@@ -572,6 +572,7 @@
     const palette = CHART_THEMES[themeName];
     const style = getComputedStyle(document.documentElement);
     const read = (name, fallback) => style.getPropertyValue?.(name)?.trim() || fallback;
+    palette.selection = read('--accent', palette.selection);
     palette.bg = read('--plot-bg', palette.bg);
     palette.grid = read('--plot-grid', palette.grid);
     palette.axisText = read('--plot-axis', palette.axisText);
@@ -2077,11 +2078,15 @@
       const plotH = rect.height - PAD.t - PAD.b;
       const xA = Math.min(boxSelect.xStart, boxSelect.xCurrent);
       const xB = Math.max(boxSelect.xStart, boxSelect.xCurrent);
-      ctx.fillStyle = 'rgba(74,158,234,0.15)';
+      ctx.save();
+      ctx.fillStyle = theme.selection;
+      ctx.strokeStyle = theme.selection;
+      ctx.globalAlpha = 0.15;
       ctx.fillRect(xA, PAD.t, xB-xA, plotH);
-      ctx.strokeStyle = 'rgba(74,158,234,0.6)';
+      ctx.globalAlpha = 0.6;
       ctx.lineWidth = 1;
       ctx.strokeRect(xA, PAD.t, xB-xA, plotH);
+      ctx.restore();
     }
   }
 
