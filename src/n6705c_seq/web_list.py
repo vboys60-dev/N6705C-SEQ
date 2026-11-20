@@ -166,7 +166,8 @@ class ListApi:
                                           ["result", "warning", tr("run_result"), text]))
             finally:
                 self._finishing(token)
-            text = tr("list_hold_done") if plan.hold_last else tr("list_done")
+            text = (tr("sequence_stopped") if self._stop.is_set()
+                    else tr("list_hold_done") if plan.hold_last else tr("list_done"))
             if cap and "error" in cap:
                 text += tr("capture_error", error=cap.pop("error"))
             if cap:

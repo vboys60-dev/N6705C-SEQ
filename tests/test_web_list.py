@@ -558,3 +558,17 @@ def test_list_worker_does_not_warn_for_constant_dwell_jumps(api, monkeypatch):
     api._list_work(plan, compiled, 1, [], True, False, token)
     results = [event for event in _legacy_events(api) if event[0] == "result"]
     assert [event[1] for event in results] == ["info"]
+
+
+@pytest.mark.parametrize("hold_last", [True, False])
+def test_list_worker_reports_stop_not_completion(api, monkeypatch, hold_last):
+    plan = ListPlan([ChannelList(1)], hold_last=hold_last)
+    group = InstrumentGroup.demo(frames=1, slots=web_list.execute.DEMO_SLOTS)
+    monkeypatch.setattr(web_list.e36441a, "detect_model", lambda r: "N6705C")
+    monkeypatch.setattr(web_list.execute, "connect_group", lambda r: group)
+    monkeypatch.setattr(synth, "to_functions", lambda p, c: [object()])
+    monkeypatch.setattr(web_list.execute, "run_functions", lambda *a, stop, **k: stop.set())
+    token = api._reserve("power")
+    api._list_work(plan, object(), 1, ["test"], False, True, token)
+    info = [e for e in _legacy_events(api) if e[0] == "result" and e[1] == "info"]
+    assert info[0][-1] == i18n.tr("sequence_stopped")
