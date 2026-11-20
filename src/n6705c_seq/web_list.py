@@ -174,6 +174,8 @@ class ListApi:
                 self._measured["list"] = cap
                 self._emit(["measured", "list"])
             self._emit(["result", "info", tr("run_result"), text])
+        except execute.PlanStopped:
+            self._emit(["result", "info", tr("run_result"), tr("sequence_stopped")])
         except Exception as exc:
             note = ("" if isinstance(exc, execute.OutputsNotConfirmedOff)
                     else tr("rejected") if isinstance(exc, execute.PlanRejected)

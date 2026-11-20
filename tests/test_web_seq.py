@@ -9,7 +9,7 @@ import pytest
 from n6705c.core.group import InstrumentGroup
 from n6705c.core.session import ErrorQueueError
 from n6705c_seq import form, i18n, web_seq, webgui
-from n6705c_seq.execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected
+from n6705c_seq.execute import DEMO_SLOTS, OutputsNotConfirmedOff, PlanRejected, PlanStopped
 from n6705c_seq.web_seq import SeqApi
 
 
@@ -226,6 +226,19 @@ def test_worker_failure_notes_and_close_before_release(api, threads, monkeypatch
                 if isinstance(failure, PlanRejected) else i18n.tr("forced_off"))
     assert _results(api) == [["result", "error", i18n.tr("run_result"), str(failure) + expected]]
     assert closed == [True] and not (api._gate.state()[0] == "power")
+
+
+def test_stop_during_setup_reports_stopped_not_error(api, threads, monkeypatch):
+    _, closed = _group(api, monkeypatch)
+
+    def fail(*args, **kwargs):
+        raise PlanStopped("stopped before start")
+
+    monkeypatch.setattr(web_seq, "run_plan", fail)
+    assert api.seq_run(_raw(), ["x"], False, False, False) == {}
+    threads.pop().run()
+    assert _results(api) == [["result", "info", i18n.tr("run_result"), i18n.tr("sequence_stopped")]]
+    assert closed == [True]
 
 
 def test_connection_failure_and_startup_failure_release(api, threads, monkeypatch):
