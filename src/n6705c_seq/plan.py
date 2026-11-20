@@ -10,6 +10,7 @@ import contextlib
 import csv
 import os
 import math
+import uuid
 from dataclasses import dataclass, replace
 from itertools import combinations
 from pathlib import Path
@@ -255,9 +256,9 @@ def suggest_assignment(
 def atomic_text(path: str | Path, **kwargs):
     """Write to a temp file beside ``path``, then replace it: a failed save keeps the old file."""
     path = Path(path)
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")  # unique: overlapping saves never share a file
     try:
-        with open(tmp, "w", encoding="utf-8", **kwargs) as handle:
+        with open(tmp, "x", encoding="utf-8", **kwargs) as handle:
             yield handle
         os.replace(tmp, path)
     except BaseException:
