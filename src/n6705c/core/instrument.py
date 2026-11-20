@@ -11,6 +11,8 @@ Deliberate behaviours (PLAN.md section 9):
 
 from __future__ import annotations
 
+import contextlib
+
 import logging
 from dataclasses import dataclass
 
@@ -82,7 +84,12 @@ class N6705C:
     @classmethod
     def from_transport(cls, transport: Transport) -> "N6705C":
         instrument = cls(Session(transport))
-        instrument.probe()
+        try:
+            instrument.probe()
+        except BaseException:
+            with contextlib.suppress(Exception):
+                instrument.close()  # we own the transport until construction succeeds
+            raise
         return instrument
 
     # -- Probing ------------------------------------------------------------

@@ -22,6 +22,8 @@ second mainframe.
 
 from __future__ import annotations
 
+import contextlib
+
 import logging
 from dataclasses import dataclass
 
@@ -106,22 +108,36 @@ class InstrumentGroup:
         backend: str = "auto",
         timeout_ms: int = 10_000,
     ) -> "InstrumentGroup":
-        return cls(
+        return cls._build(
             [
-                N6705C.connect(resource, backend=backend, timeout_ms=timeout_ms)
+                lambda r=resource: N6705C.connect(r, backend=backend, timeout_ms=timeout_ms)
                 for resource in resources
             ]
         )
 
     @classmethod
+    def _build(cls, makers) -> "InstrumentGroup":
+        """Open mainframes one by one; on any failure close the ones already open."""
+        opened: list[N6705C] = []
+        try:
+            for make in makers:
+                opened.append(make())
+            return cls(opened)
+        except BaseException:
+            for instrument in opened:
+                with contextlib.suppress(Exception):
+                    instrument.close()
+            raise
+
+    @classmethod
     def demo(cls, frames: int = 2, slots=None) -> "InstrumentGroup":
         """Several independent simulators -- which is exactly what four
         unwired mainframes are."""
-        return cls([N6705C.demo(slots) for _ in range(frames)])
+        return cls._build([lambda: N6705C.demo(slots) for _ in range(frames)])
 
     @classmethod
     def from_transports(cls, transports: list[Transport]) -> "InstrumentGroup":
-        return cls([N6705C.from_transport(t) for t in transports])
+        return cls._build([lambda t=t: N6705C.from_transport(t) for t in transports])
 
     @classmethod
     def of(cls, instrument: N6705C) -> "InstrumentGroup":
