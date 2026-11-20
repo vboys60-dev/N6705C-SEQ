@@ -173,6 +173,13 @@ class _Core:
                             "theme": self._config["theme"] if theme is None else theme}
             form.save_config(self._config_path, self._config["resources"], self._config["demo"], self._config["lang"], self._config["theme"])
 
+    def _save_quietly(self, resources, demo):
+        """Saving addresses is a convenience: a failed write warns but never blocks a run."""
+        try:
+            self._save_config(resources, demo)
+        except OSError as exc:
+            self._emit(["result", "warning", tr("run_result"), str(exc)])
+
     def _on_closing(self) -> bool:
         result = self._gate.on_closing()
         if result == "power":

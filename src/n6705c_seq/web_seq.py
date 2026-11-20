@@ -160,7 +160,7 @@ class SeqApi:
                 self._release(token)
                 return {"cancelled": True}
             if resources is not None:
-                self._save_config(resources, demo)
+                self._save_quietly(resources, demo)
             if target == self._work:
                 self._stop.clear()
                 self._measured["seq"] = {}
@@ -255,6 +255,9 @@ class SeqApi:
                             self._finishing(token)
                         self._seq_result("info", self._done_text(hold_dc, self._stop.is_set()))
                         return
+                except PlanStopped:
+                    self._seq_result("info", tr("sequence_stopped"))
+                    return
                 except Exception as exc:
                     self._seq_result("error", str(exc))
                     return

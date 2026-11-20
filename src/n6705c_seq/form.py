@@ -11,7 +11,7 @@ from n6705c.core.group import TRIGGER_SKEW_SECONDS
 from n6705c.core.function import SENSE_MODES
 
 from .i18n import tr
-from .plan import SeqRow, order_warnings
+from .plan import SeqRow, atomic_text, order_warnings
 
 FRAMES = 2
 CONFIG: Path = Path.home() / ".n6705c_seq_gui.json"
@@ -67,7 +67,8 @@ def load_config(path: Path) -> dict:
 
 
 def save_config(path: Path, resources: list[str], demo: bool, lang: str, theme: str | None) -> None:
-    path.write_text(json.dumps({"resources": resources, "demo": demo, "lang": lang, "theme": theme}))
+    with atomic_text(path) as handle:
+        json.dump({"resources": resources, "demo": demo, "lang": lang, "theme": theme}, handle)
 
 
 def default_raw(count: int) -> list[dict]:

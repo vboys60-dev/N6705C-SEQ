@@ -178,6 +178,16 @@ def test_config(tmp_path):
     assert json.loads(path.read_text()) == dict(resources=["A", "B"], demo=False, lang="en", theme="dark")
 
 
+def test_save_config_failure_keeps_old_file(tmp_path, monkeypatch):
+    path = tmp_path / "c.json"
+    form.save_config(path, ["A"], False, "en", None)
+    monkeypatch.setattr(form.json, "dump", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    with pytest.raises(OSError):
+        form.save_config(path, ["B"], True, "zh", None)
+    assert json.loads(path.read_text())["resources"] == ["A"]
+    assert [p.name for p in tmp_path.iterdir()] == ["c.json"]
+
+
 def test_form_sources_and_translation_keys():
     source = Path(form.__file__).read_text(encoding="utf-8")
     assert not re.search(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]", source)
