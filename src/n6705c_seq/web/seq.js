@@ -4,6 +4,7 @@
   const App = window.App;
   const panel = document.getElementById("seq-tab");
   const forms = [];
+  const channelColor = (i, fallback) => App.cssVar(`--ch${i + 1}`, fallback).toLowerCase();
   let rev = 0, timer = null, view = null, canvas, message, hold, capture;
   const el = (tag, parent, key, className) => {
     const node = document.createElement(tag);
@@ -33,7 +34,7 @@
     }, 30);
   }
   function draw() {
-    if (!canvas || !view) return;
+    if (!canvas || !view || panel.hidden) return;
     const width = Math.max(canvas.clientWidth, 400), height = Math.max(canvas.clientHeight, 200);
     const scale = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * scale);
@@ -41,7 +42,12 @@
     const c = canvas.getContext("2d");
     c.scale(scale, scale);
     c.clearRect(0, 0, width, height);
+    c.fillStyle = App.cssVar("--plot-bg", "#ffffff");
+    c.fillRect(0, 0, width, height);
     if (!view.lanes.length) return;
+    const grid = App.cssVar("--plot-grid", "#d9d9d9");
+    const axis = App.cssVar("--plot-axis", "#5c5c5c");
+    const label = App.cssVar("--plot-text", "#333333");
     const left = 72, right = 12, top = 12, bottom = 40;
     const x = ms => left + (width - left - right) * ms / view.t_end;
     const laneHeight = (height - top - bottom) / view.lanes.length;
@@ -68,21 +74,21 @@
       line([[end - 4, py - 3], [end, py], [end - 4, py + 3]], color);
     }
     for (const tick of view.ticks) {
-      line([[x(tick), top], [x(tick), height - bottom]], "#e5e7eb");
-      text(String(tick), x(tick), height - bottom + 12, "#475569");
+      line([[x(tick), top], [x(tick), height - bottom]], grid);
+      text(String(tick), x(tick), height - bottom + 12, axis);
     }
-    text(view.t_end.toFixed(1), x(view.t_end), height - bottom + 12, "#475569", "right");
-    text(view.time_axis, (left + width) / 2, height - 10, "#475569");
+    text(view.t_end.toFixed(1), x(view.t_end), height - bottom + 12, axis, "right");
+    text(view.time_axis, (left + width) / 2, height - 10, axis);
     view.lanes.forEach((lane, i) => {
       const color = forms[lane.channel - 1].color.value;
       const y0 = top + i * laneHeight, yHi = y0 + 20, yLo = y0 + laneHeight - 8;
       const y = v => yLo - (yLo - yHi) * (v - lane.low) / (lane.high - lane.low);
       const mid = (yHi + yLo) / 2;
-      line([[left, y0], [width - right, y0]], "#d1d5db");
+      line([[left, y0], [width - right, y0]], grid);
       line(lane.points.map(([ms, v]) => [x(ms), y(v)]), color, 2.5);
       if (lane.measured !== null) {
-        line(lane.measured.map(([ms, v]) => [x(ms), y(v)]), "#111827");
-        text(view.measured_label, left - 6, y0 + laneHeight / 2 + 14, "#111827", "right");
+        line(lane.measured.map(([ms, v]) => [x(ms), y(v)]), label);
+        text(view.measured_label, left - 6, y0 + laneHeight / 2 + 14, label, "right");
       }
       text(lane.name, left - 6, y0 + laneHeight / 2, color, "right", true);
       if (lane.delay > 0) {
@@ -126,6 +132,12 @@
     if (status) status.textContent = text;
   });
   App.on("measured", tab => { if (tab === "seq" && canvas) preview(); });
+  App.on("theme", () => {
+    forms.forEach((form, i) => {
+      if (!form.row.dataset.custom) form.color.value = channelColor(i, form.fallback);
+    });
+    draw();
+  });
   App.register({
     async init() {
       const meta = await App.api.seq_meta();
@@ -143,8 +155,12 @@
         fields.enabled.checked = raw.enabled;
         const color = el("input", el("td", row), null, "seq-color");
         color.type = "color";
-        color.value = meta.palette[i % meta.palette.length];
-        color.addEventListener("input", draw);
+        const fallback = meta.palette[i % meta.palette.length];
+        color.value = channelColor(i, fallback);
+        color.addEventListener("input", () => {
+          row.dataset.custom = "1";
+          draw();
+        });
         for (const [key] of meta.columns) {
           if (key === "sense") {
             const sel = fields[key] = el("select", el("td", row), null, "field");
@@ -161,7 +177,7 @@
           if (key !== "name") field.inputMode = "decimal";
         }
         for (const field of Object.values(fields)) field.addEventListener("input", preview);
-        forms.push({fields, color});
+        forms.push({fields, color, row, fallback});
       });
       const bar = el("div", panel, null, "row seq-actions");
       const open = el("button", bar, "open_csv", "btn");
