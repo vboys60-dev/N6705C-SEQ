@@ -2416,7 +2416,7 @@
   // ---------------------------------------------------------------
   // HTML 報告匯出：內嵌圖表截圖 + 統計資料 + （若 Marker Table 已開啟）標記清單
   // ---------------------------------------------------------------
-  function buildStatsRowsHtml(){
+  function buildStatsRowsHtml(dotColor){
     const tLo = Math.min(state.marker1, state.marker2);
     const tHi = Math.max(state.marker1, state.marker2);
     const visible = state.traces.filter(t=>t.visible);
@@ -2425,7 +2425,7 @@
       const valM2 = valAtTime(t, state.marker2);
       const stats = computeRangeStats(t);
       return '<tr>'+
-        '<td><span class="rdot" style="background:'+t.color+'"></span>'+escapeHtml(t.label)+'</td>'+
+        '<td><span class="rdot" style="background:'+dotColor(t.color)+'"></span>'+escapeHtml(t.label)+'</td>'+
         '<td>'+fmtValForTable(valM1,t.kind)+'</td>'+
         '<td>'+fmtValForTable(valM2,t.kind)+'</td>'+
         '<td>'+fmtValForTable(stats.max,t.kind)+'</td>'+
@@ -2436,7 +2436,7 @@
     return { rows: rows || '<tr><td colspan="6">'+T('noTraceSelected')+'</td></tr>', tLo, tHi };
   }
 
-  function buildMarkerTableHtml(){
+  function buildMarkerTableHtml(dotColor){
     if(state.markers.length===0){
       return '<p class="r-dim">'+T('reportMarkerEmpty')+'</p>';
     }
@@ -2445,7 +2445,7 @@
       return '<tr>'+
         '<td>'+m.id+'</td>'+
         '<td>'+m.time.toFixed(5)+'</td>'+
-        '<td><span class="rdot" style="background:'+m.color+'"></span>'+escapeHtml(markerChannelLabel(m))+'</td>'+
+        '<td><span class="rdot" style="background:'+dotColor(m.color)+'"></span>'+escapeHtml(markerChannelLabel(m))+'</td>'+
         '<td>'+fmtVal(mv.voltage,'V')+'</td>'+
         '<td>'+fmtCurrentAuto(mv.current)+'</td>'+
         '<td>'+fmtPowerAuto(mv.power)+'</td>'+
@@ -2455,12 +2455,13 @@
     return '<table class="r-table"><thead><tr><th>'+T('thIndex')+'</th><th>'+T('thTime')+'</th><th>'+T('thChannel')+'</th><th>'+T('thVoltage')+'</th><th>'+T('thCurrent')+'</th><th>'+T('thPower')+'</th><th>'+T('thNote')+'</th></tr></thead><tbody>'+rows+'</tbody></table>';
   }
 
-  function buildReportHtml(imgDataUrl, themeLabel){
+  // The report page is always white: dots use print colours (or the negative inversion), not the on-screen dark-theme ones.
+  function buildReportHtml(imgDataUrl, themeLabel, dotColor){
     const dur = getDuration();
-    const { rows, tLo, tHi } = buildStatsRowsHtml();
+    const { rows, tLo, tHi } = buildStatsRowsHtml(dotColor);
     const genTime = new Date().toLocaleString();
     const markerSection = state.markerTableOn
-      ? '<h2>'+T('reportMarkerHeading')+'</h2>' + buildMarkerTableHtml()
+      ? '<h2>'+T('reportMarkerHeading')+'</h2>' + buildMarkerTableHtml(dotColor)
       : '';
     const caseNameTrim = (state.caseName||'').trim();
     const caseLine = caseNameTrim
@@ -2517,7 +2518,7 @@
     const theme = EXPORT_THEMES[mode] || EXPORT_THEMES.normal;
     const off = renderChartForExport(mode);
     const imgDataUrl = off.toDataURL('image/png');
-    const html = buildReportHtml(imgDataUrl, T(theme.labelKey));
+    const html = buildReportHtml(imgDataUrl, T(theme.labelKey), mode==='negative' ? invertHex : printColor);
     const blob = new Blob([html], { type:'text/html;charset=utf-8;' });
     try{
       if(await saveBlob('html', exportBaseName()+'_report.html', blob)) flashMessage(T('msgReportExported'));

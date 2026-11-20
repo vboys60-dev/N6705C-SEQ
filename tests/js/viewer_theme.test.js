@@ -116,3 +116,8 @@ test('complete viewer script parses after theme selector removal', () => {
   const script = html.split('<script>')[1].split('</script>')[0];
   assert.doesNotThrow(() => new vm.Script(script));
 });
+test('HTML report dots use print colours instead of on-screen dark-theme colours', () => {
+  assert.match(html, /buildReportHtml\(imgDataUrl, T\(theme\.labelKey\), mode==='negative' \? invertHex : printColor\)/);
+  assert.equal((html.match(/class="rdot" style="background:'\+dotColor\(/g) || []).length, 2);
+  assert.doesNotMatch(html, /class="rdot" style="background:'\+[tm]\.color/);
+});
