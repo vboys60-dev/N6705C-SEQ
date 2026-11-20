@@ -362,6 +362,7 @@ const vm = require("node:vm");
 class Node {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.dataset = {}; this.style = {};
+    this.draws = [];
     this.events = {}; this.value = ""; this.checked = false; this.disabled = false;
     this.classList = {add() {}, toggle() {}};
   }
@@ -379,15 +380,21 @@ class Node {
     return all.filter(c => selector === "input" ? c.tagName === "input" : c.dataset.i18n);
   }
   getContext() {
-    return {scale() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fillRect() {},
+    const draws = this.draws;
+    const ctx = {scale() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+      fillRect(...args) { draws.push(["fillRect", ...args]); },
       strokeRect() {}, fillText() {}, setLineDash() {}, measureText(text) { return {width: text.length * 7}; }};
+    for (const name of ["fillStyle", "strokeStyle"]) Object.defineProperty(ctx, name, {set(value) { draws.push([name, value]); }});
+    return ctx;
   }
 }
 const elements = {"list-tab": new Node("section"), "res-0": new Node("input"),
   "res-1": new Node("input"), "chk-demo": new Node("input")};
 elements["chk-demo"].checked = true;
 global.document = {getElementById: id => elements[id], createElement: tag => new Node(tag)};
-global.ResizeObserver = class { observe() {} };
+const observers = [], colors = {};
+global.ResizeObserver = class { constructor(fn) { this.fn = fn; observers.push(this); } observe() {} };
+global.getComputedStyle = () => ({getPropertyValue: name => colors[name] ?? ""});
 const listeners = {}, messages = [];
 let tab, args, placements = 0;
 const clone = obj => JSON.parse(JSON.stringify(obj));
@@ -410,7 +417,7 @@ const api = {
   },
   async list_run(...a) { args = a; return {}; },
 };
-global.window = {devicePixelRatio: 1, App: {
+global.window = {devicePixelRatio: 1, requestAnimationFrame: fn => { queueMicrotask(fn); return 1; }, App: {
   api, busy: false, t: key => key, on(type, fn) { listeners[type] = fn; },
   register(value) { tab = value; }, relabel() {}, showResult(...a) { messages.push(a); },
 }};
@@ -466,6 +473,49 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
   assert.equal(choice.value, "2");
   assert.equal(field("current_limit_optional").value, "0.1");
   assert.equal(field("channel_delay_s").value, "0.002");
+  const canvases = all().filter(n => n.tagName === "canvas");
+  const hasColor = (canvas, color) => canvas.draws.some(d => d[1] === color);
+  assert(canvases.every(c => hasColor(c, "#ffffff")));
+  const lane = {channel: 8, selected: true, label: "CH8", lo: 0, hi: 1, steps: [[0, 0], [1, 1]], measured: [[0, 0], [1, 1]]};
+  const realCompile = api.list_compile;
+  api.list_compile = async (...args) => ({...await realCompile(...args), lanes: [lane], n_points: 10,
+    budget: {delay: 1, n_points: 10, pad: 2}});
+  tab.relabel(); await flush();
+  assert(hasColor(canvases[0], "#a6d854"));
+  Object.assign(colors, {"--plot-bg": "#ffffff", "--plot-grid": "#d9d9d9", "--plot-axis": "#5c5c5c",
+    "--plot-text": "#333333", "--accent": "#0a5fc2", "--ch1": "#7a6a00", "--ch2": "#0068a8",
+    "--ch5": "#9a5b00", "--ch8": "#4a7a12"});
+  let themeCompiles = 0;
+  api.list_compile = async () => { themeCompiles++; throw Error("Theme must redraw cached data"); };
+  for (const canvas of canvases) canvas.draws.length = 0;
+  listeners.theme("light");
+  assert.equal(themeCompiles, 0);
+  assert(canvases.every(c => hasColor(c, "#ffffff")));
+  assert(hasColor(canvases[0], "#4a7a12"));
+  assert(hasColor(canvases[0], "#0a5fc2"));
+  assert(hasColor(canvases[0], "#333333"));
+  const budget = canvases.find(c => c.style.height === "20px");
+  for (const color of ["#5c5c5c", "#0068a8", "#9a5b00"]) assert(hasColor(budget, color));
+  const curves = canvases.filter(c => c !== canvases[0] && c !== budget);
+  assert(curves.every(c => hasColor(c, "#0068a8")));
+  Object.assign(colors, {"--plot-bg": "#000000", "--plot-grid": "#3a3a3a", "--plot-axis": "#8a8a8a",
+    "--plot-text": "#d4d4d4", "--ch2": "#56b4e9", "--ch5": "#e69f00", "--ch8": "#a6d854"});
+  lane.selected = false;
+  for (const canvas of canvases) canvas.draws.length = 0;
+  listeners.theme("dark");
+  assert(canvases.every(c => hasColor(c, "#000000")));
+  assert(hasColor(canvases[0], "#3a3a3a"));
+  assert(hasColor(canvases[0], "#a6d854"));
+  root.hidden = true;
+  colors["--ch2"] = "#0068a8";
+  colors["--plot-bg"] = "#ffffff";
+  listeners.theme("light");
+  root.hidden = false;
+  for (const canvas of canvases) canvas.draws.length = 0;
+  observers.at(-1).fn([{contentRect: {width: 600}}]); await flush();
+  assert(curves.every(c => hasColor(c, "#0068a8")));
+  assert(canvases.every(c => hasColor(c, "#ffffff")));
+  api.list_compile = realCompile;
   const pending = [];
   api.list_compile = (...a) => new Promise(resolve => pending.push({a, resolve}));
   field("name").value = "old"; field("name").fire("input");
