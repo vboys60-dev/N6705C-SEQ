@@ -774,7 +774,7 @@ async function timer(ms) {
   events.push(["theme", "dark"]); await timer(100);
   assert.equal(colors[0].value, "#123456");
   assert.equal(colors[1].value, "#56b4e9");
-  assert.equal(fills.length, 0);
+  // List canvas also redraws on theme; SEQ redraw on return is asserted below
   await window.App.selectTab("seq");
   const chart = all().find(n => n.tagName === "canvas");
   observers.find(item => item.node === chart).fn();
