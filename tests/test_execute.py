@@ -873,6 +873,90 @@ def test_stop_before_start_sends_no_output_on():
     assert any(c.startswith("OUTP OFF") for c in cmds)
 
 
+def _stop_after(session, stop, when):
+    """Set ``stop`` right after the first write that ``when(command)`` accepts."""
+    for name in ("write", "write_checked"):
+        original = getattr(session, name)
+
+        def wrapped(command, *args, _original=original, **kwargs):
+            result = _original(command, *args, **kwargs)
+            if when(command):
+                stop.set()
+            return result
+        setattr(session, name, wrapped)
+
+
+_STARTS = ("OUTP ON", "INIT:TRAN", "*TRG")
+
+
+def _after(cmds, prefix):
+    return cmds[next(i for i, c in enumerate(cmds) if c.startswith(prefix)) + 1:]
+
+
+def test_stop_mid_setup_sends_no_volt_output_on_or_init():
+    import threading
+    from n6705c_seq.execute import PlanRejected, run_plan
+
+    group = demo(1)
+    inst = group.instruments[0]
+    stop = threading.Event()
+    _stop_after(inst.session, stop, lambda c: c.startswith("CURR"))
+    with pytest.raises(PlanRejected, match="stopped"):
+        run_plan(group, [row(1, limit=0.5)], stop=stop)
+    rest = _after(sent(inst), "CURR")
+    assert not any(c.startswith(("VOLT ", "ARB:") + _STARTS) for c in rest)
+    assert any(c.startswith("OUTP OFF") for c in rest)
+    assert not any(inst.output_state(inst.populated_channels).values())
+
+
+def test_stop_while_outputs_come_on_skips_the_arb_download():
+    import threading
+    from n6705c_seq.execute import PlanRejected, run_plan
+
+    group = demo(1)
+    inst = group.instruments[0]
+    stop = threading.Event()
+    _stop_after(inst.session, stop, lambda c: c.startswith("OUTP ON"))
+    with pytest.raises(PlanRejected, match="stopped"):
+        run_plan(group, [row(1), row(2)], stop=stop)
+    rest = _after(sent(inst), "OUTP ON")
+    assert not any(c.startswith(("ARB:", "VOLT:MODE") + _STARTS) for c in rest)
+    assert not any(inst.output_state(inst.populated_channels).values())
+
+
+@pytest.mark.parametrize("capture", [None, {}])
+def test_stop_while_start_sets_trigger_sources_sends_no_init(capture):
+    import threading
+    from n6705c_seq.execute import PlanRejected, run_plan
+
+    group = demo(1)
+    inst = group.instruments[0]
+    stop = threading.Event()
+    # run_functions sets the sources once before OUTP ON; start_together sets them again
+    _stop_after(inst.session, stop,
+                lambda c: c.startswith("TRIG:ARB:SOUR") and "OUTP ON,(@1)" in sent(inst))
+    with pytest.raises(PlanRejected, match="stopped"):
+        run_plan(group, [row(1)], capture=capture, stop=stop)
+    cmds = sent(inst)
+    assert "OUTP ON,(@1)" in cmds  # the stop really landed inside start_together
+    assert not any(c.startswith(("INIT:TRAN", "*TRG")) for c in cmds)
+    assert not any(inst.output_state(inst.populated_channels).values())
+
+
+def test_stop_after_init_sends_no_trg():
+    import threading
+    from n6705c_seq.execute import PlanRejected, run_plan
+
+    group = demo(1)
+    inst = group.instruments[0]
+    stop = threading.Event()
+    _stop_after(inst.session, stop, lambda c: c.startswith("INIT:TRAN"))
+    with pytest.raises(PlanRejected, match="stopped"):
+        run_plan(group, [row(1)], capture={}, stop=stop)
+    assert "*TRG" not in sent(inst)
+    assert not any(inst.output_state(inst.populated_channels).values())
+
+
 def test_write_csv_failure_keeps_old_file(tmp_path):
     from n6705c_seq.plan import write_csv
 

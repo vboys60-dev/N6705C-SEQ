@@ -285,7 +285,8 @@ def _set_trigger_sources(group: InstrumentGroup, functions) -> None:
         _set_arb_source_imm(instrument, channels)
 
 
-def start_together(group: InstrumentGroup, functions, trigger_acquisition: bool = False) -> None:
+def start_together(group: InstrumentGroup, functions, trigger_acquisition: bool = False,
+                   stop: threading.Event | None = None) -> None:
     """Start every channel with one ``INIT:TRAN`` per frame.
 
     The tested unit (firmware F.1.1.0) starts an ARB the moment it is initiated,
@@ -296,14 +297,17 @@ def start_together(group: InstrumentGroup, functions, trigger_acquisition: bool 
     does wait for ``*TRG``, so a capture is released right after the INIT.
 
     Both trigger sources are checked here too, for callers that start directly.
+    ``stop`` is checked again right before each ``INIT:TRAN`` and ``*TRG``.
     """
     frames = _frames(group, functions)
     _set_trigger_sources(group, functions)
 
     def start(instrument: N6705C, channels: list[int]):
         def go() -> None:
+            _check_stop(stop)
             instrument.session.write(f"INIT:TRAN {format_channel_list(channels)}")
             if trigger_acquisition:
+                _check_stop(stop)
                 instrument.session.write("*TRG")
             instrument.session.check_errors("INIT:TRAN")
         return go
@@ -311,18 +315,24 @@ def start_together(group: InstrumentGroup, functions, trigger_acquisition: bool 
     fire_together([start(inst, chans) for inst, chans in frames])
 
 
-def _apply_levels(group: InstrumentGroup, functions) -> None:
-    """DC setpoint = the low level; the current limit only if the table gave one."""
+def _apply_levels(group: InstrumentGroup, functions, stop: threading.Event | None = None) -> None:
+    """DC setpoint = the low level; the current limit only if the table gave one.
+
+    ``stop`` is checked before every write, so a stop mid-setup never reaches OUTP ON."""
     for fn in functions:
         instrument, local = group.instrument_for(fn.channel)
         chan = format_channel_list(local)
         if fn.sense:
+            _check_stop(stop)
             instrument.session.write_checked(f"VOLT:SENS:SOUR {'EXT' if fn.sense == '4wire' else 'INT'},{chan}")
         if fn.current:  # the table rejects a 0 A limit, so 0.0 here only ever means "none"
             # N678xA SMUs run voltage priority by default and reject CURR (+315); their limit is CURR:LIM.
             smu = instrument.capabilities[local].model.upper() in SMU_MODELS
+            _check_stop(stop)
             instrument.session.write_checked(f"CURR{':LIM' if smu else ''} {fn.current:.6G},{chan}")
+        _check_stop(stop)
         instrument.session.write_checked(f"VOLT {fn.voltage:.6G},{chan}")
+    _check_stop(stop)
     group.set_output([fn.channel for fn in functions], True)
 
 
@@ -397,8 +407,8 @@ def _running(runner: GroupArbRunner) -> list[int]:
     ]
 
 
-def _check_stop(stop: threading.Event) -> None:
-    if stop.is_set():
+def _check_stop(stop: threading.Event | None) -> None:
+    if stop is not None and stop.is_set():
         raise PlanRejected("stopped before start")
 
 
@@ -533,7 +543,8 @@ def run_functions(
         stop = stop or threading.Event()
         _set_trigger_sources(group, functions)
         _check_stop(stop)
-        _apply_levels(group, functions)
+        _apply_levels(group, functions, stop)
+        _check_stop(stop)  # a stop while the outputs came on skips the ARB download
         runner.load()
         window = tint = 0.0
         if capture is not None:
@@ -541,7 +552,7 @@ def run_functions(
             tint = _arm_capture(group, functions, window)
         started = time.monotonic()
         _check_stop(stop)
-        start_together(group, functions, capture is not None)
+        start_together(group, functions, capture is not None, stop=stop)
         for frame in runner.runners:
             frame.mark_triggered()
         runner.state = ArbState.RUNNING
