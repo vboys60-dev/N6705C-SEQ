@@ -127,7 +127,7 @@ class ListApi:
             if not self._confirm(tr("confirm"), text + tr("continue")):
                 self._release(token)
                 return {"cancelled": True}
-            self._save_config(saved_resources, demo)
+            self._save_quietly(saved_resources, demo)
             self._measured["list"] = {}
             self._emit(["measured", "list"])
             self._stop.clear()

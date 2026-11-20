@@ -250,7 +250,7 @@ def test_connection_failure_and_startup_failure_release(api, threads, monkeypatc
     threads.pop().run()
     assert _results(api)[0][3] == i18n.tr("connection_error", error="unavailable")
     assert not (api._gate.state()[0] == "power")
-    monkeypatch.setattr(api, "_save_config", fail)
+    monkeypatch.setattr(api, "_stop", SimpleNamespace(clear=fail))
     assert api.seq_run(_raw(), ["x"], False, False, False) == {"error": "unavailable"}
     assert not (api._gate.state()[0] == "power") and not threads
 
@@ -286,6 +286,28 @@ def test_seq_worker_emits_slew_warning_before_success(api, threads, monkeypatch)
     assert [event[1] for event in results] == ["warning", "info"]
     assert results[0][3] == i18n.tr("slew_warning", channel="F1:CH1", actual=2.0, required=4000.0)
     assert not (api._gate.state()[0] == "power")
+
+
+def test_e36441a_stop_during_setup_reports_stopped(api, threads, monkeypatch):
+    monkeypatch.setattr(web_seq, "detect_model", lambda resource: "E36441A")
+
+    def fail(*args, **kwargs):
+        raise PlanStopped("stopped before start")
+
+    monkeypatch.setattr(web_seq, "run_resources", fail)
+    api.seq_run(_raw(), ["x"], False, False, False)
+    threads.pop().run()
+    assert _results(api) == [["result", "info", i18n.tr("run_result"), i18n.tr("sequence_stopped")]]
+
+
+def test_unwritable_config_warns_but_run_starts(api, threads, monkeypatch):
+    def deny(*args, **kwargs):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(form, "save_config", deny)
+    assert api.seq_run(_raw(), ["x"], True, False, False) == {}
+    assert len(threads) == 1
+    assert _results(api) == [["result", "warning", i18n.tr("run_result"), "read-only"]]
 
 
 def test_e36441a_uses_own_runner_and_refuses_capture(api, threads, monkeypatch):

@@ -2,6 +2,7 @@
 
 import copy
 import re
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -181,7 +182,7 @@ def test_confirm_cancel_and_start_failure_release(api, monkeypatch):
     def fail(*args):
         raise OSError("config failure")
 
-    monkeypatch.setattr(api, "_save_config", fail)
+    monkeypatch.setattr(api, "_stop", types.SimpleNamespace(clear=fail))
     assert api.list_run(_plan(), _settings(), [], True, False) == {"error": "config failure"}
     assert not (api._gate.state()[0] == "power")
 
