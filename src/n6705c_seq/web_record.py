@@ -86,7 +86,7 @@ def _failure_code(exc, phase):
         return c.RecordCode.SINK
     if isinstance(exc, ScpiError) and exc.code in (323, 310):
         return c.RecordCode.BAD_CONFIG if exc.code == 323 else c.RecordCode.ELOG_UNSUPPORTED
-    scpi = re.search(r"(?:^|[\s:])[+-]?(323|310),", str(exc))
+    scpi = re.search(r"(?:^|[\s:])[+-](323|310),", str(exc))  # SCPI error numbers are always signed
     if scpi:
         return c.RecordCode.BAD_CONFIG if scpi[1] == "323" else c.RecordCode.ELOG_UNSUPPORTED
     if phase == "connect":
@@ -187,7 +187,7 @@ class RecordApi:
 
     def _record_save_path(self):
         if not self._dialog_lock.acquire(blocking=False):
-            return None
+            raise _RecordFailure(c.RecordCode.SINK, "another file dialog is open")
         try:
             path = self._dialog_path(self._window.create_file_dialog(
                 webview.FileDialog.SAVE, file_types=(tr("record_file_type"),)))

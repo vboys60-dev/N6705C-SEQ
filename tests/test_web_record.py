@@ -229,7 +229,7 @@ def test_dialog_reserves_without_timer_and_cancel_releases(rig, monkeypatch):
 def test_dialog_lock_busy_and_exception_release(rig):
     rig.api._dialog_lock.acquire()
     try:
-        assert rig.start() == {"cancelled": True}
+        assert rig.start()["code"] == "sink"  # busy dialog is an error, not a silent cancel
     finally:
         rig.api._dialog_lock.release()
     def broken():
@@ -480,6 +480,7 @@ def test_invalid_backend_result_fails_and_releases(rig, monkeypatch, bad_result)
     (RuntimeError('SCPI: +323,"bad period"'), 'bad_config'),
     (RuntimeError('-310,"unsupported"'), 'elog_unsupported'),
     (RuntimeError('1310,"other"'), 'fetch'),
+    (RuntimeError('{1: 310, 2: 5}'), 'fetch'),
     (RuntimeError('run310,"filename"'), 'fetch'),
 ])
 def test_scpi_error_classification_is_not_a_number_search(exc, code):

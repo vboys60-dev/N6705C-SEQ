@@ -96,6 +96,9 @@ def _group(args, rows) -> InstrumentGroup:
 def _run_e36441a(args, rows) -> int:
     try:
         run_resources(args.resource, rows, hold_dc=args.hold_dc, backend=args.backend, timeout_ms=args.timeout)
+    except KeyboardInterrupt:
+        print("interrupted; outputs forced off", file=sys.stderr)
+        return 130
     except Exception as exc:  # noqa: BLE001 - run_rows already restored what it touched
         print(f"error: {exc}", file=sys.stderr)
         return 1
